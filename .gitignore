@@ -4,3 +4,4 @@
 /bench/store-probe/target/
 /bench/progs/*.o
 /bench/data/
+/.idea/
