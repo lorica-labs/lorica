@@ -6,13 +6,13 @@ const NOW: u64 = 1_000_000_000;
 
 fn refusal(text: &str) -> CompileError {
     let config = Config::from_toml(text).expect("the configuration did not parse");
-    compile(&config, NOW, MemlockModel::ESTIMATE)
+    compile(&config, NOW, MemlockModel::MEASURED)
         .expect_err("the configuration compiled when it should have been refused")
 }
 
 fn accepted(text: &str) -> carapace_policy::Compiled {
     let config = Config::from_toml(text).expect("the configuration did not parse");
-    compile(&config, NOW, MemlockModel::ESTIMATE).expect("the configuration did not compile")
+    compile(&config, NOW, MemlockModel::MEASURED).expect("the configuration did not compile")
 }
 
 /// Two entries on the same prefix leave the trie with no answer. Resolving it here by

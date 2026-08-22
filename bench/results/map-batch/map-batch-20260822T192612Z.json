@@ -1,0 +1,35 @@
+{
+  "captured_epoch": 1787426836,
+  "host": "carapace-target",
+  "kernel": "6.8.0-138-generic",
+  "possible_cpus": 4,
+  "list_entries": 1000000,
+  "counter_entries": 1000018,
+  "settle_ms": 2000,
+  "memlock_bytes": {
+    "list_empty": 0,
+    "list_full": 104000000,
+    "counters": 40001104
+  },
+  "meminfo_kb": {
+    "idle_noise": { "mem_free": 0, "slab": -16, "s_unreclaim": -16, "percpu": 0 },
+    "on_create": { "mem_free": -75800, "slab": 120, "s_unreclaim": 104, "percpu": 29520 },
+    "on_fill": { "mem_free": -193876, "slab": 203112, "s_unreclaim": 203112, "percpu": 0 },
+    "on_release": { "mem_free": 249728, "slab": -202984, "s_unreclaim": -202984, "percpu": -29376 }
+  },
+  "fill_sunreclaim_over_memlock": 1.999,
+  "throughput": [
+    { "op": "update_batch_lpm_trie", "batch": 1, "elements": 1000000, "elapsed_ns": 1931130364, "ns_per_element": 1931.130, "elements_per_s": 517831.431 },
+    { "op": "lookup_batch_per_cpu_array", "batch": 1, "elements": 1000018, "elapsed_ns": 1594074733, "ns_per_element": 1594.046, "elements_per_s": 627334.452 },
+    { "op": "update_batch_lpm_trie", "batch": 100, "elements": 1000000, "elapsed_ns": 877477350, "ns_per_element": 877.477, "elements_per_s": 1139630.555 },
+    { "op": "lookup_batch_per_cpu_array", "batch": 100, "elements": 1000018, "elapsed_ns": 301652898, "ns_per_element": 301.647, "elements_per_s": 3315128.104 },
+    { "op": "update_batch_lpm_trie", "batch": 1000, "elements": 1000000, "elapsed_ns": 855095095, "ns_per_element": 855.095, "elements_per_s": 1169460.573 },
+    { "op": "lookup_batch_per_cpu_array", "batch": 1000, "elements": 1000018, "elapsed_ns": 276816173, "ns_per_element": 276.811, "elements_per_s": 3612570.714 },
+    { "op": "update_batch_lpm_trie", "batch": 10000, "elements": 1000000, "elapsed_ns": 877878821, "ns_per_element": 877.878, "elements_per_s": 1139109.380 },
+    { "op": "lookup_batch_per_cpu_array", "batch": 10000, "elements": 1000018, "elapsed_ns": 320138806, "ns_per_element": 320.133, "elements_per_s": 3123701.285 },
+    { "op": "update_batch_lpm_trie", "batch": 100000, "elements": 1000000, "elapsed_ns": 864989780, "ns_per_element": 864.989, "elements_per_s": 1156083.023 },
+    { "op": "lookup_batch_per_cpu_array", "batch": 100000, "elements": 1000018, "elapsed_ns": 283933807, "ns_per_element": 283.928, "elements_per_s": 3522011.029 },
+    { "op": "update_elem_lpm_trie", "batch": 1, "elements": 1000000, "elapsed_ns": 1939005170, "ns_per_element": 1939.005, "elements_per_s": 515728.382 },
+    { "op": "lookup_elem_per_cpu_array", "batch": 1, "elements": 1000018, "elapsed_ns": 1706954915, "ns_per_element": 1706.924, "elements_per_s": 585849.099 }
+  ]
+}

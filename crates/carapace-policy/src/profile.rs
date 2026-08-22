@@ -61,41 +61,50 @@ impl ProfileKind {
 
 /// What one map entry costs in kernel memory.
 ///
-/// **Not measured.** This is the arithmetic of the kernel structures, and it is a
-/// parameter of the budget rather than a fact about a machine. An `LPM_TRIE` requires
-/// `BPF_F_NO_PREALLOC` and allocates one `lpm_trie_node` per inserted prefix plus up
-/// to one intermediate node per prefix; each node carries two child pointers, the
-/// prefix length, a flag word, then the key data and the value inline.
-///
-/// The measurement that replaces it reads the `memlock` field of the loaded program
-/// and `/proc/meminfo` before and after filling the map. Until then, a design that
-/// does not fit under this estimate is refused, which is the safe direction.
+/// **Measured**, on Ubuntu 24.04 GA 6.8.0-138 with four possible processors, by filling
+/// a million entries and reading both the kernel's own accounting and the slab. The
+/// figures and the method are in `agent:docs/mesures/06-map-batch.md`; what matters here
+/// is which of the two numbers each field carries, because they differ by a factor of two
+/// and only one of them is what a small machine actually feels.
 #[derive(Clone, Copy, Debug)]
 pub struct MemlockModel {
     pub list_bytes_per_entry: u64,
     pub counter_bytes_per_entry: u64,
 }
 
-/// The processor count the estimate is stated for. The counter map is per-CPU, so its
-/// cost is linear in the number of possible processors and a model that did not name
-/// one would be meaningless. The loader recomputes it from the machine it is on.
+/// The processor count the model is stated for. The counter map is per-CPU, so its cost
+/// is linear in the number of possible processors and a model that did not name one would
+/// be meaningless. The loader recomputes it from the machine it is on.
 pub const REFERENCE_CPUS: u64 = 8;
 
 impl MemlockModel {
-    /// Two child pointers, a prefix length and a flag word make 24 bytes of node
-    /// header; the 16-byte address and the 48-byte value bring it to 88, which the
-    /// slab allocator rounds to 96. A trie holding n prefixes can need up to 2n-1
-    /// nodes, so an entry is charged for two.
+    /// **The list charges the slab, not the kernel's own figure.** Filling a million
+    /// prefixes moved `SUnreclaim` by 203 112 KiB, which is 208 bytes an entry, while the
+    /// map reported 104 bytes an entry through `memlock`. The kernel counts the nodes it
+    /// allocated at their nominal size; the slab rounds every one of them up and the trie
+    /// also allocates intermediate nodes that `memlock` never reports. The ratio came out
+    /// at 1,999 — near enough to two that charging twice the reported figure is the same
+    /// number, which is also what the earlier arithmetic guessed and for the right reason.
     ///
-    /// A per-CPU array charges one eight-byte-aligned value per possible processor.
+    /// The previous estimate was 192 bytes. It undercharged by 8 %, which is the
+    /// dangerous direction: a configuration that fits under a model and not under the
+    /// slab is refused by the machine and not by the compiler.
+    ///
+    /// **The counter map charges `8 × cpus + 8`.** A per-CPU array holds one
+    /// eight-byte-aligned value per possible processor, and one pointer per entry in the
+    /// `pptrs` table that finds them. Measured at 40 000 000 bytes for a million entries
+    /// on four processors — 40 an entry against the 32 the per-processor values alone
+    /// account for, and the eight left over is exactly the pointer.
     pub const fn for_cpus(cpus: u64) -> Self {
         Self {
-            list_bytes_per_entry: 96 * 2,
-            counter_bytes_per_entry: 8 * cpus,
+            list_bytes_per_entry: 208,
+            counter_bytes_per_entry: 8 * cpus + 8,
         }
     }
 
-    pub const ESTIMATE: Self = Self::for_cpus(REFERENCE_CPUS);
+    /// The model at the reference processor count. Named `MEASURED` and no longer
+    /// `ESTIMATE`, because it is one.
+    pub const MEASURED: Self = Self::for_cpus(REFERENCE_CPUS);
 }
 
 /// Map sizes a configuration asks for.

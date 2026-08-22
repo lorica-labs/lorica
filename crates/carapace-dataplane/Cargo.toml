@@ -26,6 +26,9 @@ harness = false
 # Reads the compiled eBPF object. Portable and already in the tree through aya, so
 # the static guard adds nothing to the dependency surface.
 object.workspace = true
+# The memlock budget is computed there and honoured here, so the test that compares the
+# two needs both. No kernel dependency comes with it.
+carapace-policy.workspace = true
 
 [dependencies]
 carapace-common.workspace = true

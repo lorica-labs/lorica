@@ -43,10 +43,10 @@ fn each_profile_states_a_budget_and_they_are_ordered() {
 fn a_vps_refuses_a_configuration_a_gateway_would_hold() {
     let reserve = ProfileKind::Gateway.default_mitigation_reserve();
 
-    let on_gateway = compile(&config("gateway", reserve), NOW, MemlockModel::ESTIMATE);
+    let on_gateway = compile(&config("gateway", reserve), NOW, MemlockModel::MEASURED);
     assert!(on_gateway.is_ok(), "a gateway has to hold its own default");
 
-    let on_vps = compile(&config("vps", reserve), NOW, MemlockModel::ESTIMATE);
+    let on_vps = compile(&config("vps", reserve), NOW, MemlockModel::MEASURED);
     match on_vps {
         Err(CompileError::MemlockExceeded {
             profile,
@@ -70,7 +70,7 @@ fn every_profile_default_fits_its_own_budget() {
     for profile in [ProfileKind::Vps, ProfileKind::Host, ProfileKind::Gateway] {
         let name = profile.to_string();
         let reserve = profile.default_mitigation_reserve();
-        let out = compile(&config(&name, reserve), NOW, MemlockModel::ESTIMATE);
+        let out = compile(&config(&name, reserve), NOW, MemlockModel::MEASURED);
         assert!(
             out.is_ok(),
             "the {name} default does not fit the {name} budget: {out:?}"
@@ -86,9 +86,9 @@ fn the_defaults_leave_room_for_the_model_to_be_revised() {
     for profile in [ProfileKind::Vps, ProfileKind::Host, ProfileKind::Gateway] {
         let name = profile.to_string();
         let reserve = profile.default_mitigation_reserve();
-        let out = compile(&config(&name, reserve), NOW, MemlockModel::ESTIMATE)
+        let out = compile(&config(&name, reserve), NOW, MemlockModel::MEASURED)
             .expect("the default does not compile");
-        let needed = out.sizes.memlock_bytes(MemlockModel::ESTIMATE);
+        let needed = out.sizes.memlock_bytes(MemlockModel::MEASURED);
         let budget = profile.memlock_budget();
         assert!(
             needed * 2 <= budget,
@@ -109,7 +109,7 @@ fn the_rules_themselves_count_against_the_budget() {
         ));
     }
     let config = Config::from_toml(&text).expect("the configuration did not parse");
-    let out = compile(&config, NOW, MemlockModel::ESTIMATE).expect("it should fit");
+    let out = compile(&config, NOW, MemlockModel::MEASURED).expect("it should fit");
     assert_eq!(out.sizes.unified_list_entries, 16);
 }
 
@@ -118,7 +118,7 @@ fn the_rules_themselves_count_against_the_budget() {
 /// workload rather than a stress test.
 #[test]
 fn the_counter_map_holds_a_slot_per_entry() {
-    let out = compile(&config("host", 0), NOW, MemlockModel::ESTIMATE).unwrap();
+    let out = compile(&config("host", 0), NOW, MemlockModel::MEASURED).unwrap();
     assert_eq!(
         out.sizes.counter_entries,
         carapace_common::CounterId::COUNT + out.sizes.unified_list_entries

@@ -10,7 +10,7 @@ const NOW: u64 = 1_000_000_000;
 
 fn compiled(text: &str) -> carapace_policy::Compiled {
     let config = Config::from_toml(text).expect("the configuration did not parse");
-    compile(&config, NOW, MemlockModel::ESTIMATE).expect("the configuration did not compile")
+    compile(&config, NOW, MemlockModel::MEASURED).expect("the configuration did not compile")
 }
 
 /// A host allow inside a network deny. Both entries are emitted; which one applies is

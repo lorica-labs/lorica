@@ -76,6 +76,7 @@ version = "0.1.0"
 dependencies = [
  "aya",
  "carapace-common",
+ "carapace-policy",
  "libc",
  "object",
  "thiserror",
