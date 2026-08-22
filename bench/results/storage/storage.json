@@ -1,0 +1,12 @@
+{
+  "captured_utc": "2026-08-22T11:20:42Z",
+  "host": "carapace-target",
+  "environment": "env-20260822T111941Z.txt",
+  "fsync_lat_p50_ns": 3162112,
+  "fsync_lat_p99_ns": 6258688,
+  "fsync_lat_p99_9_ns": 11206656,
+  "fsync_lat_p99_us": 6258.7,
+  "fsync_lat_p50_us": 3162.1,
+  "fsync_iops": 292.252054,
+  "cold_read_80mb": "1.4 GB/s"
+}
