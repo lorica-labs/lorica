@@ -253,7 +253,9 @@ fn a_first_fragment_carries_its_transport_header() {
 
 #[test]
 fn a_later_fragment_has_no_port_at_all() {
-    let prog = program();
+    // Loaded with later fragments allowed: the subject here is what the parser read,
+    // and the fragment policy has its own file.
+    let prog = program_with(setting::ALLOW_LATER_FRAGMENTS);
     let pkt = PktBuilder::eth()
         .ipv4()
         .udp(1111, 30_120)
@@ -272,7 +274,7 @@ fn a_later_fragment_has_no_port_at_all() {
 
 #[test]
 fn an_ipv6_fragment_header_sets_the_fragment_state() {
-    let prog = program();
+    let prog = program_with(setting::ALLOW_LATER_FRAGMENTS);
     let pkt = PktBuilder::eth()
         .ipv6()
         .udp(1111, 30_120)

@@ -4,8 +4,8 @@
 
 mod support;
 
-use carapace_common::{Action, CounterId, LpmKey, LpmValue, Scope};
-use support::{PktBuilder, XdpAction, program};
+use carapace_common::{Action, CounterId, LpmKey, LpmValue, Scope, setting};
+use support::{PktBuilder, XdpAction, program, program_with};
 
 const UDP: u8 = 17;
 const GAME_PORT: u16 = 30_120;
@@ -180,10 +180,11 @@ fn an_ipv6_entry_and_an_ipv4_entry_live_in_the_same_list() {
 }
 
 /// A later fragment carries no port, so by construction it can never match a scope. It
-/// has to reach stage 4 rather than be decided here.
+/// has to reach stage 4 rather than be decided here, which is why the case is stated
+/// with stage 4 set to allow.
 #[test]
 fn a_later_fragment_cannot_match_a_scope() {
-    let mut prog = program();
+    let mut prog = program_with(setting::ALLOW_LATER_FRAGMENTS);
     prog.insert(
         LpmKey::v4([10, 90, 1, 7], 32),
         allow_udp(GAME_PORT, entry_slot(0)),

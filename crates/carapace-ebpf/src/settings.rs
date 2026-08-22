@@ -35,7 +35,6 @@ pub fn drop_icmp_other() -> bool {
 }
 
 #[inline(always)]
-#[expect(dead_code, reason = "read by the fragment stage, which lands next")]
 pub fn allow_later_fragments() -> bool {
     flags() & setting::ALLOW_LATER_FRAGMENTS != 0
 }

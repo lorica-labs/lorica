@@ -50,6 +50,7 @@ pub struct PktBuilder {
     tcp_flags: u8,
     icmp: (u8, u8),
     payload_len: usize,
+    proto_override: Option<u8>,
     ip_total_len_override: Option<u16>,
     udp_len_override: Option<u16>,
     truncate_at: Option<usize>,
@@ -71,6 +72,7 @@ impl PktBuilder {
             tcp_flags: 0,
             icmp: (0, 0),
             payload_len: 0,
+            proto_override: None,
             ip_total_len_override: None,
             udp_len_override: None,
             truncate_at: None,
@@ -192,6 +194,14 @@ impl PktBuilder {
         self
     }
 
+    /// A protocol with no header this builder knows how to write, such as ESP. The
+    /// packet then reaches the list on its address and protocol alone, which is the
+    /// case fragmented tunnel traffic lands in.
+    pub fn ip_proto(mut self, proto: u8) -> Self {
+        self.proto_override = Some(proto);
+        self
+    }
+
     /// States a total length the packet does not have. Sanity is about the
     /// disagreement between what a header claims and what arrived.
     pub fn ip_total_len(mut self, len: u16) -> Self {
@@ -249,6 +259,9 @@ impl PktBuilder {
 
     /// The protocol the L4 header, if any, is written as.
     const fn l4_proto(&self) -> u8 {
+        if let Some(proto) = self.proto_override {
+            return proto;
+        }
         match self.l4 {
             L4Kind::None => 253,
             L4Kind::Udp => IPPROTO_UDP,

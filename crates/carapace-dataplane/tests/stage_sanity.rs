@@ -179,10 +179,11 @@ fn ip_options_pass_when_the_operator_accepts_them() {
 }
 
 /// A fragmented packet is not malformed. Refusing it here would make stage 4, and its
-/// operator-visible policy, unreachable.
+/// operator-visible policy, unreachable, so the case is stated with that policy set to
+/// allow: what is being asserted is that sanity did not decide, not what stage 4 does.
 #[test]
 fn a_later_fragment_is_not_a_sanity_failure() {
-    let prog = program();
+    let prog = program_with(setting::ALLOW_LATER_FRAGMENTS);
     let pkt = PktBuilder::eth()
         .ipv4()
         .udp(1111, 30_120)
