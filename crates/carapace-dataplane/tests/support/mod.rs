@@ -3,7 +3,7 @@
 
 // Every test target compiles this module and uses a part of its surface, so whatever
 // another target uses looks dead from here.
-#![allow(dead_code)]
+#![allow(dead_code, unused_imports)]
 
 pub mod pkt;
 pub mod run;
