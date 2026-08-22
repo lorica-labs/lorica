@@ -14,6 +14,14 @@ kernel-tests = []
 # budget: this one measures the per-packet budget of the spec.
 count-helpers = []
 
+# A measurement is not a test: it takes parameters, prints a record and asserts
+# nothing. libtest has no way to pass `--entries` through, so this one owns its main.
+# It stays a test target because a test target is what the build VM packs and ships to
+# the measurement VM, and a bin would need a second shipping path for one file.
+[[test]]
+name = "measure_batch"
+harness = false
+
 [dev-dependencies]
 # Reads the compiled eBPF object. Portable and already in the tree through aya, so
 # the static guard adds nothing to the dependency surface.
