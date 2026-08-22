@@ -1,0 +1,23 @@
+# Standalone: measurement tooling has no business sharing a lock file or a
+# feature graph with the product it measures. Deleted once the real storage exists.
+[package]
+name = "store-probe"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+libc = "0.2"
+redb = "2"
+
+# Used through their C API rather than as #[global_allocator]: the probe measures
+# each allocator in a child process of its own, and a global allocator is a
+# compile-time choice that would force two binaries.
+# "extended" is where mi_collect lives, and mi_collect on the tick is the whole
+# point of the comparison.
+libmimalloc-sys = { version = "0.1", features = ["extended"] }
+tikv-jemalloc-sys = "0.6"
+
+[profile.release]
+debug = true
