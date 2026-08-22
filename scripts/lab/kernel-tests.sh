@@ -33,28 +33,11 @@ die() { printf 'FAIL  %s\n' "$1" >&2; exit 1; }
 sudo -n true 2>/dev/null \
     || die "sudo requires a password; loading an XDP program needs CAP_BPF and CAP_NET_ADMIN"
 
-# Two objects, and they must not share a target directory. The instrumented one adds
-# a map write per counted call, so a static call budget read from it would be
-# measuring the instrumentation; the plain one is what ships.
-echo 'building the eBPF object that ships'
-(cd crates/carapace-ebpf && cargo +nightly build --release) || die "the plain eBPF build failed"
-PLAIN=$PWD/crates/carapace-ebpf/target/bpfel-unknown-none/release/carapace-ebpf
-[ -f "$PLAIN" ] || die "no object at $PLAIN after a successful build"
-export CARAPACE_EBPF_PLAIN_OBJ=$PLAIN
-
-if [ -n "$EBPF_FEATURES" ]; then
-    printf 'building the instrumented eBPF object with features: %s\n' "$EBPF_FEATURES"
-    INSTRUMENTED=$PWD/crates/carapace-ebpf/target/instrumented
-    (cd crates/carapace-ebpf \
-        && CARGO_TARGET_DIR=$INSTRUMENTED cargo +nightly build --release \
-            --features "$EBPF_FEATURES") \
-        || die "the instrumented eBPF build failed"
-    OBJ=$INSTRUMENTED/bpfel-unknown-none/release/carapace-ebpf
-else
-    OBJ=$PLAIN
-fi
-[ -f "$OBJ" ] || die "no object at $OBJ after a successful build"
-export CARAPACE_EBPF_OBJ=$OBJ
+# shellcheck source=scripts/lab/build-ebpf.sh
+. scripts/lab/build-ebpf.sh
+build_ebpf "$EBPF_FEATURES" || die "the eBPF build failed"
+export CARAPACE_EBPF_PLAIN_OBJ=$EBPF_PLAIN_OBJ
+export CARAPACE_EBPF_OBJ=$EBPF_OBJ
 
 # The userspace feature has to match the object: a test that reads the helper counts
 # would otherwise look for a map the program was not built with.
