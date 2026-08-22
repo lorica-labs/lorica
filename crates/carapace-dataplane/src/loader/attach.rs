@@ -7,6 +7,8 @@
 //! has already built an skb, so it costs most of what the drop was meant to save and
 //! yields a throughput that varies too much to measure against.
 
+use std::time::{Duration, Instant};
+
 use aya::programs::{ProgramError, Xdp, XdpMode, xdp::XdpLinkId};
 use thiserror::Error;
 
@@ -41,6 +43,13 @@ pub enum AttachError {
         #[source]
         source: ProgramError,
     },
+
+    #[error(
+        "detached from {iface}, but the kernel still reports a program on the hook after \
+         {waited_ms} ms. Tearing a bpf_link down finishes on a workqueue, so a short wait \
+         is normal and this is not one."
+    )]
+    StillAttached { iface: String, waited_ms: u128 },
 
     #[error("detaching from {iface} failed: {source}")]
     DetachFailed {
@@ -86,13 +95,45 @@ pub fn attach_native(program: &mut Xdp, iface: &str) -> Result<XdpLinkId, Attach
     }
 }
 
+/// How long to wait for the kernel to actually let go of the hook. Fifty milliseconds is
+/// two orders of magnitude above what was observed and still well inside the ~7 ms window
+/// a hot attach was measured to open, so a detach that needs longer than this is a fault
+/// and not a slow machine.
+const RELEASE_TIMEOUT: Duration = Duration::from_millis(50);
+
+/// Detaches, and does not return until the hook is free.
+///
+/// Dropping a `bpf_link` closes a descriptor, and the kernel finishes the teardown on a
+/// workqueue: the syscall returns before the program is off the interface. So an attach
+/// issued straight after a detach can be refused with EBUSY by the program that was just
+/// detached — intermittently, and only under load, which is the worst way for it to
+/// happen. Since the design is detached by default and attached on detection, that
+/// sequence is the production path and not a test convenience, so waiting belongs here
+/// rather than in every caller.
 pub fn detach(program: &mut Xdp, link: XdpLinkId, iface: &str) -> Result<(), AttachError> {
     program
         .detach(link)
         .map_err(|source| AttachError::DetachFailed {
             iface: iface.to_owned(),
             source,
-        })
+        })?;
+
+    let deadline = Instant::now() + RELEASE_TIMEOUT;
+    loop {
+        match hook_probe::probe(iface) {
+            Ok(state) if state.prog_id.is_none() => return Ok(()),
+            // An interface that has gone away is a hook nobody holds. This is the common
+            // case for a test fixture torn down in whatever order Drop chose.
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            _ if Instant::now() >= deadline => {
+                return Err(AttachError::StillAttached {
+                    iface: iface.to_owned(),
+                    waited_ms: RELEASE_TIMEOUT.as_millis(),
+                });
+            }
+            _ => std::thread::sleep(Duration::from_millis(1)),
+        }
+    }
 }
 
 fn classify(err: ProgramError, iface: &str) -> AttachError {
