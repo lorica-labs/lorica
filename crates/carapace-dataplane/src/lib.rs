@@ -5,5 +5,6 @@
 //! this one is written once and then left alone.
 
 pub mod capability;
+pub mod fib;
 pub mod loader;
 pub mod maps;
