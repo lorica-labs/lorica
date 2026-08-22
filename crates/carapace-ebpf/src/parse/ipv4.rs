@@ -5,7 +5,7 @@ use super::{L3, ParseError, Window};
 /// The header without options.
 const FIXED_HDR_LEN: usize = 20;
 
-#[inline(never)]
+#[cfg_attr(feature = "profiling", inline(never))]
 pub fn parse(win: &Window, base: usize) -> Result<L3, ParseError> {
     let hdr = win
         .bytes::<FIXED_HDR_LEN>(base)

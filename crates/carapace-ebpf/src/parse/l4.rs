@@ -45,7 +45,7 @@ impl L4 {
     };
 }
 
-#[inline(never)]
+#[cfg_attr(feature = "profiling", inline(never))]
 pub fn parse(win: &Window, l3: &L3) -> Result<L4, ParseError> {
     // A later fragment carries no L4 header. Reading one would interpret payload
     // bytes as ports, which is how a fragmented flood walks through a port filter.

@@ -21,10 +21,15 @@ pub struct L2 {
     pub vlan_tags: u8,
 }
 
-/// A subprogram of its own, not inlined. Each parser needs its own 512-byte frame,
-/// and each one gets its own JIT symbol, which is the only way to obtain a cost
-/// breakdown inside the data path.
-#[inline(never)]
+/// The `profiling` feature is what puts each parser in a subprogram of its own, so it
+/// gets a JIT symbol a `perf` campaign can attribute cycles to. The object that ships
+/// is built without it, because a call boundary is not free here: it costs a bpf-to-bpf
+/// call, the spills around it, and above all every optimisation LLVM cannot make across
+/// it — the parsed view stays a struct written to the stack instead of the handful of
+/// registers it becomes when the boundaries are gone. Worth 30 instructions a packet on
+/// the whole path. The same idiom is on the three other parsers and is not repeated
+/// there; the stages keep their boundary and say why at the first of them.
+#[cfg_attr(feature = "profiling", inline(never))]
 pub fn parse(win: &Window) -> Result<L2, ParseError> {
     let mut ethertype = win.be16(12).ok_or(ParseError::Truncated)?;
     let mut off = ETH_HDR_LEN;

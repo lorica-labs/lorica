@@ -161,7 +161,7 @@ fn the_count_is_actually_read_from_the_object() {
     );
     assert!(
         calls.bpf_to_bpf > 0,
-        "no bpf-to-bpf call found, but the parsers are subprograms\n{}",
+        "no bpf-to-bpf call found, but every helper wrapper is a subprogram\n{}",
         breakdown(&per_function)
     );
 }

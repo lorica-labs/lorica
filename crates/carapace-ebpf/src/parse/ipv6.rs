@@ -22,7 +22,7 @@ const IPPROTO_FRAGMENT: u8 = 44;
 const IPPROTO_AH: u8 = 51;
 const IPPROTO_DSTOPTS: u8 = 60;
 
-#[inline(never)]
+#[cfg_attr(feature = "profiling", inline(never))]
 pub fn parse(win: &Window, base: usize) -> Result<L3, ParseError> {
     let hdr = win
         .bytes::<FIXED_HDR_LEN>(base)

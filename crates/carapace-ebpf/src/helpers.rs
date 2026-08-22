@@ -5,8 +5,10 @@
 //! it is a single call site rather than one per caller: inlining the counter bump
 //! would multiply its map lookup by the number of stages that count.
 //!
-//! Each wrapper also gets its own JIT symbol, which is the only way to obtain a cost
-//! breakdown inside the data path.
+//! These four keep `#[inline(never)]` unconditionally, unlike the parsers and the
+//! stages, which carry it only under the `profiling` feature. Here it is not
+//! instrumentation: the static call budget is a count of the calls present in the
+//! object, and inlining a wrapper would multiply its call by the number of callers.
 
 use aya_ebpf::{helpers::bpf_ktime_get_ns, maps::lpm_trie::Key};
 use carapace_common::{CounterId, LpmValue};

@@ -4,8 +4,8 @@
 //! a budget of 10 ns in the spec, and did not say where they go. This file says it, before
 //! three more stages are added to the path.
 //!
-//! **Why by subtraction and not by profile.** Every parser and every stage is
-//! `#[inline(never)]`, so each has its own JIT symbol, and `perf` does resolve them:
+//! **Why by subtraction and not by profile.** Every stage, and every parser in a build
+//! with the `profiling` feature, has its own JIT symbol, and `perf` does resolve them:
 //! `bpf_prog_<tag>_<name>` appears in a report. It is not usable as a ventilation. Four of
 //! the stage symbols are named `run` and three of the parser symbols `parse`, because the
 //! name the kernel keeps is the last component of the Rust path; and on this hardware
