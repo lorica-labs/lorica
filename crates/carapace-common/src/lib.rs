@@ -6,10 +6,12 @@
 
 #![no_std]
 
+pub mod bucket;
 pub mod hash;
 pub mod ttl;
 pub mod wire;
 
+pub use bucket::{BURST_MAX, BankLayout, Bucket, Charge, Rate, SHARE_SCALE, UNITS_PER_BYTE};
 pub use hash::SipHasher24;
 pub use ttl::Deadline;
 pub use wire::{

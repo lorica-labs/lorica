@@ -7,3 +7,13 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+
+# Test-only, and declared here rather than in the workspace: nothing else in the
+# tree uses them, and the crate compiled into the kernel program has no dependency.
+[dev-dependencies]
+criterion = "0.7"
+proptest = "1.8"
+
+[[bench]]
+name = "bucket"
+harness = false
