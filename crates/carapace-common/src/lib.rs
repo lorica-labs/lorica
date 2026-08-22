@@ -14,5 +14,5 @@ pub use hash::SipHasher24;
 pub use ttl::Deadline;
 pub use wire::{
     Action, CounterId, DEFAULT_SETTINGS, EventHeader, Family, FragState, LpmKey, LpmValue,
-    PacketView, SCOPE_MAX, SETTINGS_SYMBOL, Scope, anomaly, setting,
+    PacketView, SCOPE_MAX, SETTINGS_SYMBOL, Scope, V4_MAPPED_PREFIX_BITS, anomaly, setting,
 };
