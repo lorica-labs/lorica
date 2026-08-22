@@ -33,7 +33,8 @@ done
 attempt=1
 while [ "$attempt" -le "$ATTEMPTS" ]; do
     if tar cf - --exclude=target --exclude='*.o' "${existing[@]}" \
-        | ssh -o BatchMode=yes -o ConnectTimeout=25 "$HOST" "tar xf - -C ~/$REMOTE_DIR"; then
+        | ssh -o BatchMode=yes -o ConnectTimeout=25 "$HOST" \
+            "mkdir -p ~/$REMOTE_DIR && tar xf - -C ~/$REMOTE_DIR"; then
         break
     fi
     printf 'deploy attempt %d of %d failed\n' "$attempt" "$ATTEMPTS" >&2
