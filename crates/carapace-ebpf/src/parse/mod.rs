@@ -3,14 +3,24 @@
 //! The reference kernel selftest lets VLAN traffic and IPv6 extension headers
 //! through as a silent `XDP_PASS`, commented `XXX` upstream. Not reproducing those
 //! two bypasses is what this module is for.
+//!
+//! Two paths, one result. [`fast`] handles untagged IPv4 without options carrying UDP
+//! or TCP, which is what a game server actually receives, in a straight line with one
+//! bounds check. Everything else — tags, options, extension headers, later fragments —
+//! goes to the walker, which is where the loops live. Nothing optional decides a
+//! verdict, so the two paths build the same view for the same packet and [`refuse`]
+//! then applies the same checks to both.
 
 pub mod eth;
+pub mod fast;
 pub mod ipv4;
 pub mod ipv6;
 pub mod l4;
 
 use aya_ebpf::{bindings::xdp_action, programs::XdpContext};
-use carapace_common::{CounterId, Family, FragState, MAX_OFFSET, PacketView};
+use carapace_common::{CounterId, Family, FragState, MAX_OFFSET, PacketView, anomaly};
+
+use crate::{parse::l4::L4, settings};
 
 #[derive(Clone, Copy)]
 pub enum ParseError {
@@ -21,21 +31,35 @@ pub enum ParseError {
     DepthExceeded,
     /// Not something this pipeline judges, such as ARP or LLDP.
     UnknownEncap,
-    /// Parseable bytes that cannot describe a packet, such as an IPv4 header length
-    /// below its own fixed part.
-    Malformed,
+    /// An IP header that cannot describe the packet it arrived in: a header length
+    /// below its own fixed part, or a total length that disagrees with what arrived.
+    IpLength,
+    /// A transport length that disagrees with what arrived.
+    L4Length,
+    /// A combination of TCP flags no endpoint produces, which makes it a scan and not
+    /// traffic.
+    TcpFlags,
+    /// IP options present and the operator has not said they are acceptable. A policy
+    /// and not a fact about the packet, which is why it is stated as one.
+    IpOptions,
 }
 
 impl ParseError {
     /// Verdict and counter. `UnknownEncap` passes on purpose: dropping ARP would
     /// break the network the pipeline is supposed to protect, and non-IP traffic is
     /// not what this program judges.
+    ///
+    /// The four sanity counters are here rather than in a stage because the checks are,
+    /// but they keep their names: an operator dashboard reads them.
     pub const fn outcome(self) -> (u32, CounterId) {
         match self {
             Self::Truncated => (xdp_action::XDP_DROP, CounterId::ParseTruncated),
             Self::DepthExceeded => (xdp_action::XDP_DROP, CounterId::ParseDepthExceeded),
             Self::UnknownEncap => (xdp_action::XDP_PASS, CounterId::ParseUnknownEncap),
-            Self::Malformed => (xdp_action::XDP_DROP, CounterId::SanityIpLength),
+            Self::IpLength => (xdp_action::XDP_DROP, CounterId::SanityIpLength),
+            Self::L4Length => (xdp_action::XDP_DROP, CounterId::SanityL4Length),
+            Self::TcpFlags => (xdp_action::XDP_DROP, CounterId::SanityTcpFlags),
+            Self::IpOptions => (xdp_action::XDP_DROP, CounterId::SanityIpOptionsRefused),
         }
     }
 }
@@ -47,8 +71,8 @@ impl ParseError {
 /// zeroing was a 60-byte memset on every packet — 15.8 % of all cycles in a profile —
 /// and no optimiser could remove it, because each parser was a call and the stores
 /// happened on the other side of the boundary. Each layer returning its own small
-/// result is what lets `parse` build the view once, in one struct literal, with every
-/// field named.
+/// result is what lets the walker build the view once, in one struct literal, with
+/// every field named.
 pub struct L3 {
     pub family: Family,
     pub src: [u8; 16],
@@ -123,15 +147,12 @@ impl Window {
 
 pub fn parse(ctx: &XdpContext) -> Result<PacketView, ParseError> {
     let win = Window::of(ctx);
-    let l2 = eth::parse(&win)?;
-    let l3 = match l2.ethertype {
-        eth::ETH_P_IP => ipv4::parse(&win, l2.l3_off)?,
-        eth::ETH_P_IPV6 => ipv6::parse(&win, l2.l3_off)?,
-        _ => return Err(ParseError::UnknownEncap),
+    let (l2, l3, l4) = match fast::headers(&win) {
+        Some(headers) => headers,
+        None => walk(&win)?,
     };
-    let l4 = l4::parse(&win, &l3)?;
 
-    Ok(PacketView {
+    let view = PacketView {
         data: win.start as u64,
         data_end: win.end as u64,
         src: l3.src,
@@ -151,5 +172,81 @@ pub fn parse(ctx: &XdpContext) -> Result<PacketView, ParseError> {
         icmp_code: l4.icmp_code,
         anomalies: l3.anomalies,
         vlan_tags: l2.vlan_tags,
-    })
+    };
+
+    refuse(&view)?;
+    Ok(view)
+}
+
+/// Every encapsulation the fast path declined: tags, options, extension headers, and
+/// the fragments that carry no transport header at all. The loops of the module are all
+/// here.
+fn walk(win: &Window) -> Result<(eth::L2, L3, L4), ParseError> {
+    let l2 = eth::parse(win)?;
+    let l3 = match l2.ethertype {
+        eth::ETH_P_IP => ipv4::parse(win, l2.l3_off)?,
+        eth::ETH_P_IPV6 => ipv6::parse(win, l2.l3_off)?,
+        _ => return Err(ParseError::UnknownEncap),
+    };
+    let l4 = l4::parse(win, &l3)?;
+    Ok((l2, l3, l4))
+}
+
+/// The checks that used to be stage 1, applied here because they are comparisons on
+/// fields the parse has just put in registers: paying a stage boundary and a second
+/// load for them bought nothing. Malformed is still not the same as unwanted — a
+/// fragmented packet is not malformed and goes to stage 4 — and the policy among them
+/// is still stated as a policy.
+fn refuse(view: &PacketView) -> Result<(), ParseError> {
+    let ip_bytes = view.packet_len.saturating_sub(view.l3_off);
+    let header_bytes = view.l4_off.saturating_sub(view.l3_off);
+
+    // Both directions are inconsistencies. A total length below the headers that were
+    // parsed describes an impossible packet; one above what arrived is a forged
+    // length, because XDP sees the whole frame. A frame padded to the Ethernet
+    // minimum is the legitimate case of a total length below what arrived, so only
+    // the strict excess is refused.
+    if view.ip_total_len < header_bytes || view.ip_total_len > ip_bytes {
+        return Err(ParseError::IpLength);
+    }
+
+    if view.has(anomaly::IP_OPTIONS_PRESENT) && !settings::accept_ip_options() {
+        return Err(ParseError::IpOptions);
+    }
+
+    // A later fragment carries no transport header, so there is no length and no flag
+    // to be consistent about. It is stage 4 that decides its fate.
+    if view.frag() == FragState::Later {
+        return Ok(());
+    }
+
+    match view.proto {
+        l4::IPPROTO_UDP => udp_length(view),
+        l4::IPPROTO_TCP if !l4::flags_are_possible(view.tcp_flags) => Err(ParseError::TcpFlags),
+        _ => Ok(()),
+    }
+}
+
+/// A UDP length field cannot be smaller than the header it is in.
+const UDP_HDR_LEN: u16 = 8;
+
+/// The lower bound holds in every fragment; the upper bound holds in none of the first
+/// ones.
+///
+/// A first fragment carries the UDP header of the datagram, and that header states the
+/// length of the whole reassembly rather than of the bytes in this fragment. Comparing
+/// the two dropped every fragmented UDP datagram here, with `sanity_l4_length`, before
+/// stage 4 could apply the fragment policy: IKE over 500 without RFC 7383, fragmented
+/// DNS, fragmented QUIC. That is the class of false positive this pipeline exists to
+/// forbid, so the upper bound is skipped for a first fragment and the lower one — a
+/// UDP length below its own eight-byte header, impossible in any fragment — is kept.
+fn udp_length(view: &PacketView) -> Result<(), ParseError> {
+    if view.l4_len < UDP_HDR_LEN {
+        return Err(ParseError::L4Length);
+    }
+    let l4_bytes = view.packet_len.saturating_sub(view.l4_off);
+    if view.frag() != FragState::First && view.l4_len > l4_bytes {
+        return Err(ParseError::L4Length);
+    }
+    Ok(())
 }

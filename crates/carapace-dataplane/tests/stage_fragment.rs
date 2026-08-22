@@ -63,6 +63,73 @@ fn a_first_fragment_takes_the_normal_path() {
     );
 }
 
+/// The production bug this pairs with. A first fragment carries the UDP header of the
+/// datagram, and that header states the length of the whole reassembly, not of the bytes
+/// in this fragment. Comparing the two refused **every fragmented UDP datagram** with
+/// `sanity_l4_length` before stage 4 could apply its policy: IKE over 500 without
+/// RFC 7383, fragmented DNS, fragmented QUIC. The upper bound is now skipped for a first
+/// fragment.
+#[test]
+fn a_first_fragment_may_state_the_length_of_the_whole_reassembly() {
+    let prog = program();
+    let passed = prog.counter("fragment_first_passed");
+    let refused = prog.counter("sanity_l4_length");
+
+    let pkt = PktBuilder::eth()
+        .ipv4()
+        .udp(IKE_PORT, IKE_PORT)
+        .frag(0, true)
+        .payload(1400)
+        .udp_len(4000)
+        .build();
+
+    assert_eq!(prog.run(&pkt), XdpAction::Pass);
+    assert_eq!(
+        prog.counter("sanity_l4_length"),
+        refused,
+        "the stated reassembly length was read as an inconsistency"
+    );
+    assert_eq!(prog.counter("fragment_first_passed"), passed + 1);
+}
+
+/// The lower bound holds in every fragment: a UDP length below its own header describes
+/// no datagram at all, first fragment or not.
+#[test]
+fn a_udp_length_below_its_own_header_is_refused_in_a_first_fragment_too() {
+    let prog = program();
+    let pkt = PktBuilder::eth()
+        .ipv4()
+        .udp(1111, GAME_PORT)
+        .frag(0, true)
+        .payload(64)
+        .udp_len(4)
+        .build();
+
+    let before = prog.counter("sanity_l4_length");
+    assert_eq!(prog.run(&pkt), XdpAction::Drop);
+    assert_eq!(prog.counter("sanity_l4_length"), before + 1);
+}
+
+/// The other end of the same datagram. It has no transport header at all, so no length
+/// to be consistent about, and the only thing entitled to decide it is stage 4.
+#[test]
+fn a_non_first_fragment_reaches_the_fragment_policy_and_not_a_length_check() {
+    let prog = program_with(setting::ALLOW_LATER_FRAGMENTS);
+    let allowed = prog.counter("fragment_later_allowed");
+    let refused = prog.counter("sanity_l4_length");
+
+    let pkt = PktBuilder::eth()
+        .ipv4()
+        .udp(IKE_PORT, IKE_PORT)
+        .frag(184, false)
+        .payload(1400)
+        .build();
+
+    assert_eq!(prog.run(&pkt), XdpAction::Pass);
+    assert_eq!(prog.counter("sanity_l4_length"), refused);
+    assert_eq!(prog.counter("fragment_later_allowed"), allowed + 1);
+}
+
 #[test]
 fn a_later_fragment_is_dropped_by_default_and_counted() {
     let prog = program();

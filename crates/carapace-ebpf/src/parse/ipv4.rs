@@ -19,7 +19,7 @@ pub fn parse(win: &Window, base: usize) -> Result<L3, ParseError> {
     if ihl_words < FIXED_HDR_LEN / 4 {
         // A header shorter than its own fixed part. Parseable bytes, impossible
         // packet: the L4 offset it implies would point inside the IP header.
-        return Err(ParseError::Malformed);
+        return Err(ParseError::IpLength);
     }
     // IHL is four bits, so the header is at most sixty bytes and no bound on the
     // option area needs stating.
@@ -53,8 +53,9 @@ pub fn parse(win: &Window, base: usize) -> Result<L3, ParseError> {
     })
 }
 
-/// From the flags and fragment offset field, read as one big-endian word.
-const fn frag_state(word: u16) -> FragState {
+/// From the flags and fragment offset field, read as one big-endian word. Shared with
+/// the fast path, which reads the same word at a constant offset.
+pub(super) const fn frag_state(word: u16) -> FragState {
     const MORE_FRAGMENTS: u16 = 0x2000;
     const OFFSET_MASK: u16 = 0x1fff;
 
@@ -68,7 +69,7 @@ const fn frag_state(word: u16) -> FragState {
 }
 
 /// IPv4 in the unified 16-byte key, as `::ffff:a.b.c.d`.
-const fn mapped(addr: [u8; 4]) -> [u8; 16] {
+pub(super) const fn mapped(addr: [u8; 4]) -> [u8; 16] {
     [
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff, addr[0], addr[1], addr[2], addr[3],
     ]

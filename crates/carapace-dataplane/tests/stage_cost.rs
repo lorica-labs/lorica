@@ -15,7 +15,7 @@
 //!
 //! **What it costs to be measurable.** The cutoff is a compare against a load-time global,
 //! present only in a build with the `stage-cutoff` feature. The object that ships has none
-//! of them. So the pipeline measured here is up to nine compares away from the pipeline
+//! of them. So the pipeline measured here is up to eight compares away from the pipeline
 //! that runs, and the last line of the report is that difference, measured rather than
 //! declared negligible.
 
@@ -41,18 +41,21 @@ const GAME_PORT: u16 = 30_120;
 /// The pipeline, in order, and what each cutoff adds to the one before it.
 ///
 /// The first two are not stages. Parsing and the one clock reading are what every packet
-/// pays before any stage has an opinion, and a ventilation that hides them inside stage 1
+/// pays before any stage has an opinion, and a ventilation that hides them inside a stage
 /// would blame the wrong code.
-const LEVELS: [(u32, &str); 9] = [
+/// Stage 1 is absent, and that is the point of the level named `parse`: its three checks
+/// are comparisons on fields the parse has just loaded, so they are made there and their
+/// cost is inside the first level rather than in a level of its own. The other labels
+/// keep the numbers of the specification, which is what an operator reads.
+const LEVELS: [(u32, &str); 8] = [
     (1, "parse"),
     (2, "clock read"),
-    (3, "stage 1 sanity"),
-    (4, "stage 2 ICMP"),
-    (5, "stage 3 LPM list"),
-    (6, "stage 4 fragments"),
-    (7, "stage 5 uRPF"),
-    (8, "stage 6 signatures"),
-    (9, "stage 7 buckets"),
+    (3, "stage 2 ICMP"),
+    (4, "stage 3 LPM list"),
+    (5, "stage 4 fragments"),
+    (6, "stage 5 uRPF"),
+    (7, "stage 6 signatures"),
+    (8, "stage 7 buckets"),
 ];
 
 fn steady_state_packet() -> Vec<u8> {

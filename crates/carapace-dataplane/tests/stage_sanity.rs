@@ -1,5 +1,7 @@
-//! Stage 1. Each refusal names its counter, because a drop nobody can see is
-//! indistinguishable from a packet that never arrived.
+//! The checks that used to be stage 1 and are now made inside the parse, on the fields
+//! it has just loaded. What is asserted here is unchanged by that move, and deliberately:
+//! each refusal names its counter, because a drop nobody can see is indistinguishable
+//! from a packet that never arrived, and the counter is what an operator reads.
 
 #![cfg(feature = "kernel-tests")]
 
@@ -8,7 +10,7 @@ mod support;
 use carapace_common::setting;
 use support::{PktBuilder, XdpAction, program, program_with};
 
-/// Impossible flag combinations, from the sanity stage of the program under test.
+/// Impossible flag combinations, from the flag predicate of the program under test.
 const TCP_FIN: u8 = 1 << 0;
 const TCP_SYN: u8 = 1 << 1;
 const TCP_RST: u8 = 1 << 2;
