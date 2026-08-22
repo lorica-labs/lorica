@@ -1,0 +1,66 @@
+esp-hw-offload: off [fixed]
+esp-tx-csum-hw-offload: off [fixed]
+fcoe-mtu: off [fixed]
+Features for enp6s19:
+generic-receive-offload: on
+generic-segmentation-offload: on
+highdma: on [fixed]
+hsr-dup-offload: off [fixed]
+hsr-fwd-offload: off [fixed]
+hsr-tag-ins-offload: off [fixed]
+hsr-tag-rm-offload: off [fixed]
+hw-tc-offload: off [fixed]
+l2-fwd-offload: off [fixed]
+large-receive-offload: off [fixed]
+loopback: off [fixed]
+macsec-hw-offload: off [fixed]
+netns-local: off [fixed]
+ntuple-filters: off [fixed]
+receive-hashing: off [fixed]
+rx-all: off [fixed]
+rx-checksumming: on [fixed]
+rx-fcs: off [fixed]
+rx-gro-hw: on
+rx-gro-list: off
+rx-udp-gro-forwarding: off
+rx-udp_tunnel-port-offload: off [fixed]
+rx-vlan-filter: on [fixed]
+rx-vlan-offload: off [fixed]
+rx-vlan-stag-filter: off [fixed]
+rx-vlan-stag-hw-parse: off [fixed]
+scatter-gather: on
+tcp-segmentation-offload: on
+tls-hw-record: off [fixed]
+tls-hw-rx-offload: off [fixed]
+tls-hw-tx-offload: off [fixed]
+	tx-checksum-fcoe-crc: off [fixed]
+	tx-checksum-ip-generic: on
+	tx-checksum-ipv4: off [fixed]
+	tx-checksum-ipv6: off [fixed]
+tx-checksumming: on
+	tx-checksum-sctp: off [fixed]
+tx-esp-segmentation: off [fixed]
+tx-fcoe-segmentation: off [fixed]
+tx-gre-csum-segmentation: off [fixed]
+tx-gre-segmentation: off [fixed]
+tx-gso-list: off [fixed]
+tx-gso-partial: off [fixed]
+tx-gso-robust: on [fixed]
+tx-ipxip4-segmentation: off [fixed]
+tx-ipxip6-segmentation: off [fixed]
+tx-lockless: off [fixed]
+tx-nocache-copy: off
+	tx-scatter-gather-fraglist: off [fixed]
+	tx-scatter-gather: on
+tx-sctp-segmentation: off [fixed]
+	tx-tcp6-segmentation: on
+	tx-tcp-ecn-segmentation: on
+	tx-tcp-mangleid-segmentation: off
+	tx-tcp-segmentation: on
+tx-tunnel-remcsum-segmentation: off [fixed]
+tx-udp-segmentation: off
+tx-udp_tnl-csum-segmentation: off [fixed]
+tx-udp_tnl-segmentation: off [fixed]
+tx-vlan-offload: off [fixed]
+tx-vlan-stag-hw-insert: off [fixed]
+vlan-challenged: off [fixed]
