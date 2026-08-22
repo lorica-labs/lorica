@@ -10,3 +10,7 @@ rust-version.workspace = true
 # control socket and prints the JSON it gets back. A typed protocol would need an
 # eighth crate to keep tokio and redb out of the client.
 [dependencies]
+# The capability table is read from the running kernel, not from the daemon, so `status`
+# prints it whether or not anything is running. This makes the client Linux-only, which it
+# already was through its Unix socket.
+carapace-dataplane.workspace = true
