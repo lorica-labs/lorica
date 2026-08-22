@@ -7,11 +7,29 @@ mod parse;
 mod settings;
 mod stage;
 
-use aya_ebpf::{macros::xdp, programs::XdpContext};
+use aya_ebpf::{bindings::xdp_action, macros::xdp, programs::XdpContext};
 
 #[xdp]
 pub fn carapace_xdp(ctx: XdpContext) -> u32 {
     stage::run(&ctx)
+}
+
+/// The clock probe. The agent runs it twice, a known interval apart, and reads
+/// `CONFIG_HZ` off the jiffies between the two readings.
+///
+/// It publishes through a map and not through the return value, which
+/// `BPF_PROG_TEST_RUN` reports as 32 bits: the low half of the counter alone would put
+/// every deadline built from it up to 2^32 jiffies in the past, and already expired is
+/// the direction that costs an `Allow` entry. Nothing attaches this program, it exists
+/// to be run.
+#[xdp]
+pub fn carapace_clock(_ctx: XdpContext) -> u32 {
+    if let Some(slot) = maps::CLOCK_PROBE.get_ptr_mut(0) {
+        // SAFETY: the pointer comes from a successful array lookup, and the agent runs
+        // this program one invocation at a time.
+        unsafe { *slot = helpers::now_jiffies() }
+    }
+    xdp_action::XDP_PASS
 }
 
 #[cfg(not(test))]

@@ -6,7 +6,7 @@
 
 use aya_ebpf::{
     macros::map,
-    maps::{LpmTrie, PerCpuArray, lpm_trie::Key},
+    maps::{Array, LpmTrie, PerCpuArray, lpm_trie::Key},
 };
 use carapace_common::{CounterId, LpmKey, LpmValue};
 
@@ -35,6 +35,16 @@ pub static UNIFIED_LIST: LpmTrie<[u8; 16], LpmValue> =
 // and neither crate can see the other type: one is packed, one is not, and only their
 // layouts have to agree.
 const _: () = assert!(core::mem::size_of::<Key<[u8; 16]>>() == core::mem::size_of::<LpmKey>());
+
+/// Where the clock probe leaves the jiffy it read.
+///
+/// Not per-CPU: the reader is a userspace process, not the processor that ran the probe,
+/// and one slot the kernel keeps global is less arithmetic than a scan of per-CPU slots
+/// that are all zero but one. It is in the object that ships because the agent needs
+/// `CONFIG_HZ` and the current jiffy before it can turn a TTL in seconds into a deadline,
+/// and the kernel exposes neither to userspace.
+#[map]
+pub static CLOCK_PROBE: Array<u64> = Array::with_max_entries(1, 0);
 
 /// The parsed view of the last packet, for the encapsulation tests.
 ///

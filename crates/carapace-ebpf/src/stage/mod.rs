@@ -125,16 +125,16 @@ pub fn run(ctx: &XdpContext) -> u32 {
     cut!(1);
 
     // Read once, passed down. The TTL comparison and, from the next phase, the leaky
-    // buckets share this reading: taking it twice would double the one helper call
-    // the per-packet budget allows outside the lookups.
-    let now_ns = helpers::now_ns();
+    // buckets share this reading: taking it twice would double the one clock read the
+    // per-packet budget allows outside the lookups.
+    let now = helpers::now_jiffies();
 
     cut!(2);
     decide!(sanity::run(&view));
     cut!(3);
     decide!(icmp::run(&view));
     cut!(4);
-    decide!(lpm::run(&view, now_ns));
+    decide!(lpm::run(&view, now));
     cut!(5);
     decide!(fragment::run(&view));
     cut!(6);
@@ -151,7 +151,7 @@ pub fn run(ctx: &XdpContext) -> u32 {
     };
 
     cut!(8);
-    decide!(bucket::run(&view, now_ns, budget));
+    decide!(bucket::run(&view, now, budget));
     cut!(9);
 
     // The SYN cookie stage sits here, between the buckets and the counters. It is a

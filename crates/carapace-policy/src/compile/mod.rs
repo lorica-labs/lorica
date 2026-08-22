@@ -9,7 +9,7 @@ pub mod service;
 
 use std::collections::BTreeMap;
 
-use carapace_common::{Action, CounterId, Deadline, LpmKey, LpmValue, SCOPE_MAX, setting};
+use carapace_common::{Action, Clock, CounterId, Deadline, LpmKey, LpmValue, SCOPE_MAX, setting};
 
 use crate::{
     config::{ActionName, Config},
@@ -93,12 +93,14 @@ pub enum CompileError {
     },
 }
 
-/// `now_ns` is the kernel monotonic clock, passed in rather than read here: the
-/// deadlines this produces are compared against that clock in the data path, and a
-/// function that reads a clock cannot be tested against a table of expectations.
+/// `clock` is the kernel's jiffy counter — one reading of it and the rate it ticks at —
+/// passed in rather than read here: the deadlines this produces are compared against that
+/// counter in the data path, and a function that reads a clock cannot be tested against a
+/// table of expectations. The rate comes with the reading because measuring it is the
+/// agent's job, and it is measured, never assumed.
 pub fn compile(
     config: &Config,
-    now_ns: u64,
+    clock: Clock,
     model: MemlockModel,
 ) -> Result<Compiled, CompileError> {
     let mut entries: Vec<(LpmKey, LpmValue)> = Vec::with_capacity(config.rules.len());
@@ -139,7 +141,7 @@ pub fn compile(
             // Only a mitigation entry is required to expire. An operator rule is
             // allowed to last as long as the file it is written in.
             None => Deadline::never(),
-            Some(secs) => Deadline::after(now_ns, secs.saturating_mul(1_000_000_000)),
+            Some(secs) => clock.deadline(secs),
         };
 
         for (index, spec) in rule.scopes.iter().enumerate() {

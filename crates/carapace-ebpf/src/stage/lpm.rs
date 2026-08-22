@@ -11,7 +11,7 @@ use carapace_common::{Action, CounterId, PacketView};
 use crate::{helpers, stage::Outcome};
 
 #[inline(never)]
-pub fn run(view: &PacketView, now_ns: u64) -> Outcome {
+pub fn run(view: &PacketView, now: u64) -> Outcome {
     let Some(value) = helpers::list_lookup(&view.src) else {
         return Outcome::Continue;
     };
@@ -23,7 +23,7 @@ pub fn run(view: &PacketView, now_ns: u64) -> Outcome {
     //
     // The entry is left where it is. Removal belongs to the agent, and the whole reason
     // the comparison happens here is that the agent may be dead.
-    if value.deadline.expired(now_ns) {
+    if value.deadline.expired(now) {
         helpers::bump(CounterId::LpmExpired);
         return Outcome::Continue;
     }

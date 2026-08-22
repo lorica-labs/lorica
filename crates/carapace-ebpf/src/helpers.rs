@@ -8,7 +8,10 @@
 //! Each wrapper also gets its own JIT symbol, which is the only way to obtain a cost
 //! breakdown inside the data path.
 
-use aya_ebpf::{helpers::bpf_ktime_get_ns, maps::lpm_trie::Key};
+use aya_ebpf::{
+    helpers::{bpf_jiffies64, bpf_ktime_get_ns},
+    maps::lpm_trie::Key,
+};
 use carapace_common::{CounterId, LpmValue};
 
 use crate::maps::{COUNTERS, UNIFIED_LIST};
@@ -24,6 +27,9 @@ const HOST_PREFIX_BITS: u32 = 128;
 #[derive(Clone, Copy)]
 pub enum HelperKind {
     MapLookup = 0,
+    /// Counted although the verifier inlines the fast-path clock into a load: what the
+    /// budget is about is how many times a packet reads the clock, which is the number a
+    /// stage can get wrong.
     ClockRead = 1,
 }
 
@@ -44,8 +50,32 @@ fn observe(kind: HelperKind) {
     }
 }
 
-/// Read once per packet in `stage::run` and passed down. Reading it again in a stage
-/// would double a helper call the whole budget is built around.
+/// The clock of the packet path. Read once per packet in `stage::run` and passed down;
+/// reading it again in a stage would double the one clock read the budget allows.
+///
+/// `bpf_jiffies64` and not `bpf_ktime_get_ns`, because the nanoseconds were measured: the
+/// helper call cost 54 ns of the 243 ns a legitimate UDP packet spent above the harness
+/// floor, 22 % of the whole program, at an IPC of 0.7 where the rest of the program runs
+/// at 2.1 — a serialising timestamp counter read. The verifier inlines this one into a
+/// load of the kernel's jiffy counter, so what is left is a memory reference. The unit
+/// that costs nothing is the unit the deadlines are written in.
+#[inline(never)]
+pub fn now_jiffies() -> u64 {
+    #[cfg(feature = "count-helpers")]
+    observe(HelperKind::ClockRead);
+    // SAFETY: no argument, no pointer, and the helper exists since 5.5, well below the
+    // 6.8 floor of the project.
+    unsafe { bpf_jiffies64() }
+}
+
+/// Nanoseconds, for a path that is not the packet path: an event timestamp an operator
+/// reads, or a measurement of the program itself. A jiffy is 1 to 4 ms wide, which is
+/// coarser than anything worth timing inside one program run.
+//
+// `expect` and not `allow`: the day a path off the fast path reads this, the expectation
+// goes unfulfilled and the build says so, which removes the attribute instead of leaving
+// it to be noticed.
+#[expect(dead_code)]
 #[inline(never)]
 pub fn now_ns() -> u64 {
     #[cfg(feature = "count-helpers")]

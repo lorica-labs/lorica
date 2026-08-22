@@ -15,7 +15,10 @@ use aya::{
     },
     programs::{TestRun, TestRunOptions, Xdp},
 };
-use carapace_common::{CounterId, DEFAULT_SETTINGS, LpmKey, LpmValue, PacketView, SETTINGS_SYMBOL};
+use carapace_common::{
+    Clock, CounterId, DEFAULT_SETTINGS, LpmKey, LpmValue, PacketView, SETTINGS_SYMBOL,
+};
+use carapace_dataplane::clock;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum XdpAction {
@@ -51,6 +54,16 @@ pub struct HelperCounts {
 impl HelperCounts {
     pub const fn total(&self) -> u64 {
         self.map_lookups + self.clock_reads
+    }
+
+    /// What the last packet added, for a case that had to run the program for another
+    /// reason first — calibrating the clock, which goes through the same counted wrapper.
+    /// The counters only ever grow, so a difference is the whole of the arithmetic.
+    pub const fn since(self, before: Self) -> Self {
+        Self {
+            map_lookups: self.map_lookups - before.map_lookups,
+            clock_reads: self.clock_reads - before.clock_reads,
+        }
     }
 }
 
@@ -221,6 +234,16 @@ impl TestProg {
             .map(|probe| probe.0)
             .find(|view| view.packet_len != 0)
             .unwrap_or_else(PacketView::zeroed)
+    }
+
+    /// The clock the program compares deadlines against: the rate it ticks at, measured,
+    /// and one reading of it.
+    ///
+    /// It goes through the probe of the object under test, so a deadline a test builds
+    /// sits on exactly the counter the packet path will read. Nothing in userspace reports
+    /// either number, which is why this is a program run and not a file read.
+    pub fn clock(&mut self) -> Clock {
+        clock::calibrate(&mut self.ebpf).expect("calibrating the kernel clock failed")
     }
 
     pub fn helper_counts(&self) -> HelperCounts {
