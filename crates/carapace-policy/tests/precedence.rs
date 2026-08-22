@@ -3,14 +3,19 @@
 //! That is counter-intuitive for anyone arriving from iptables, where the first
 //! matching rule wins, so it is written down and tested rather than assumed.
 
-use carapace_common::{Action, CounterId, Deadline, SCOPE_MAX};
+use carapace_common::{Action, Clock, CounterId, Deadline, SCOPE_MAX};
 use carapace_policy::{Config, MemlockModel, compile, compile::lpm};
 
-const NOW: u64 = 1_000_000_000;
+/// 250 Hz rather than 1000: a deadline built by multiplying seconds by the wrong
+/// constant is off by a factor of four here, and exactly right at 1000.
+const CLOCK: Clock = Clock {
+    hz: 250,
+    jiffies: 1_000_000,
+};
 
 fn compiled(text: &str) -> carapace_policy::Compiled {
     let config = Config::from_toml(text).expect("the configuration did not parse");
-    compile(&config, NOW, MemlockModel::MEASURED).expect("the configuration did not compile")
+    compile(&config, CLOCK, MemlockModel::MEASURED).expect("the configuration did not compile")
 }
 
 /// A host allow inside a network deny. Both entries are emitted; which one applies is
@@ -151,7 +156,7 @@ fn a_ttl_becomes_a_deadline_on_the_clock_it_was_given() {
     );
     assert_eq!(
         out.entries[0].1.deadline,
-        Deadline(NOW + 3600 * 1_000_000_000)
+        Deadline(CLOCK.jiffies + 3600 * CLOCK.hz as u64)
     );
 }
 

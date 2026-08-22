@@ -10,7 +10,7 @@
 
 mod support;
 
-use carapace_common::{Action, Deadline, LpmKey, LpmValue, Scope};
+use carapace_common::{Action, Clock, Deadline, LpmKey, LpmValue, Scope};
 use support::{PktBuilder, XdpAction, program};
 
 const UDP: u8 = 17;
@@ -21,20 +21,20 @@ fn entry_slot(index: u32) -> u32 {
     carapace_common::CounterId::COUNT + index
 }
 
-/// The clock the program compares against. `bpf_ktime_get_ns` is `CLOCK_MONOTONIC`, so
-/// a deadline built from this reading and one built from the kernel's own are on the
-/// same axis. Any other base — `CLOCK_BOOTTIME` differs by the suspended time,
-/// `CLOCK_REALTIME` by decades — would show up as a case below failing by a wide
-/// margin rather than by a jitter.
-fn monotonic_ns() -> u64 {
-    let mut ts = libc::timespec {
-        tv_sec: 0,
-        tv_nsec: 0,
-    };
-    // SAFETY: clock_gettime writes into a timespec we own and does nothing else.
-    let rc = unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut ts) };
-    assert_eq!(rc, 0, "clock_gettime(CLOCK_MONOTONIC) failed");
-    ts.tv_sec as u64 * 1_000_000_000 + ts.tv_nsec as u64
+/// A second either side of now, on the clock the program itself reads: `bpf_jiffies64`,
+/// reached through the probe of the same object, so a deadline built here and the reading
+/// the packet path takes are the same counter and not merely the same axis.
+///
+/// A second is 100 to 1000 jiffies depending on `CONFIG_HZ`, and thousands of times what
+/// a case here takes to run. A program reading nanoseconds instead of jiffies would be
+/// out by nine orders of magnitude, so these cases fail by a margin nothing could mistake
+/// for jitter.
+fn a_second_ago(clock: Clock) -> Deadline {
+    Deadline(clock.jiffies - u64::from(clock.hz))
+}
+
+fn in_a_second(clock: Clock) -> Deadline {
+    clock.deadline(1)
 }
 
 fn drop_until(deadline: Deadline) -> LpmValue {
@@ -67,7 +67,7 @@ fn udp_from(src: [u8; 4], dport: u16) -> Vec<u8> {
 fn an_expired_drop_entry_is_still_in_the_map_and_no_longer_applied() {
     let mut prog = program();
     let key = LpmKey::v4(BLOCKED, 32);
-    let deadline = Deadline(monotonic_ns() - 50_000_000);
+    let deadline = a_second_ago(prog.clock());
     prog.insert(key, drop_until(deadline));
 
     let before_expired = prog.counter("lpm_expired");
@@ -102,10 +102,8 @@ fn an_expired_drop_entry_is_still_in_the_map_and_no_longer_applied() {
 fn an_expired_allow_entry_no_longer_lets_the_packet_out() {
     let mut prog = program();
     let source = [203, 0, 113, 9];
-    prog.insert(
-        LpmKey::v4(source, 32),
-        allow_until(Deadline(monotonic_ns() - 50_000_000), entry_slot(0)),
-    );
+    let expired = a_second_ago(prog.clock());
+    prog.insert(LpmKey::v4(source, 32), allow_until(expired, entry_slot(0)));
 
     let before_exit = prog.counter_at(entry_slot(0));
     let before_expired = prog.counter("lpm_expired");
@@ -120,8 +118,9 @@ fn an_expired_allow_entry_no_longer_lets_the_packet_out() {
     assert_eq!(prog.counter("lpm_expired"), before_expired + 1);
 }
 
-/// `Deadline::never()` is `u64::MAX`, and the comparison against that sentinel is what
-/// keeps a clock reading of `u64::MAX` from expiring an entry declared never to expire.
+/// `Deadline::never()` is `u64::MAX` jiffies, and the comparison against that sentinel is
+/// what keeps a clock reading of `u64::MAX` from expiring an entry declared never to
+/// expire.
 /// The arithmetic side is covered in `carapace-common`; this is the in-kernel branch.
 #[test]
 fn an_entry_that_never_expires_is_applied_forever() {
@@ -163,35 +162,29 @@ fn an_entry_with_no_deadline_at_all_is_expired_rather_than_eternal() {
     assert_eq!(prog.counter("lpm_expired"), before + 1);
 }
 
-/// A deadline fifty milliseconds ahead is not expired, one fifty milliseconds behind
-/// is. Fifty milliseconds is far tighter than the distance between any two clock bases
-/// the kernel offers, so a program reading a different clock fails this and not by a
-/// margin that could be jitter.
+/// A deadline a second ahead is not expired, one a second behind is. Both are built from
+/// a reading of the very counter the program reads, so a program reading anything else —
+/// nanoseconds, or a jiffy counter that is not this one — fails this by a margin that
+/// could not be jitter.
 #[test]
 fn the_deadline_is_compared_against_the_same_clock_as_the_rest_of_the_pipeline() {
     let mut prog = program();
-    let now = monotonic_ns();
+    let clock = prog.clock();
     let ahead = [192, 0, 2, 1];
     let behind = [192, 0, 2, 2];
 
-    prog.insert(
-        LpmKey::v4(ahead, 32),
-        drop_until(Deadline(now + 50_000_000)),
-    );
-    prog.insert(
-        LpmKey::v4(behind, 32),
-        drop_until(Deadline(now - 50_000_000)),
-    );
+    prog.insert(LpmKey::v4(ahead, 32), drop_until(in_a_second(clock)));
+    prog.insert(LpmKey::v4(behind, 32), drop_until(a_second_ago(clock)));
 
     assert_eq!(
         prog.run(&udp_from(ahead, GAME_PORT)),
         XdpAction::Drop,
-        "a deadline 50 ms in the future was read as already past"
+        "a deadline one second in the future was read as already past"
     );
     assert_eq!(
         prog.run(&udp_from(behind, GAME_PORT)),
         XdpAction::Pass,
-        "a deadline 50 ms in the past was read as still ahead"
+        "a deadline one second in the past was read as still ahead"
     );
 }
 
@@ -202,14 +195,16 @@ fn the_deadline_is_compared_against_the_same_clock_as_the_rest_of_the_pipeline()
 #[test]
 fn the_expiry_check_reuses_the_one_clock_reading() {
     let mut prog = program();
-    prog.insert(
-        LpmKey::v4(BLOCKED, 32),
-        drop_until(Deadline(monotonic_ns() - 50_000_000)),
-    );
+    let expired = a_second_ago(prog.clock());
+    prog.insert(LpmKey::v4(BLOCKED, 32), drop_until(expired));
 
+    // Counted as a difference around the one packet, because the calibration above ran
+    // the clock probe through the same counted wrapper: the budget is per packet, and
+    // the probe is not a packet.
+    let before = prog.helper_counts();
     assert_eq!(prog.run(&udp_from(BLOCKED, GAME_PORT)), XdpAction::Pass);
+    let counts = prog.helper_counts().since(before);
 
-    let counts = prog.helper_counts();
     assert_eq!(
         counts.clock_reads, 1,
         "the expiry check read the clock again, got {counts:?}"
