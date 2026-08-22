@@ -1,0 +1,16 @@
+# Standalone: measurement tooling has no business sharing a lock file or a
+# feature graph with the product it measures.
+[package]
+name = "latency-probe"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+hdrhistogram = "7"
+libc = "0.2"
+quanta = "0.12"
+
+[profile.release]
+debug = true
