@@ -29,6 +29,9 @@ E5-2683 v3, virtio-net, 4 pinned vCPU). The recipe to regenerate any of these is
 | Shared unlocked bank, lost updates | charges 0.3819, so 2.62x offered | `scripts/lab/measure-bucket-contention.sh` | `bucket-contention/bucket-leak.csv` | `bucket-contention/env-20260822T215728Z.txt` |
 | Shared counter, atomic add | 24 ns alone, 156 ns and 0.87x on 4 cores | `scripts/lab/measure-bucket-contention.sh` | `bucket-contention/bucket-contention.csv` | `bucket-contention/env-20260822T215728Z.txt` |
 | bpf_fib_lookup vs LPM lookup | 48 ns vs 9 ns above the floor, ratio 5.3 | `scripts/lab/measure-fib-vs-lpm.sh` | `fib-vs-lpm/fib-vs-lpm.csv` | `fib-vs-lpm/env-20260822T220149Z.txt` |
+| Unified list, shallow miss | 251-262 ns, flat from 1 to 1M entries | `--test measure_lpm_depth` | `lpm-depth/lpm-depth.csv` | `lpm-depth/env-20260822T231554Z.txt` |
+| Unified list, deep miss | 330-343 ns at full trie depth, size-independent | `--test measure_lpm_depth` | `lpm-depth/lpm-depth.csv` | `lpm-depth/env-20260822T231554Z.txt` |
+| Unified list, hit | 266 ns at 1 entry to 581 ns at 1M | `--test measure_lpm_depth` | `lpm-depth/lpm-depth.csv` | `lpm-depth/env-20260822T231554Z.txt` |
 
 The `xdp:xdp_exception` counter is zero on every retained run; any run with a nonzero value was
 discarded, not annotated.
