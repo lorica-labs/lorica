@@ -78,14 +78,27 @@ pub fn load(args: &LoadArgs, clock: &Clock) -> io::Result<Report> {
                     }
                 }
                 Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
+                // A queued ICMP port-unreachable surfaces here as ECONNREFUSED; it
+                // refers to an earlier datagram, not a dead socket, so keep reading.
+                Err(e) if e.kind() == io::ErrorKind::ConnectionRefused => {}
                 Err(_) => break,
             }
         }
         samples
     });
 
+    // A UDP send can fail with ECONNREFUSED when a queued ICMP port-unreachable
+    // from an earlier packet is delivered — a transient at startup or when the
+    // path stalls, exactly the moment this probe exists to measure. Dropping the
+    // datagram and continuing is correct for a lossy protocol; aborting would turn
+    // a measurable outage into no data at all.
     let sent = send_paced(args.rate_pps, args.duration_s, |seq| {
-        socket.send(&encode(seq, clock.raw(), payload_len)).map(|_| ())
+        match socket.send(&encode(seq, clock.raw(), payload_len)) {
+            Ok(_) => Ok(()),
+            Err(e) if e.kind() == io::ErrorKind::ConnectionRefused => Ok(()),
+            Err(e) if e.kind() == io::ErrorKind::WouldBlock => Ok(()),
+            Err(e) => Err(e),
+        }
     })?;
 
     // Taken before the drain: the silence after the final send is expected, and
