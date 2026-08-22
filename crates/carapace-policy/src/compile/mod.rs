@@ -6,6 +6,7 @@
 
 pub mod lpm;
 pub mod service;
+pub mod signature;
 
 use std::collections::BTreeMap;
 
@@ -199,6 +200,9 @@ fn settings_word(settings: &crate::config::Settings) -> u32 {
     }
     if settings.allow_later_fragments {
         word |= setting::ALLOW_LATER_FRAGMENTS;
+    }
+    if settings.enforce_signatures {
+        word |= setting::ENFORCE_SIGNATURES;
     }
     word
 }

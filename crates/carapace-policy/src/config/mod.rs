@@ -44,6 +44,11 @@ pub struct Settings {
     /// them, and is what fragmented IPsec or IKE traffic needs.
     #[serde(default)]
     pub allow_later_fragments: bool,
+    /// Stage 6 counts its vectors and delivers the packet until this is set. Observation
+    /// is the default because a catalogue nobody has watched run against their own
+    /// traffic is a list of false positives waiting to be found by an outage.
+    #[serde(default)]
+    pub enforce_signatures: bool,
 }
 
 #[derive(Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
