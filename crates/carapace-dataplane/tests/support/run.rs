@@ -184,6 +184,20 @@ impl TestProg {
             .expect("inserting into the unified list failed");
     }
 
+    /// Reads an entry back out of the unified list.
+    ///
+    /// Half of the TTL criterion is that an expired entry is *still in the map* and
+    /// merely stops being applied. A verdict alone cannot tell that apart from an
+    /// entry the test failed to insert, so the read exists.
+    pub fn list_get(&self, key: LpmKey) -> Option<LpmValue> {
+        let map = self.ebpf.map("UNIFIED_LIST").expect("no UNIFIED_LIST map");
+        let list: LpmTrie<&MapData, [u8; 16], PodLpmValue> =
+            LpmTrie::try_from(map).expect("UNIFIED_LIST is not an LPM trie");
+        list.get(&Key::new(key.prefix_len, key.addr), 0)
+            .ok()
+            .map(|value| value.0)
+    }
+
     /// The parsed view of the last packet run. Only present in a build with the
     /// `parse-probe` feature of carapace-ebpf.
     pub fn parsed(&self) -> PacketView {

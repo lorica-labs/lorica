@@ -11,10 +11,22 @@ use carapace_common::{Action, CounterId, PacketView};
 use crate::{helpers, stage::Outcome};
 
 #[inline(never)]
-pub fn run(view: &PacketView, _now_ns: u64) -> Outcome {
+pub fn run(view: &PacketView, now_ns: u64) -> Outcome {
     let Some(value) = helpers::list_lookup(&view.src) else {
         return Outcome::Continue;
     };
+
+    // Checked before the scope, and for every action rather than only for the drops. An
+    // entry past its deadline has nothing to say about this packet at all, so calling it
+    // a scope miss would report the wrong thing; and an allow that outlives its deadline
+    // is a permanent exemption nobody decided, which is the direction that costs more.
+    //
+    // The entry is left where it is. Removal belongs to the agent, and the whole reason
+    // the comparison happens here is that the agent may be dead.
+    if value.deadline.expired(now_ns) {
+        helpers::bump(CounterId::LpmExpired);
+        return Outcome::Continue;
+    }
 
     // An entry that does not cover this protocol and port has nothing to say about
     // this packet. Counting the miss matters: an allow entry whose scope keeps missing

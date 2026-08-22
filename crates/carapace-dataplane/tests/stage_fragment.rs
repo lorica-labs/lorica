@@ -6,7 +6,7 @@
 
 mod support;
 
-use carapace_common::{Action, LpmKey, LpmValue, Scope, setting};
+use carapace_common::{Action, Deadline, LpmKey, LpmValue, Scope, setting};
 use support::{PktBuilder, XdpAction, program, program_with};
 
 const UDP: u8 = 17;
@@ -26,6 +26,7 @@ fn later_fragment(dport: u16) -> Vec<u8> {
 
 fn allow_proto(proto: u8, lo: u16, hi: u16) -> LpmValue {
     let mut value = LpmValue::zeroed();
+    value.deadline = Deadline::never();
     value.action = Action::Allow;
     value.scope_len = 1;
     value.scopes[0] = Scope::new(proto, lo, hi);
@@ -35,6 +36,7 @@ fn allow_proto(proto: u8, lo: u16, hi: u16) -> LpmValue {
 
 fn deny_everything() -> LpmValue {
     let mut value = LpmValue::zeroed();
+    value.deadline = Deadline::never();
     value.action = Action::Drop;
     value
 }

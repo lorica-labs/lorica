@@ -5,7 +5,7 @@
 
 mod support;
 
-use carapace_common::{Action, LpmKey, LpmValue, setting};
+use carapace_common::{Action, Deadline, LpmKey, LpmValue, setting};
 use support::{PktBuilder, XdpAction, program, program_with};
 
 const V4_ECHO_REQUEST: u8 = 8;
@@ -34,6 +34,7 @@ fn every_settings_word() -> impl Iterator<Item = u32> {
 
 fn deny_everything() -> LpmValue {
     let mut value = LpmValue::zeroed();
+    value.deadline = Deadline::never();
     value.action = Action::Drop;
     value
 }

@@ -4,7 +4,7 @@
 
 mod support;
 
-use carapace_common::{Action, CounterId, LpmKey, LpmValue, Scope, setting};
+use carapace_common::{Action, CounterId, Deadline, LpmKey, LpmValue, Scope, setting};
 use support::{PktBuilder, XdpAction, program, program_with};
 
 const UDP: u8 = 17;
@@ -18,6 +18,7 @@ fn entry_slot(index: u32) -> u32 {
 
 fn deny(scope_len: u8) -> LpmValue {
     let mut value = LpmValue::zeroed();
+    value.deadline = Deadline::never();
     value.action = Action::Drop;
     value.scope_len = scope_len;
     value
@@ -25,6 +26,7 @@ fn deny(scope_len: u8) -> LpmValue {
 
 fn allow_udp(port: u16, slot: u32) -> LpmValue {
     let mut value = LpmValue::zeroed();
+    value.deadline = Deadline::never();
     value.action = Action::Allow;
     value.scope_len = 1;
     value.scopes[0] = Scope::new(UDP, port, port);
