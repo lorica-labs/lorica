@@ -13,6 +13,6 @@ pub mod wire;
 pub use hash::SipHasher24;
 pub use ttl::Deadline;
 pub use wire::{
-    Action, CounterId, EventHeader, Family, FragState, LpmKey, LpmValue, PacketView, SCOPE_MAX,
-    Scope, anomaly,
+    Action, CounterId, DEFAULT_SETTINGS, EventHeader, Family, FragState, LpmKey, LpmValue,
+    PacketView, SCOPE_MAX, SETTINGS_SYMBOL, Scope, anomaly, setting,
 };

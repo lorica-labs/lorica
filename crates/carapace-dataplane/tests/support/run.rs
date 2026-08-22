@@ -8,11 +8,11 @@
 use std::{env, fs, path::PathBuf};
 
 use aya::{
-    Ebpf,
+    Ebpf, EbpfLoader,
     maps::{MapData, PerCpuArray},
     programs::{TestRun, TestRunOptions, Xdp},
 };
-use carapace_common::{CounterId, PacketView};
+use carapace_common::{CounterId, DEFAULT_SETTINGS, PacketView, SETTINGS_SYMBOL};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum XdpAction {
@@ -68,6 +68,13 @@ pub struct TestProg {
 
 impl TestProg {
     pub fn load(name: &str) -> Self {
+        Self::load_with(name, DEFAULT_SETTINGS)
+    }
+
+    /// Loads with a policy word. The settings are a load-time global rather than a
+    /// map, so a different policy is a different load, which is also what a test
+    /// wants: nothing carries over between cases.
+    pub fn load_with(name: &str, settings: u32) -> Self {
         let path = object_path();
         let object = fs::read(&path).unwrap_or_else(|err| {
             panic!(
@@ -78,7 +85,9 @@ impl TestProg {
             )
         });
 
-        let mut ebpf = Ebpf::load(&object)
+        let mut ebpf = EbpfLoader::new()
+            .override_global(SETTINGS_SYMBOL, &settings, true)
+            .load(&object)
             .unwrap_or_else(|err| panic!("loading {} failed: {err}", path.display()));
         let program: &mut Xdp = ebpf
             .program_mut(name)

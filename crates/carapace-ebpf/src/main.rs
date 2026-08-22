@@ -4,6 +4,7 @@
 mod helpers;
 mod maps;
 mod parse;
+mod settings;
 mod stage;
 
 use aya_ebpf::{macros::xdp, programs::XdpContext};

@@ -9,19 +9,22 @@
 
 mod support;
 
-use carapace_common::{Family, FragState, anomaly};
+use carapace_common::{Family, FragState, anomaly, setting};
 use support::{
     PktBuilder, XdpAction,
     pkt::{
         IPPROTO_DSTOPTS, IPPROTO_ICMP, IPPROTO_ICMPV6, IPPROTO_TCP, IPPROTO_UDP, MIN_TEST_RUN_LEN,
     },
-    program,
+    program, program_with,
 };
 
 const ETH: u32 = 14;
 const IPV4_FIXED: u32 = 20;
 const IPV6_FIXED: u32 = 40;
 const VLAN_TAG: u32 = 4;
+/// A flag combination the sanity stage accepts, so a parsing case is not refused by a
+/// later stage for a reason that has nothing to do with parsing.
+const TCP_SYN: u8 = 1 << 1;
 
 #[test]
 fn bare_ethernet_ipv4() {
@@ -97,7 +100,11 @@ fn a_third_tag_is_refused_with_a_counter() {
 #[test]
 fn ipv4_without_options() {
     let prog = program();
-    let pkt = PktBuilder::eth().ipv4().tcp(1111, 443).build();
+    let pkt = PktBuilder::eth()
+        .ipv4()
+        .tcp(1111, 443)
+        .tcp_flags(TCP_SYN)
+        .build();
     assert_eq!(prog.run(&pkt), XdpAction::Pass);
 
     let view = prog.parsed();
@@ -111,7 +118,7 @@ fn ipv4_without_options() {
 /// bug and a port filter bypass at the same time.
 #[test]
 fn ipv4_options_move_the_destination_port() {
-    let prog = program();
+    let prog = program_with(setting::ACCEPT_IP_OPTIONS);
     // Router Alert (148), length 4, then two no-operation bytes.
     let pkt = PktBuilder::eth()
         .ipv4_options(&[148, 4, 0, 0, 1, 1, 1, 1])
@@ -133,7 +140,7 @@ fn ipv4_options_move_the_destination_port() {
 /// presence of options is what the policy is stated on.
 #[test]
 fn an_inconsistent_option_length_does_not_move_the_transport_header() {
-    let prog = program();
+    let prog = program_with(setting::ACCEPT_IP_OPTIONS);
     // Option 148 claiming a length of 40 inside an 8-byte option area.
     let pkt = PktBuilder::eth()
         .ipv4_options(&[148, 40, 0, 0, 1, 1, 1, 1])
@@ -151,7 +158,7 @@ fn an_inconsistent_option_length_does_not_move_the_transport_header() {
 /// There is no walker to spin, and the packet still comes out with a verdict.
 #[test]
 fn a_zero_length_option_is_harmless() {
-    let prog = program();
+    let prog = program_with(setting::ACCEPT_IP_OPTIONS);
     let pkt = PktBuilder::eth()
         .ipv4_options(&[148, 0, 0, 0])
         .udp(1111, 30_120)

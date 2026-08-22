@@ -9,11 +9,15 @@ pub mod pkt;
 pub mod run;
 
 pub use pkt::PktBuilder;
-pub use run::{HelperCounts, TestProg, XdpAction};
+pub use run::{TestProg, XdpAction};
 
 /// The name of the program under test, as it appears in the ELF.
 pub const PROGRAM: &str = "carapace_xdp";
 
 pub fn program() -> TestProg {
     TestProg::load(PROGRAM)
+}
+
+pub fn program_with(settings: u32) -> TestProg {
+    TestProg::load_with(PROGRAM, settings)
 }
