@@ -2,7 +2,7 @@
 # Build the kernel tests on the build VM and run them on the measurement VM.
 #
 #   target-tests.sh [--crate NAME] [--test NAME] [--features LIST]
-#                   [--ebpf-features LIST] [--no-ebpf] [--] [args for the test]
+#                   [--ebpf-features LIST] [--plain] [--no-ebpf] [--] [args for the test]
 #
 # Runs on the development host. The measurement VM is the only machine with the target
 # kernel and the only one that may be measured, and it has no toolchain: building there
@@ -27,7 +27,7 @@ PASS_THROUGH=()
 while [ $# -gt 0 ]; do
     case $1 in
         --crate|--test|--features|--ebpf-features) BUILD_ARGS+=("$1" "$2"); shift 2 ;;
-        --no-ebpf) BUILD_ARGS+=("$1"); shift ;;
+        --plain|--no-ebpf) BUILD_ARGS+=("$1"); shift ;;
         --)        shift; PASS_THROUGH=("$@"); break ;;
         -h|--help) sed -n '2,15p' "$0"; exit 0 ;;
         *) echo "unknown argument: $1" >&2; exit 2 ;;

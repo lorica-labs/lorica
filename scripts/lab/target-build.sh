@@ -3,7 +3,7 @@
 # and pack it into one tar the caller streams across.
 #
 #   target-build.sh [--crate NAME] [--test NAME] [--features LIST]
-#                   [--ebpf-features LIST] [--no-ebpf]
+#                   [--ebpf-features LIST] [--plain] [--no-ebpf]
 #
 # The measurement VM has no toolchain, and its glibc is two minor versions behind this
 # one: a dynamically linked binary built here does not start there. A statically linked
@@ -31,6 +31,7 @@ while [ $# -gt 0 ]; do
         --test)           TEST=$2; shift 2 ;;
         --features)       FEATURES=$2; shift 2 ;;
         --ebpf-features)  EBPF_FEATURES=$2; shift 2 ;;
+        --plain)          EBPF_FEATURES=""; shift ;;
         --no-ebpf)        WANT_EBPF=0; shift ;;
         -h|--help)        sed -n '2,17p' "$0"; exit 0 ;;
         *) echo "unknown argument: $1" >&2; exit 2 ;;
