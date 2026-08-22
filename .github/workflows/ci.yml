@@ -82,13 +82,27 @@ jobs:
 
   # 6.8 is the core floor, 6.12 the floor of the SYN cookie module, plus the
   # newest LTS. A failure on 6.8 is blocking: it is the audience.
+  #
+  # The tests run on the runner kernel when it is one of the three, and under
+  # virtme-ng otherwise, which pulls a precompiled kernel from the Ubuntu mainline
+  # archive. A runner without /dev/kvm makes those versions declared unobtained
+  # rather than silently skipped, which is why this job is allowed to report amber.
   kernel-matrix:
     if: github.ref == 'refs/heads/master'
     runs-on: ubuntu-24.04
     continue-on-error: true
     steps:
       - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
       - uses: dtolnay/rust-toolchain@nightly
         with:
           components: rust-src
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo install bpf-linker --locked
+      # The test binaries are static musl: a virtme-ng guest has the host filesystem
+      # read-only and no toolchain, so nothing can be built on the kernel under test.
+      - run: rustup target add x86_64-unknown-linux-musl
+      # clang builds the bench objects that travel with the tests, perf counts
+      # xdp:xdp_exception, virtme-ng supplies the kernels the runner is not running.
+      - run: sudo apt-get update && sudo apt-get install -y clang virtme-ng linux-tools-common linux-tools-generic
       - run: scripts/lab/kernel-matrix.sh v6.8 v6.12 v7.0
