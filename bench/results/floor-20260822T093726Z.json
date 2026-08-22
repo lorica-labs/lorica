@@ -1,0 +1,18 @@
+{
+  "captured_utc": "2026-08-22T09:37:27Z",
+  "host": "carapace-target",
+  "kernel": "6.8.0-138-generic",
+  "environment": "env-20260822T093726Z.txt",
+  "object": "bench/progs/xdp_pass.o",
+  "data_in": "bench/data/udp64.bin",
+  "iterations_per_run": 1000000,
+  "repeats": 3,
+  "jited_prog_len": 20,
+  "xlated_prog_len": 16,
+  "attach_mode": "xdp",
+  "ns_per_run": [15,16,15],
+  "ns_per_run_median": 15,
+  "ns_per_run_bpf_stats_enabled": [79,80,79],
+  "ns_per_run_bpf_stats_enabled_median": 79,
+  "instrumentation_cost_ns": 64
+}
