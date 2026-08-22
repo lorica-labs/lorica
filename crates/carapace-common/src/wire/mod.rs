@@ -3,11 +3,13 @@
 mod counters;
 mod event;
 mod keys;
+mod packet;
 mod verdict;
 
 pub use counters::CounterId;
 pub use event::EventHeader;
 pub use keys::{LpmKey, V4_MAPPED_PREFIX_BITS};
+pub use packet::{Family, FragState, PacketView, anomaly};
 pub use verdict::{Action, LpmValue, SCOPE_MAX, Scope};
 
 use core::mem::{align_of, size_of};
@@ -23,3 +25,5 @@ const _: () = assert!(size_of::<LpmKey>() == 20);
 const _: () = assert!(align_of::<LpmKey>() == 4);
 const _: () = assert!(size_of::<EventHeader>() == 16);
 const _: () = assert!(align_of::<EventHeader>() == 8);
+const _: () = assert!(size_of::<PacketView>() == 60);
+const _: () = assert!(align_of::<PacketView>() == 4);

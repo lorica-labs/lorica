@@ -10,8 +10,8 @@ rust-version.workspace = true
 # Tests that need a live kernel: loading, attaching, BPF_PROG_TEST_RUN. Off by
 # default so `cargo test --workspace` stays green on Windows.
 kernel-tests = []
-# Counts helper calls actually executed for one packet. Distinct from the static
-# ELF budget: this one measures the per-packet budget of the spec.
+# Counts helper calls actually executed for one packet. Distinct from the static ELF
+# budget: this one measures the per-packet budget of the spec.
 count-helpers = []
 
 [dependencies]
@@ -19,6 +19,3 @@ carapace-common.workspace = true
 aya.workspace = true
 libc.workspace = true
 thiserror.workspace = true
-
-[dev-dependencies]
-aya-obj.workspace = true

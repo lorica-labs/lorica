@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+# Copy the working tree to a lab machine and run a command there.
+#
+#   deploy.sh <host> [command...]
+#
+# Runs on the development host, not on a VM. It ships the working tree rather than a
+# pushed commit so a task can be verified before it is committed, which is the order
+# the method asks for.
+#
+# The retry loop is not defensive programming: the overlay the lab is reached through
+# drops a connection every few minutes, and a failed copy that looks like a failed
+# build costs more than the loop.
+
+set -uo pipefail
+
+cd "$(dirname "$0")/../.." || exit 1
+
+HOST=${1:-}
+[ -n "$HOST" ] || { echo "usage: deploy.sh <host> [command...]" >&2; exit 2; }
+shift
+
+REMOTE_DIR=${CARAPACE_REMOTE_DIR:-src}
+ATTEMPTS=${CARAPACE_SSH_ATTEMPTS:-4}
+
+# target/ is excluded so the remote build cache survives, and .git so the remote
+# checkout is not rewritten under a running build.
+paths=(crates scripts bench Cargo.toml Cargo.lock rust-toolchain.toml rustfmt.toml clippy.toml)
+existing=()
+for path in "${paths[@]}"; do
+    [ -e "$path" ] && existing+=("$path")
+done
+
+attempt=1
+while [ "$attempt" -le "$ATTEMPTS" ]; do
+    if tar cf - --exclude=target --exclude='*.o' "${existing[@]}" \
+        | ssh -o BatchMode=yes -o ConnectTimeout=25 "$HOST" "tar xf - -C ~/$REMOTE_DIR"; then
+        break
+    fi
+    printf 'deploy attempt %d of %d failed\n' "$attempt" "$ATTEMPTS" >&2
+    attempt=$((attempt + 1))
+done
+[ "$attempt" -le "$ATTEMPTS" ] || { echo "could not copy the tree to $HOST" >&2; exit 1; }
+
+[ $# -eq 0 ] && exit 0
+
+attempt=1
+while [ "$attempt" -le "$ATTEMPTS" ]; do
+    ssh -o BatchMode=yes -o ConnectTimeout=25 "$HOST" \
+        "bash -lc 'cd ~/$REMOTE_DIR && $*'"
+    status=$?
+    # 255 is ssh itself failing. Any other code is the remote command speaking, and
+    # retrying it would hide a real failure.
+    [ "$status" -ne 255 ] && exit "$status"
+    printf 'connection to %s dropped, retrying\n' "$HOST" >&2
+    attempt=$((attempt + 1))
+done
+echo "could not reach $HOST" >&2
+exit 1

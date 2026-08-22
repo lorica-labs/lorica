@@ -11,9 +11,12 @@ repository = "https://github.com/hookwood/carapace"
 [workspace]
 
 [features]
-# Mirror of the userspace feature. Wraps every helper call in a counter so a test
-# can assert the per-packet budget of the spec on a given packet.
+# Mirror of the userspace feature. Counts the helper calls actually executed for one
+# packet, so a test can assert the per-packet budget of the spec.
 count-helpers = []
+# Publishes the parsed view into a map. Parsing has to be verifiable before any stage
+# exists to act on it.
+parse-probe = []
 
 [dependencies]
 carapace-common = { path = "../carapace-common" }
