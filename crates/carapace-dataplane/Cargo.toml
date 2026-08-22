@@ -14,6 +14,11 @@ kernel-tests = []
 # budget: this one measures the per-packet budget of the spec.
 count-helpers = []
 
+[dev-dependencies]
+# Reads the compiled eBPF object. Portable and already in the tree through aya, so
+# the static guard adds nothing to the dependency surface.
+object.workspace = true
+
 [dependencies]
 carapace-common.workspace = true
 aya.workspace = true

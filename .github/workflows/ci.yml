@@ -37,7 +37,6 @@ jobs:
       - run: cargo test --workspace
       # Assertion 1: helper calls present in the program, all branches counted.
       - name: helper call budget
-        continue-on-error: true
         run: cargo test -p carapace-dataplane --test helper_budget
       # Assertion 6: no allocation inside the tick.
       - name: no allocation in the tick

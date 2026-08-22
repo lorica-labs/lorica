@@ -369,3 +369,22 @@ fn the_stated_lengths_reach_the_view() {
     assert_eq!(view.ip_total_len as usize, pkt.len() - ETH as usize);
     assert_eq!(view.l4_len, 8 + 16);
 }
+
+/// The per-packet budget, on the packet the budget is written about: a legitimate UDP
+/// packet in steady state. This is the figure the design is stated in, and it is not
+/// the static ceiling of the program, which counts every branch at once.
+///
+/// One clock read and no lookup at this point. The lookup arrives with the list; the
+/// clock is read once in `stage::run` and passed down, and a stage taking it again
+/// would double it.
+#[cfg(feature = "count-helpers")]
+#[test]
+fn a_legitimate_packet_reads_the_clock_once_and_looks_nothing_up() {
+    let prog = program();
+    let pkt = PktBuilder::eth().ipv4().udp(1111, 30_120).build();
+    assert_eq!(prog.run(&pkt), XdpAction::Pass);
+
+    let counts = prog.helper_counts();
+    assert_eq!(counts.clock_reads, 1, "the clock was read {} times", counts.clock_reads);
+    assert_eq!(counts.map_lookups, 0, "nothing looks anything up yet");
+}

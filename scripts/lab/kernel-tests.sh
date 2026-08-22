@@ -33,19 +33,35 @@ die() { printf 'FAIL  %s\n' "$1" >&2; exit 1; }
 sudo -n true 2>/dev/null \
     || die "sudo requires a password; loading an XDP program needs CAP_BPF and CAP_NET_ADMIN"
 
-printf 'building the eBPF object with features: %s\n' "${EBPF_FEATURES:-none}"
-if [ -n "$EBPF_FEATURES" ]; then
-    (cd crates/carapace-ebpf && cargo +nightly build --release --features "$EBPF_FEATURES") \
-        || die "the eBPF build failed"
-else
-    (cd crates/carapace-ebpf && cargo +nightly build --release) || die "the eBPF build failed"
-fi
+# Two objects, and they must not share a target directory. The instrumented one adds
+# a map write per counted call, so a static call budget read from it would be
+# measuring the instrumentation; the plain one is what ships.
+echo 'building the eBPF object that ships'
+(cd crates/carapace-ebpf && cargo +nightly build --release) || die "the plain eBPF build failed"
+PLAIN=$PWD/crates/carapace-ebpf/target/bpfel-unknown-none/release/carapace-ebpf
+[ -f "$PLAIN" ] || die "no object at $PLAIN after a successful build"
+export CARAPACE_EBPF_PLAIN_OBJ=$PLAIN
 
-OBJ=$PWD/crates/carapace-ebpf/target/bpfel-unknown-none/release/carapace-ebpf
+if [ -n "$EBPF_FEATURES" ]; then
+    printf 'building the instrumented eBPF object with features: %s\n' "$EBPF_FEATURES"
+    INSTRUMENTED=$PWD/crates/carapace-ebpf/target/instrumented
+    (cd crates/carapace-ebpf \
+        && CARGO_TARGET_DIR=$INSTRUMENTED cargo +nightly build --release \
+            --features "$EBPF_FEATURES") \
+        || die "the instrumented eBPF build failed"
+    OBJ=$INSTRUMENTED/bpfel-unknown-none/release/carapace-ebpf
+else
+    OBJ=$PLAIN
+fi
 [ -f "$OBJ" ] || die "no object at $OBJ after a successful build"
 export CARAPACE_EBPF_OBJ=$OBJ
 
-args=(test -p carapace-dataplane --features kernel-tests --no-run
+# The userspace feature has to match the object: a test that reads the helper counts
+# would otherwise look for a map the program was not built with.
+features=kernel-tests
+case $EBPF_FEATURES in *count-helpers*) features=$features,count-helpers ;; esac
+
+args=(test -p carapace-dataplane --features "$features" --no-run
       --message-format=json-render-diagnostics)
 [ -n "$TEST" ] && args+=(--test "$TEST")
 
@@ -68,7 +84,8 @@ for line in sys.stdin:
 status=0
 for binary in "${binaries[@]}"; do
     printf '\n--- %s\n' "$(basename "$binary")"
-    sudo -n --preserve-env=CARAPACE_EBPF_OBJ "$binary" "${PASS_THROUGH[@]}" || status=1
+    sudo -n --preserve-env=CARAPACE_EBPF_OBJ,CARAPACE_EBPF_PLAIN_OBJ \
+        "$binary" "${PASS_THROUGH[@]}" || status=1
 done
 
 exit $status
