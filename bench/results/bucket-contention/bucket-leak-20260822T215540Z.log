@@ -1,0 +1,4 @@
+variant,cpus,repeat,offered_units,enforced_units,total_units,enforced_fraction,total_fraction
+xdp_bucket_percpu_entry,4,3000000,600000000,149997767,599981724,0.2500,1.0000
+xdp_bucket_percpu_bank,4,3000000,600000000,149997423,599983498,0.2500,1.0000
+bucket-bench-run: global_racing_e is not under /sys/fs/bpf/bucket-bench/maps; this kernel may truncate map names differently

@@ -1,0 +1,1 @@
+ $p; sudo -n bpftool prog run pinned /sys/fs/bpf/fib-bench/$p data_in ~/fib-bench/fib.bin repeat 1000000 | tr -d n; echo; done && echo returns: && sudo -n bpftool map dump pinned /sys/fs/bpf/fib-bench/maps/fib_returns: -c: line 2: syntax error: unexpected end of file

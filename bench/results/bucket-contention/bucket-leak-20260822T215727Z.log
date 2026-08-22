@@ -1,0 +1,6 @@
+variant,cpus,repeat,offered_units,enforced_units,total_units,enforced_fraction,total_fraction
+xdp_bucket_percpu_entry,4,3000000,600000000,149996719,599982834,0.2500,1.0000
+xdp_bucket_percpu_bank,4,3000000,600000000,149996212,599968076,0.2500,0.9999
+xdp_bucket_global_race,4,3000000,600000000,229145353,229145353,0.3819,0.3819
+xdp_bucket_global_lock_entry,4,3000000,600000000,597388217,597388217,0.9956,0.9956
+xdp_bucket_global_lock_bank,4,3000000,600000000,595726373,595726373,0.9929,0.9929

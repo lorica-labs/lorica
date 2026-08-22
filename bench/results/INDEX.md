@@ -22,6 +22,13 @@ E5-2683 v3, virtio-net, 4 pinned vCPU). The recipe to regenerate any of these is
 | Per-packet cost, four implemented stages | 44 ns together | `scripts/lab/measure-stage-cost.sh` | `stage-cost/stage-cost.csv` | `stage-cost/env-20260822T211828Z.txt` |
 | Per-packet cost, whole pipeline | 243 ns, spread 15 ns over 7 passes | `scripts/lab/measure-stage-cost.sh` | `stage-cost/sweep-*.txt` | `stage-cost/env-20260822T211828Z.txt` |
 | Campaign-to-campaign spread, same object | 236 to 288 ns (±11 %) | `scripts/lab/measure-stage-cost.sh` | `stage-cost/sweep-*.txt` | `stage-cost/env-20260822T211828Z.txt` |
+| Bank layout, per-CPU, cost | 85 ns, scales 3.83x on 4 cores | `scripts/lab/measure-bucket-contention.sh` | `bucket-contention/bucket-contention.csv` | `bucket-contention/env-20260822T215728Z.txt` |
+| Bank layout, shared unlocked, cost | 84 ns, 250 ns under a concentrated attack | `scripts/lab/measure-bucket-contention.sh` | `bucket-contention/bucket-contention.csv` | `bucket-contention/env-20260822T215728Z.txt` |
+| Bank layout, shared locked, cost | 107 ns, 1988 ns and 0.24x under a concentrated attack | `scripts/lab/measure-bucket-contention.sh` | `bucket-contention/bucket-contention.csv` | `bucket-contention/env-20260822T215728Z.txt` |
+| Per-CPU dilution | 0.2500 of the offered traffic on 4 cores | `scripts/lab/measure-bucket-contention.sh` | `bucket-contention/bucket-leak.csv` | `bucket-contention/env-20260822T215728Z.txt` |
+| Shared unlocked bank, lost updates | charges 0.3819, so 2.62x offered | `scripts/lab/measure-bucket-contention.sh` | `bucket-contention/bucket-leak.csv` | `bucket-contention/env-20260822T215728Z.txt` |
+| Shared counter, atomic add | 24 ns alone, 156 ns and 0.87x on 4 cores | `scripts/lab/measure-bucket-contention.sh` | `bucket-contention/bucket-contention.csv` | `bucket-contention/env-20260822T215728Z.txt` |
+| bpf_fib_lookup vs LPM lookup | 48 ns vs 9 ns above the floor, ratio 5.3 | `scripts/lab/measure-fib-vs-lpm.sh` | `fib-vs-lpm/fib-vs-lpm.csv` | `fib-vs-lpm/env-20260822T220149Z.txt` |
 
 The `xdp:xdp_exception` counter is zero on every retained run; any run with a nonzero value was
 discarded, not annotated.
