@@ -17,6 +17,11 @@ E5-2683 v3, virtio-net, 4 pinned vCPU). The recipe to regenerate any of these is
 | XDP_TX ceiling | â‰¥ 290 kpps, ratio ~1.0 | `scripts/lab/measure-xdp-tx.sh` | `xdp-tx/xdp-tx.csv` | `xdp-tx/env-20260822T111604Z.txt` |
 | fsync latency | p50 3.16 ms, p99 6.26 ms | `scripts/lab/measure-storage.sh` | `storage/storage.json`, `storage/fsync-fio.json` | `storage/env-20260822T111941Z.txt` |
 | Cold read | 1.4 GB/s (host cache, see report) | `scripts/lab/measure-storage.sh` | `storage/storage.json` | `storage/env-20260822T111941Z.txt` |
+| Per-packet cost, parsing | 148 ns (61 % of the total) | `scripts/lab/measure-stage-cost.sh` | `stage-cost/stage-cost.csv`, `stage-cost/sweep-*.txt` | `stage-cost/env-20260822T211828Z.txt` |
+| Per-packet cost, one clock read | 54 ns (22 %) | `scripts/lab/measure-stage-cost.sh` | `stage-cost/stage-cost.csv` | `stage-cost/env-20260822T211828Z.txt` |
+| Per-packet cost, four implemented stages | 44 ns together | `scripts/lab/measure-stage-cost.sh` | `stage-cost/stage-cost.csv` | `stage-cost/env-20260822T211828Z.txt` |
+| Per-packet cost, whole pipeline | 243 ns, spread 15 ns over 7 passes | `scripts/lab/measure-stage-cost.sh` | `stage-cost/sweep-*.txt` | `stage-cost/env-20260822T211828Z.txt` |
+| Campaign-to-campaign spread, same object | 236 to 288 ns (±11 %) | `scripts/lab/measure-stage-cost.sh` | `stage-cost/sweep-*.txt` | `stage-cost/env-20260822T211828Z.txt` |
 
 The `xdp:xdp_exception` counter is zero on every retained run; any run with a nonzero value was
 discarded, not annotated.

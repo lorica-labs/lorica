@@ -89,8 +89,13 @@ impl TestProg {
     /// map, so a different policy is a different load, which is also what a test
     /// wants: nothing carries over between cases.
     pub fn load_with(name: &str, settings: u32) -> Self {
-        let path = object_path();
-        let object = fs::read(&path).unwrap_or_else(|err| {
+        Self::load_object(&object_path(), name, settings)
+    }
+
+    /// Loads a named object rather than the one the environment points at, for the one
+    /// measurement that has to compare two builds of the same program in one process.
+    pub fn load_object(path: &std::path::Path, name: &str, settings: u32) -> Self {
+        let object = fs::read(path).unwrap_or_else(|err| {
             panic!(
                 "cannot read the eBPF object at {}: {err}\n\
                  build it with: cd crates/carapace-ebpf && cargo +nightly build --release\n\

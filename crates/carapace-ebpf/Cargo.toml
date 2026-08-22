@@ -17,6 +17,12 @@ count-helpers = []
 # Publishes the parsed view into a map. Parsing has to be verifiable before any stage
 # exists to act on it.
 parse-probe = []
+# Stops the pipeline after a chosen stage, so the cost of one stage is the difference
+# between two whole-path measurements. Every stage already has its own JIT symbol, but a
+# profile attributes cycles to four symbols all named `run` and to a dispatcher
+# trampoline that absorbs a third of the samples; a difference of nanoseconds does not
+# need a denominator.
+stage-cutoff = []
 
 [dependencies]
 carapace-common = { path = "../carapace-common" }

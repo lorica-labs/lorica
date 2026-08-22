@@ -51,6 +51,9 @@ features=carapace-dataplane/kernel-tests
 case $EBPF_FEATURES in
     *count-helpers*) features=$features,carapace-dataplane/count-helpers ;;
 esac
+case $EBPF_FEATURES in
+    *stage-cutoff*) features=$features,carapace-dataplane/stage-cutoff ;;
+esac
 
 args=(test -p "$CRATE" --features "$features" --no-run
       --message-format=json-render-diagnostics)

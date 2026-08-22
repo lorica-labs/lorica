@@ -62,6 +62,9 @@ fi
 case $EBPF_FEATURES in
     *count-helpers*) [ "$WANT_EBPF" -eq 1 ] && FEATURES=$FEATURES,count-helpers ;;
 esac
+case $EBPF_FEATURES in
+    *stage-cutoff*) [ "$WANT_EBPF" -eq 1 ] && FEATURES=$FEATURES,stage-cutoff ;;
+esac
 
 args=(test -p "$CRATE" --target "$TRIPLE" --no-run
       --message-format=json-render-diagnostics)

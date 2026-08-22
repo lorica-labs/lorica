@@ -13,6 +13,9 @@ kernel-tests = []
 # Counts helper calls actually executed for one packet. Distinct from the static ELF
 # budget: this one measures the per-packet budget of the spec.
 count-helpers = []
+# Mirror of the eBPF feature of the same name. The per-stage cost sweep needs an object
+# that can be told where to stop, so it does not belong to the default suite.
+stage-cutoff = []
 
 # A measurement is not a test: it takes parameters, prints a record and asserts
 # nothing. libtest has no way to pass `--entries` through, so this one owns its main.

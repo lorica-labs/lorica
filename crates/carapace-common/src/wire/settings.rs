@@ -31,6 +31,18 @@ pub mod setting {
 /// pass ICMP, drop later fragments.
 pub const DEFAULT_SETTINGS: u32 = 0;
 
+/// Where the measurement build reads the pipeline cutoff from, in the same word.
+///
+/// The upper half of the policy word rather than a second global, because the loader
+/// already patches this one and a measurement is not worth a second patching path. The
+/// stages that read the cutoff exist only in a build with the `stage-cutoff` feature,
+/// and a production load carries zero here, which cuts nothing.
+pub const STAGE_CUTOFF_SHIFT: u32 = 16;
+
+/// The cutoff value that runs the whole pipeline. It is what a production load carries,
+/// so forgetting to set one measures the program and not a truncation of it.
+pub const NO_CUTOFF: u32 = 0;
+
 /// The symbol the loader patches. Named here so the program and the loader cannot
 /// disagree about it.
 pub const SETTINGS_SYMBOL: &str = "SETTINGS";

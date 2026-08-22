@@ -38,3 +38,13 @@ pub fn drop_icmp_other() -> bool {
 pub fn allow_later_fragments() -> bool {
     flags() & setting::ALLOW_LATER_FRAGMENTS != 0
 }
+
+/// Where the pipeline stops, for the per-stage cost measurement and nowhere else.
+///
+/// Only compiled into the measurement object, so the object that ships has no cutoff to
+/// read and pays nothing for one. Zero runs the whole pipeline.
+#[cfg(feature = "stage-cutoff")]
+#[inline(always)]
+pub fn stage_cutoff() -> u32 {
+    flags() >> carapace_common::STAGE_CUTOFF_SHIFT
+}
