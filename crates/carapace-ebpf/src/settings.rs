@@ -25,13 +25,11 @@ pub fn accept_ip_options() -> bool {
 }
 
 #[inline(always)]
-#[expect(dead_code, reason = "read by the ICMP stage, which lands next")]
 pub fn drop_icmp_echo() -> bool {
     flags() & setting::DROP_ICMP_ECHO != 0
 }
 
 #[inline(always)]
-#[expect(dead_code, reason = "read by the ICMP stage, which lands next")]
 pub fn drop_icmp_other() -> bool {
     flags() & setting::DROP_ICMP_OTHER != 0
 }

@@ -15,6 +15,7 @@ pub enum CounterId {
     SanityIpOptionsRefused,
 
     IcmpPathMtuPassed,
+    IcmpNeighborPassed,
     IcmpEchoDropped,
     IcmpOtherDropped,
 
@@ -29,7 +30,7 @@ pub enum CounterId {
 }
 
 impl CounterId {
-    pub const ALL: [CounterId; 17] = [
+    pub const ALL: [CounterId; 18] = [
         Self::ParseTruncated,
         Self::ParseDepthExceeded,
         Self::ParseUnknownEncap,
@@ -38,6 +39,7 @@ impl CounterId {
         Self::SanityTcpFlags,
         Self::SanityIpOptionsRefused,
         Self::IcmpPathMtuPassed,
+        Self::IcmpNeighborPassed,
         Self::IcmpEchoDropped,
         Self::IcmpOtherDropped,
         Self::LpmAllowExit,
@@ -67,6 +69,7 @@ impl CounterId {
             Self::SanityTcpFlags => "sanity_tcp_flags",
             Self::SanityIpOptionsRefused => "sanity_ip_options_refused",
             Self::IcmpPathMtuPassed => "icmp_path_mtu_passed",
+            Self::IcmpNeighborPassed => "icmp_neighbor_passed",
             Self::IcmpEchoDropped => "icmp_echo_dropped",
             Self::IcmpOtherDropped => "icmp_other_dropped",
             Self::LpmAllowExit => "lpm_allow_exit",
