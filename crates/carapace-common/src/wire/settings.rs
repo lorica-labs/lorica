@@ -25,6 +25,34 @@ pub mod setting {
     /// (IPsec, IKE, large VPN packets) turns this on and accepts the degraded
     /// `(source, protocol)` key that comes with it.
     pub const ALLOW_LATER_FRAGMENTS: u32 = 1 << 3;
+
+    /// Stage 5. Set by the loader and not by the operator: the uRPF criterion is binary
+    /// and the loader evaluates it against the routing table of the ingress interface. On
+    /// a host with a default route the strict check discriminates nothing, so the stage
+    /// stays off and this bit stays clear.
+    ///
+    /// A load-time global cannot change while the program is attached, so a criterion that
+    /// flips — a DHCP lease that moves the gateway, a failover — is a reload. That is the
+    /// production path anyway, since the design is detached by default and attached on
+    /// detection, and the hysteresis of the netlink watcher exists so a flapping route does
+    /// not become a flapping reload.
+    pub const URPF_ENFORCE: u32 = 1 << 4;
+
+    /// Stage 6. Off by default: the default mode of the whole product is observation, so a
+    /// signature counts its vector and lets the packet through until an operator arms it.
+    pub const ENFORCE_SIGNATURES: u32 = 1 << 5;
+
+    /// Stage 7. Off by default, for the same reason as the signatures.
+    pub const ENFORCE_BUCKETS: u32 = 1 << 6;
+
+    /// Stage 7. Tag the excess and let it reach the stack rather than dropping it.
+    ///
+    /// Set by the loader only when the metadata capability answers yes, because marking in
+    /// XDP means writing into `xdp_md` metadata for the stack to read. On the kernel floor
+    /// of the project it answers no, the bit stays clear, and the verdict stays in the data
+    /// plane. Both paths reach the same response tier — the excess is not served normally —
+    /// which is what makes an optional capability legitimate.
+    pub const MARK_OVER_BUDGET: u32 = 1 << 7;
 }
 
 /// What the program runs with when the operator has said nothing: refuse IP options,

@@ -1,7 +1,12 @@
 /// Index into the counter array.
 ///
-/// Complete for this phase in one place on purpose: five stage tasks run in parallel
+/// Complete for the phase in one place on purpose: several stage tasks run in parallel
 /// and would otherwise each edit this file. A stage adds no variant, it uses one.
+///
+/// Adding a named counter shifts the absolute index of every per-entry slot of the
+/// unified list, since those live above the named ones. So `counter_idx` is recompiled by
+/// the policy compiler and never patched by hand, and `MapSizes.counter_entries` moves
+/// with it: `tests/memlock.rs` and `tests/memlock_real.rs` are there to refuse a drift.
 #[repr(u32)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum CounterId {
@@ -27,10 +32,45 @@ pub enum CounterId {
     FragmentFirstPassed,
     FragmentLaterDropped,
     FragmentLaterAllowed,
+
+    // Stage 5. The return codes of `bpf_fib_lookup` are counted apart because the policy
+    // differs between them: no route at all is what a convergence window looks like, and
+    // a route out of the wrong interface is what a spoofed source looks like.
+    UrpfNoRoute,
+    UrpfWrongInterface,
+    UrpfLookupUnsupported,
+
+    // Stage 6, one per vector of the catalog. A vector without its own counter cannot be
+    // told from its neighbour when an operator asks which signature fired.
+    SignatureAmpDns,
+    SignatureAmpNtp,
+    SignatureAmpSsdp,
+    SignatureAmpMemcached,
+    SignatureAmpA2s,
+    SignatureAmpRaknet,
+    SignatureLoopyPortPair,
+    SignatureFragAbuse,
+    SignatureImpossibleTcpFlags,
+    SignatureLengthMismatch,
+
+    // Stage 7. Only the exceptions are counted. Counting every accepted packet would put
+    // a map lookup on the steady-state path, which is the one the per-packet budget is
+    // stated about.
+    BucketOverBudget,
+    BucketMarked,
+
+    // Bogons and martians. They are entries of the unified list rather than a stage, so
+    // the policy compiler points all of them at this one slot: the operator wants to know
+    // that a bogon was refused, not which of two hundred reserved prefixes it was.
+    BogonRefused,
 }
 
 impl CounterId {
-    pub const ALL: [CounterId; 18] = [
+    /// Complete for this phase, appended rather than interleaved: the existing indices do
+    /// not move, so a stored `counter_idx` of a list entry keeps meaning what it meant.
+    /// The slots above the named ones do move, since there are more named ones now — see
+    /// [`Self::COUNT`].
+    pub const ALL: [CounterId; 34] = [
         Self::ParseTruncated,
         Self::ParseDepthExceeded,
         Self::ParseUnknownEncap,
@@ -49,6 +89,22 @@ impl CounterId {
         Self::FragmentFirstPassed,
         Self::FragmentLaterDropped,
         Self::FragmentLaterAllowed,
+        Self::UrpfNoRoute,
+        Self::UrpfWrongInterface,
+        Self::UrpfLookupUnsupported,
+        Self::SignatureAmpDns,
+        Self::SignatureAmpNtp,
+        Self::SignatureAmpSsdp,
+        Self::SignatureAmpMemcached,
+        Self::SignatureAmpA2s,
+        Self::SignatureAmpRaknet,
+        Self::SignatureLoopyPortPair,
+        Self::SignatureFragAbuse,
+        Self::SignatureImpossibleTcpFlags,
+        Self::SignatureLengthMismatch,
+        Self::BucketOverBudget,
+        Self::BucketMarked,
+        Self::BogonRefused,
     ];
 
     /// How many slots of the counter map the named counters occupy. Every slot above
@@ -79,6 +135,22 @@ impl CounterId {
             Self::FragmentFirstPassed => "fragment_first_passed",
             Self::FragmentLaterDropped => "fragment_later_dropped",
             Self::FragmentLaterAllowed => "fragment_later_allowed",
+            Self::UrpfNoRoute => "urpf_no_route",
+            Self::UrpfWrongInterface => "urpf_wrong_interface",
+            Self::UrpfLookupUnsupported => "urpf_lookup_unsupported",
+            Self::SignatureAmpDns => "signature_amp_dns",
+            Self::SignatureAmpNtp => "signature_amp_ntp",
+            Self::SignatureAmpSsdp => "signature_amp_ssdp",
+            Self::SignatureAmpMemcached => "signature_amp_memcached",
+            Self::SignatureAmpA2s => "signature_amp_a2s",
+            Self::SignatureAmpRaknet => "signature_amp_raknet",
+            Self::SignatureLoopyPortPair => "signature_loopy_port_pair",
+            Self::SignatureFragAbuse => "signature_frag_abuse",
+            Self::SignatureImpossibleTcpFlags => "signature_impossible_tcp_flags",
+            Self::SignatureLengthMismatch => "signature_length_mismatch",
+            Self::BucketOverBudget => "bucket_over_budget",
+            Self::BucketMarked => "bucket_marked",
+            Self::BogonRefused => "bogon_refused",
         }
     }
 

@@ -26,15 +26,54 @@ pub enum Outcome {
     Continue,
     Pass,
     Drop,
+    /// Stage 6 only, and not a verdict. The chain of the spec writes
+    /// `DROP / RATE-LIMIT` for the signatures, and rate-limiting is a routing decision:
+    /// the packet goes on to the buckets and is charged against the tighter of the two
+    /// budgets. The pipeline routes this variant rather than returning it, which is why
+    /// `decide!` does not handle it.
+    //
+    // `expect` and not `allow`: the day the signature stage constructs this variant the
+    // expectation goes unfulfilled and the build says so, which removes the attribute
+    // instead of leaving it to be noticed.
+    #[expect(dead_code)]
+    RateLimit,
+    /// Stage 7 only. Over budget, and the operator asked for the excess to reach the
+    /// stack tagged rather than to be dropped.
+    ///
+    /// Reachable only when the loader found the metadata capability, since marking in XDP
+    /// means writing into `xdp_md` metadata for the stack to read. On the kernel floor of
+    /// the project that capability answers no, so the stage answers `Drop` and the verdict
+    /// stays in the data plane — which is the reference path the capability matrix names,
+    /// and the same response tier either way.
+    #[expect(dead_code)]
+    Mark,
 }
 
 impl Outcome {
     pub const fn action(self) -> u32 {
         match self {
-            Self::Pass | Self::Continue => xdp_action::XDP_PASS,
+            // Marking wrote the metadata before returning, so what is left to do is let
+            // the packet through.
+            Self::Pass | Self::Continue | Self::Mark => xdp_action::XDP_PASS,
             Self::Drop => xdp_action::XDP_DROP,
+            // Stage 6 is the only producer and the pipeline consumes it there, so this
+            // arm is not reachable. It passes rather than drops: of the two ways to be
+            // wrong about a packet no stage decided on, dropping is the one that cannot
+            // be taken back.
+            Self::RateLimit => xdp_action::XDP_PASS,
         }
     }
+}
+
+/// Which of the two fixed budgets the buckets charge a packet against.
+///
+/// This phase applies budgets that come from the configuration and never varies them.
+/// What stage 6 chooses here is which of the two applies, not how large either one is:
+/// varying a budget from an attack state is the next phase.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Budget {
+    Normal,
+    Suspect,
 }
 
 /// Returns the outcome of a stage unless it has nothing to say.
@@ -101,9 +140,18 @@ pub fn run(ctx: &XdpContext) -> u32 {
     cut!(6);
     decide!(urpf::run(&view));
     cut!(7);
-    decide!(signature::run(&view));
+
+    // Stage 6 has three answers and only two of them end the walk. Rate-limiting is not a
+    // verdict, so it is routed here and not returned: the packet reaches the buckets
+    // carrying which budget it is charged against.
+    let budget = match signature::run(&view) {
+        Outcome::Continue => Budget::Normal,
+        Outcome::RateLimit => Budget::Suspect,
+        settled => return settled.action(),
+    };
+
     cut!(8);
-    decide!(bucket::run(&view, now_ns));
+    decide!(bucket::run(&view, now_ns, budget));
     cut!(9);
 
     // The SYN cookie stage sits here, between the buckets and the counters. It is a

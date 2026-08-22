@@ -4,9 +4,9 @@
 
 use carapace_common::PacketView;
 
-use crate::stage::Outcome;
+use crate::stage::{Budget, Outcome};
 
 #[inline(never)]
-pub fn run(_view: &PacketView, _now_ns: u64) -> Outcome {
+pub fn run(_view: &PacketView, _now_ns: u64, _budget: Budget) -> Outcome {
     Outcome::Continue
 }
