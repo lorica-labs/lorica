@@ -35,7 +35,11 @@ set -uo pipefail
 cd "$(dirname "$0")/../.." || exit 1
 
 OUT=bench/results/stage-cost
-LEVELS=1,2,3,4,5,6,7,8,9
+# Empty by default: the sweep prints how many levels the pipeline has and this script
+# reads it from there. A list written down here went stale the day a stage folded into the
+# parse, and the script then asked for a level that does not exist and reported the refusal
+# as a broken measurement. --levels stays, for measuring one level on purpose.
+LEVELS=
 IFACE=${CARAPACE_IFACE:-enp6s19}
 BUILD_HOST=${CARAPACE_BUILD_HOST:-lab-dev}
 TARGET_HOST=${CARAPACE_TARGET_HOST:-lab-target}
@@ -101,6 +105,18 @@ echo 'stages,label,ns_raw,ns_above_floor,ns_this_level,cycles,instructions,ipc,l
 
 previous_above=0
 rows=0
+if [ -z "$LEVELS" ]; then
+    count=$(grep "^LEVELS," "$sweep" | tail -1 | cut -d, -f2 | tr -dc "[:digit:]")
+    case $count in
+        ''|*[!0-9]*) die "the sweep did not say how many levels the pipeline has, see $sweep" ;;
+    esac
+    level=1
+    while [ "$level" -le "$count" ]; do
+        LEVELS="$LEVELS $level"
+        level=$((level + 1))
+    done
+fi
+
 for level in ${LEVELS//,/ }; do
     printf '\n--- level %s\n' "$level"
     out=$(remote "$TARGET_HOST" "${runner//LEVEL/$level}" 2>&1)
@@ -146,13 +162,15 @@ done
 
 [ "$rows" -gt 1 ] || die "one level is not a ventilation"
 
-# A flat curve is the failure mode that looks like a result. Refuse it here rather than
-# leave it to a reader: the whole point of the sweep is that the levels differ.
-first=$(awk -F, 'NR == 2 { print $4 }' "$csv")
-last=$(awk -F, 'END { print $4 }' "$csv")
-case $first$last in ''|*[!0-9]*) die "the CSV carries no nanosecond column" ;; esac
-[ "$last" -gt "$first" ] \
-    || die "the deepest level costs $last ns and the shallowest $first ns: the object was built without the stage-cutoff feature, so every level ran the whole pipeline"
+# A flat curve is the failure mode that looks like a result, so it is refused here rather
+# than left to a reader. On the instruction column and not on the nanoseconds: the whole
+# pipeline is seventy nanoseconds now, so a single-shot per-level figure carries more drift
+# than the difference between two levels, and this guard fired on its own noise. Instructions
+# are deterministic to about one per packet, which is what a "did the cutoff take" check needs.
+first=$(awk -F, 'NR == 2 { print $7 }' "$csv")
+last=$(awk -F, 'END { print $7 }' "$csv")
+case $first$last in ''|*[!0-9]*) die "the CSV carries no instruction column" ;; esac
+[ "$last" -gt "$first" ] || die "the deepest level executes $last instructions and the shallowest $first: the object was built without the stage-cutoff feature, so every level ran the whole pipeline"
 
 printf '\n%s\n' "$csv"
 column -s, -t "$csv" 2>/dev/null || cat "$csv"

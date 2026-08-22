@@ -144,6 +144,11 @@ fn each_stage_of_the_pipeline_costs_what_it_costs() {
     }
     let packet = steady_state_packet();
     let passes = passes();
+    // The count first, on a line of its own, because the script that wraps this in a
+    // profiler has to know how many levels to ask for. It used to carry the number itself
+    // and went stale the day a stage folded into the parse: it asked for a tenth level of
+    // a pipeline that had eight and read the refusal as a broken measurement.
+    println!("LEVELS,{}", LEVELS.len());
     println!("floor subtracted: {FLOOR_NS} ns, repeat = {REPEAT}, {passes} interleaved passes");
 
     // The plain object rides in the same interleaving as the cutoff levels: it is the
