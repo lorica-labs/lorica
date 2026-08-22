@@ -39,6 +39,11 @@ pub fn allow_later_fragments() -> bool {
     flags() & setting::ALLOW_LATER_FRAGMENTS != 0
 }
 
+#[inline(always)]
+pub fn enforce_signatures() -> bool {
+    flags() & setting::ENFORCE_SIGNATURES != 0
+}
+
 /// Where the pipeline stops, for the per-stage cost measurement and nowhere else.
 ///
 /// Only compiled into the measurement object, so the object that ships has no cutoff to

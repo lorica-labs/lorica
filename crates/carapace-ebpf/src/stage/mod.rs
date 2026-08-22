@@ -31,11 +31,6 @@ pub enum Outcome {
     /// the packet goes on to the buckets and is charged against the tighter of the two
     /// budgets. The pipeline routes this variant rather than returning it, which is why
     /// `decide!` does not handle it.
-    //
-    // `expect` and not `allow`: the day the signature stage constructs this variant the
-    // expectation goes unfulfilled and the build says so, which removes the attribute
-    // instead of leaving it to be noticed.
-    #[expect(dead_code)]
     RateLimit,
     /// Stage 7 only. Over budget, and the operator asked for the excess to reach the
     /// stack tagged rather than to be dropped.
