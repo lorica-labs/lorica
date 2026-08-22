@@ -76,18 +76,26 @@ pub struct MemlockModel {
     pub counter_bytes_per_entry: u64,
 }
 
+/// The processor count the estimate is stated for. The counter map is per-CPU, so its
+/// cost is linear in the number of possible processors and a model that did not name
+/// one would be meaningless. The loader recomputes it from the machine it is on.
+pub const REFERENCE_CPUS: u64 = 8;
+
 impl MemlockModel {
     /// Two child pointers, a prefix length and a flag word make 24 bytes of node
     /// header; the 16-byte address and the 48-byte value bring it to 88, which the
     /// slab allocator rounds to 96. A trie holding n prefixes can need up to 2n-1
     /// nodes, so an entry is charged for two.
-    pub const ESTIMATE: Self = Self {
-        list_bytes_per_entry: 96 * 2,
-        // A per-CPU array charges one aligned value per CPU. Sized for a large host
-        // rather than for the machine in front of us, because the config is compiled
-        // once and may be deployed anywhere.
-        counter_bytes_per_entry: 8 * 128,
-    };
+    ///
+    /// A per-CPU array charges one eight-byte-aligned value per possible processor.
+    pub const fn for_cpus(cpus: u64) -> Self {
+        Self {
+            list_bytes_per_entry: 96 * 2,
+            counter_bytes_per_entry: 8 * cpus,
+        }
+    }
+
+    pub const ESTIMATE: Self = Self::for_cpus(REFERENCE_CPUS);
 }
 
 /// Map sizes a configuration asks for.

@@ -11,4 +11,4 @@ pub mod profile;
 
 pub use compile::{CompileError, Compiled, Warning, compile};
 pub use config::Config;
-pub use profile::{MapSizes, MemlockModel, ProfileKind};
+pub use profile::{MapSizes, MemlockModel, ProfileKind, REFERENCE_CPUS};

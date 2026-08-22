@@ -9,10 +9,13 @@ use std::{env, fs, path::PathBuf};
 
 use aya::{
     Ebpf, EbpfLoader,
-    maps::{MapData, PerCpuArray},
+    maps::{
+        MapData, PerCpuArray,
+        lpm_trie::{Key, LpmTrie},
+    },
     programs::{TestRun, TestRunOptions, Xdp},
 };
-use carapace_common::{CounterId, DEFAULT_SETTINGS, PacketView, SETTINGS_SYMBOL};
+use carapace_common::{CounterId, DEFAULT_SETTINGS, LpmKey, LpmValue, PacketView, SETTINGS_SYMBOL};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum XdpAction {
@@ -60,6 +63,17 @@ struct ProbeView(PacketView);
 
 // SAFETY: PacketView is Copy, 'static, and has no invalid byte pattern.
 unsafe impl aya::Pod for ProbeView {}
+
+/// The same wrapper for the list value. `Action` has invalid discriminants, so the
+/// soundness here rests on the value only ever being read back after this crate wrote
+/// it, which is true of a test map.
+#[repr(transparent)]
+#[derive(Clone, Copy)]
+struct PodLpmValue(LpmValue);
+
+// SAFETY: LpmValue is Copy and 'static, and every value read out of this map was
+// written into it through this type.
+unsafe impl aya::Pod for PodLpmValue {}
 
 pub struct TestProg {
     ebpf: Ebpf,
@@ -142,14 +156,32 @@ impl TestProg {
     pub fn counter(&self, name: &str) -> u64 {
         let id = CounterId::from_name(name)
             .unwrap_or_else(|| panic!("no counter named {name} in CounterId"));
+        self.counter_at(id.index())
+    }
+
+    /// A raw slot. The ones above `CounterId::COUNT` belong to individual entries of
+    /// the unified list.
+    pub fn counter_at(&self, index: u32) -> u64 {
         let map = self.ebpf.map("COUNTERS").expect("no COUNTERS map");
         let counters: PerCpuArray<&MapData, u64> =
             PerCpuArray::try_from(map).expect("COUNTERS is not a per-CPU array");
         counters
-            .get(&id.index(), 0)
+            .get(&index, 0)
             .expect("reading a counter failed")
             .iter()
             .sum()
+    }
+
+    /// Writes one entry of the unified list, the way the loader will.
+    pub fn insert(&mut self, key: LpmKey, value: LpmValue) {
+        let map = self
+            .ebpf
+            .map_mut("UNIFIED_LIST")
+            .expect("no UNIFIED_LIST map");
+        let mut list: LpmTrie<&mut MapData, [u8; 16], PodLpmValue> =
+            LpmTrie::try_from(map).expect("UNIFIED_LIST is not an LPM trie");
+        list.insert(&Key::new(key.prefix_len, key.addr), PodLpmValue(value), 0)
+            .expect("inserting into the unified list failed");
     }
 
     /// The parsed view of the last packet run. Only present in a build with the

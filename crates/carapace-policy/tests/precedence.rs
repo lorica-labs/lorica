@@ -3,7 +3,7 @@
 //! That is counter-intuitive for anyone arriving from iptables, where the first
 //! matching rule wins, so it is written down and tested rather than assumed.
 
-use carapace_common::{Action, Deadline, SCOPE_MAX};
+use carapace_common::{Action, CounterId, Deadline, SCOPE_MAX};
 use carapace_policy::{Config, MemlockModel, compile, compile::lpm};
 
 const NOW: u64 = 1_000_000_000;
@@ -189,6 +189,31 @@ fn the_settings_word_carries_what_the_file_said() {
         carapace_common::setting::ACCEPT_IP_OPTIONS
             | carapace_common::setting::ALLOW_LATER_FRAGMENTS
     );
+}
+
+/// Each entry gets its own counter slot, so a bypass through a forged allow-listed
+/// source is visible as that entry rather than as an anonymous total.
+#[test]
+fn each_entry_gets_its_own_counter_slot() {
+    let out = compiled(
+        r#"
+        profile = "host"
+        [[rules]]
+        prefix = "10.90.1.7/32"
+        action = "allow"
+        scopes = ["tcp:443"]
+        [[rules]]
+        prefix = "10.90.1.8/32"
+        action = "allow"
+        scopes = ["tcp:443"]
+        "#,
+    );
+    let slots: Vec<u32> = out
+        .entries
+        .iter()
+        .map(|(_, value)| value.counter_idx)
+        .collect();
+    assert_eq!(slots, vec![CounterId::COUNT, CounterId::COUNT + 1]);
 }
 
 #[test]

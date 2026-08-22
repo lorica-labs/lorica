@@ -62,6 +62,7 @@ jobs:
       - name: build the eBPF program
         run: cargo +nightly build --release
         working-directory: crates/carapace-ebpf
+      - run: cargo clippy --workspace --all-targets --features carapace-dataplane/kernel-tests -- -D warnings
       - run: cargo test --workspace --features carapace-dataplane/kernel-tests
       # Assertion 2: JITed size against the baseline. bpftool 7.4 renamed the
       # field to bytes_jited; reading only the old name would compare against

@@ -49,7 +49,10 @@ impl CounterId {
         Self::FragmentLaterAllowed,
     ];
 
-    /// Size the counter map is created with.
+    /// How many slots of the counter map the named counters occupy. Every slot above
+    /// this one belongs to a single entry of the unified list, so an operator can see
+    /// which allow-listed source is leaving the pipeline rather than only that some
+    /// source did.
     pub const COUNT: u32 = Self::ALL.len() as u32;
 
     /// The name a test and the agent look a counter up by. One mapping, so a renamed

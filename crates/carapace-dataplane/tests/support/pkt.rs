@@ -350,7 +350,7 @@ impl PktBuilder {
         }
     }
 
-    fn fix_lengths(&self, out: &mut Vec<u8>, l3_off: usize) {
+    fn fix_lengths(&self, out: &mut [u8], l3_off: usize) {
         match self.family {
             Family::Unknown => {}
             Family::V4 => {

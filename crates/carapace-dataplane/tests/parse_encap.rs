@@ -377,25 +377,39 @@ fn the_stated_lengths_reach_the_view() {
     assert_eq!(view.l4_len, 8 + 16);
 }
 
-/// The per-packet budget, on the packet the budget is written about: a legitimate UDP
-/// packet in steady state. This is the figure the design is stated in, and it is not
-/// the static ceiling of the program, which counts every branch at once.
-///
-/// One clock read and no lookup at this point. The lookup arrives with the list; the
-/// clock is read once in `stage::run` and passed down, and a stage taking it again
-/// would double it.
+/// The clock is read exactly once per packet whatever the encapsulation, because it is
+/// taken in `stage::run` and passed down. A stage reading it again would double the one
+/// helper call the per-packet budget allows outside the lookups, and an encapsulation
+/// that took a different path through the parser is exactly how that would happen
+/// unnoticed. The lookup budget is asserted where the list exists.
 #[cfg(feature = "count-helpers")]
 #[test]
-fn a_legitimate_packet_reads_the_clock_once_and_looks_nothing_up() {
-    let prog = program();
-    let pkt = PktBuilder::eth().ipv4().udp(1111, 30_120).build();
-    assert_eq!(prog.run(&pkt), XdpAction::Pass);
+fn the_clock_is_read_once_whatever_the_encapsulation() {
+    let cases: [(&str, Vec<u8>); 4] = [
+        ("plain", PktBuilder::eth().ipv4().udp(1111, 30_120).build()),
+        (
+            "tagged",
+            PktBuilder::eth().vlan(42).ipv4().udp(1111, 30_120).build(),
+        ),
+        ("ipv6", PktBuilder::eth().ipv6().udp(1111, 30_120).build()),
+        (
+            "ipv6 with an extension header",
+            PktBuilder::eth()
+                .ipv6()
+                .ext_header(IPPROTO_DSTOPTS, 0)
+                .udp(1111, 30_120)
+                .build(),
+        ),
+    ];
 
-    let counts = prog.helper_counts();
-    assert_eq!(
-        counts.clock_reads, 1,
-        "the clock was read {} times",
-        counts.clock_reads
-    );
-    assert_eq!(counts.map_lookups, 0, "nothing looks anything up yet");
+    for (name, pkt) in cases {
+        // A fresh load per case, so the counts are of one packet and not of a run.
+        let prog = program();
+        assert_eq!(prog.run(&pkt), XdpAction::Pass, "{name} was not passed");
+        assert_eq!(
+            prog.helper_counts().clock_reads,
+            1,
+            "{name} read the clock more than once"
+        );
+    }
 }

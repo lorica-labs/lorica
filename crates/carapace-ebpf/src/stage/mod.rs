@@ -22,13 +22,6 @@ use crate::{helpers, parse};
 /// `Continue` is not a verdict, it is the absence of one. A stage that has nothing
 /// to say says so and costs a compare.
 #[derive(Clone, Copy, PartialEq, Eq)]
-// The two settled outcomes are constructed by the stages as they land. The expect
-// rather than an allow is deliberate: it turns into a warning of its own the day both
-// are used, so the attribute removes itself instead of rotting.
-#[expect(
-    dead_code,
-    reason = "constructed by the stages of this phase as they land"
-)]
 pub enum Outcome {
     Continue,
     Pass,

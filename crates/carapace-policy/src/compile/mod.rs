@@ -105,7 +105,7 @@ pub fn compile(
     let mut seen: BTreeMap<(u32, [u8; 16]), ()> = BTreeMap::new();
     let mut warnings = Vec::new();
 
-    for rule in &config.rules {
+    for (index, rule) in config.rules.iter().enumerate() {
         let key = lpm::parse_prefix(&rule.prefix)?;
         let prefix = lpm::describe(&key);
 
@@ -131,7 +131,10 @@ pub fn compile(
         let mut value = LpmValue::zeroed();
         value.action = action;
         value.priority = rule.priority;
-        value.counter_idx = CounterId::LpmAllowExit.index();
+        // One counter slot per entry, above the named ones. A single global counter
+        // would say that some allow-listed source left the pipeline, which is not the
+        // question an operator asks after a bypass.
+        value.counter_idx = CounterId::COUNT + index as u32;
         value.deadline = match rule.ttl_secs {
             // Only a mitigation entry is required to expire. An operator rule is
             // allowed to last as long as the file it is written in.
@@ -157,9 +160,11 @@ pub fn compile(
     let reserve = config
         .mitigation_reserve
         .unwrap_or_else(|| config.profile.default_mitigation_reserve());
+    let unified_list_entries = (entries.len() as u32).saturating_add(reserve);
     let sizes = MapSizes {
-        unified_list_entries: (entries.len() as u32).saturating_add(reserve),
-        counter_entries: CounterId::COUNT,
+        unified_list_entries,
+        // The named counters, then one slot per entry the list can hold.
+        counter_entries: CounterId::COUNT.saturating_add(unified_list_entries),
     };
 
     let needed = sizes.memlock_bytes(model);

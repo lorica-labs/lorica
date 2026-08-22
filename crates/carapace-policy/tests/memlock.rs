@@ -113,8 +113,14 @@ fn the_rules_themselves_count_against_the_budget() {
     assert_eq!(out.sizes.unified_list_entries, 16);
 }
 
+/// The counter map holds the named counters and one slot per entry the list can hold,
+/// which is what makes the batch read of tens of thousands of counters the real
+/// workload rather than a stress test.
 #[test]
-fn the_counter_map_is_sized_from_the_counter_list() {
+fn the_counter_map_holds_a_slot_per_entry() {
     let out = compile(&config("host", 0), NOW, MemlockModel::ESTIMATE).unwrap();
-    assert_eq!(out.sizes.counter_entries, carapace_common::CounterId::COUNT);
+    assert_eq!(
+        out.sizes.counter_entries,
+        carapace_common::CounterId::COUNT + out.sizes.unified_list_entries
+    );
 }
