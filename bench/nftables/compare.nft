@@ -1,0 +1,31 @@
+# The nftables side of the XDP comparison, published with the result so the
+# comparison can be checked rather than trusted.
+#
+# It is deliberately the fair fight, not a straw man:
+#
+#  - the drop lives in the `raw` hook at PREROUTING priority, the earliest place
+#    nftables can act, before conntrack and before the packet is committed to the
+#    normal path. This is where a competent operator puts a volumetric drop, and
+#    it is the closest nftables gets to what XDP does before the stack;
+#  - the rule matches the same packets xdp_drop matches: UDP to the flood's
+#    destination port. Nothing broader, nothing narrower;
+#  - a `counter` is attached so the drop is measurable and cannot be accused of
+#    silently passing traffic.
+#
+# What it does NOT do, on purpose: no hashlimit, no set-based source tracking, no
+# SYN handling. Those are policies Carapace also implements and would move the
+# comparison away from "the same drop, two datapaths" toward "two different
+# policies". The point of the measurement is where the drop happens, not how
+# clever it is.
+#
+# Load with:  nft -f compare.nft        Flush with:  nft delete table ip carapace_cmp
+
+table ip carapace_cmp {
+	chain drop_flood {
+		type filter hook prerouting priority raw; policy accept;
+
+		# The flood is 64-byte UDP to port 19000 (scripts/lab/gen-udp-flood.sh).
+		# The legitimate probe traffic uses other ports and is untouched.
+		udp dport 19000 counter drop
+	}
+}

@@ -5,7 +5,7 @@ ARCH := $(shell uname -m)
 # asm/types.h lives on Ubuntu. Without it the build fails inside linux/types.h.
 CFLAGS := -O2 -g -Wall -Werror -target bpf -I/usr/include/$(ARCH)-linux-gnu
 
-PROGS := xdp_pass.o xdp_drop.o xdp_reflect.o
+PROGS := xdp_pass.o xdp_drop.o xdp_portdrop.o xdp_reflect.o
 DATA := ../data/udp64.bin
 
 .PHONY: all clean
