@@ -110,6 +110,7 @@ name = "carapaced"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "aya",
  "carapace-common",
  "carapace-dataplane",
  "carapace-detect",

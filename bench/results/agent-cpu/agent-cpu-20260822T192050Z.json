@@ -1,0 +1,20 @@
+{
+  "stamp": "20260822T192050Z",
+  "kernel": "6.8.0-138-generic",
+  "online_cpus": 4,
+  "possible_cpus": "0-3",
+  "counter_slots": 50000,
+  "hz": 10,
+  "batch": 1000,
+  "sweep_every_ticks": 20,
+  "slot_reads_per_second": 25180,
+  "cpu_budget_percent": 1.0,
+  "rss_max_kib": 51200,
+  "duration_s": 60.014,
+  "cpu_seconds": 0.4500,
+  "percent_of_one_core": 0.7498,
+  "full_sweeps_reported": "unknown",
+  "rss_kib_after_settle_s": 1660,
+  "settle_s": 20,
+  "rss_kib_at_end": 1660
+}

@@ -1,0 +1,16 @@
+{
+  "stamp": "20260822T184829Z",
+  "kernel": "6.8.0-138-generic",
+  "online_cpus": 4,
+  "possible_cpus": "0-3",
+  "counter_slots": 50000,
+  "hz": 10,
+  "batch": 5000,
+  "duration_s": 40.014,
+  "cpu_seconds": 5.2900,
+  "percent_of_one_core": 13.2205,
+  "sweeps_reported": "unknown",
+  "rss_kib_after_settle_s": 1800,
+  "settle_s": 10,
+  "rss_kib_at_end": 1800
+}

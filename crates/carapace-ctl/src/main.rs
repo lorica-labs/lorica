@@ -4,7 +4,7 @@
 //! answer is the daemon's own, so it describes the kernel the dataplane is loaded against
 //! and not whichever machine happens to run this client.
 
-use std::io::{Read, Write};
+use std::io::{self, Read, Write};
 use std::net::Shutdown;
 use std::os::unix::net::UnixStream;
 use std::process::ExitCode;
@@ -37,6 +37,15 @@ fn send(command: &str) -> ExitCode {
         }
         Err(error) => {
             eprintln!("no answer from {CONTROL_SOCKET}: {error}");
+            // The agent needs CAP_BPF, so it runs as root and its socket is root's. That
+            // is the right default for a control socket and the wrong thing to leave a
+            // reader guessing about, because the message alone reads like a bug.
+            if error.kind() == io::ErrorKind::PermissionDenied {
+                eprintln!(
+                    "the agent runs privileged, so the socket is owned by the user it \
+                     runs as; try again as that user"
+                );
+            }
             ExitCode::FAILURE
         }
     }

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Build the eBPF object and the tests that need a kernel, then run the tests as root.
 #
-#   kernel-tests.sh [--test NAME] [--ebpf-features LIST] [--] [args passed to the test]
+#   kernel-tests.sh [--crate NAME] [--test NAME] [--ebpf-features LIST]
+#                   [--] [args passed to the test]
 #
 # Three things make this a script rather than a cargo invocation. The eBPF object is
 # a different target built by a different toolchain, so cargo cannot produce it as a
@@ -14,16 +15,18 @@ set -uo pipefail
 
 cd "$(dirname "$0")/../.." || exit 1
 
+CRATE=carapace-dataplane
 TEST=""
 EBPF_FEATURES=${CARAPACE_EBPF_FEATURES:-parse-probe,count-helpers}
 PASS_THROUGH=()
 
 while [ $# -gt 0 ]; do
     case $1 in
+        --crate)          CRATE=$2; shift 2 ;;
         --test)           TEST=$2; shift 2 ;;
         --ebpf-features)  EBPF_FEATURES=$2; shift 2 ;;
         --)               shift; PASS_THROUGH=("$@"); break ;;
-        -h|--help)        sed -n '2,13p' "$0"; exit 0 ;;
+        -h|--help)        sed -n '2,14p' "$0"; exit 0 ;;
         *) echo "unknown argument: $1" >&2; exit 2 ;;
     esac
 done
@@ -41,10 +44,15 @@ export CARAPACE_EBPF_OBJ=$EBPF_OBJ
 
 # The userspace feature has to match the object: a test that reads the helper counts
 # would otherwise look for a map the program was not built with.
-features=kernel-tests
-case $EBPF_FEATURES in *count-helpers*) features=$features,count-helpers ;; esac
+# Each feature names its crate, because the crate under test is not always the one
+# that declares them: the agent has the tick assertion and the dataplane has the
+# features that assertion needs.
+features=carapace-dataplane/kernel-tests
+case $EBPF_FEATURES in
+    *count-helpers*) features=$features,carapace-dataplane/count-helpers ;;
+esac
 
-args=(test -p carapace-dataplane --features "$features" --no-run
+args=(test -p "$CRATE" --features "$features" --no-run
       --message-format=json-render-diagnostics)
 [ -n "$TEST" ] && args+=(--test "$TEST")
 

@@ -10,10 +10,6 @@
 
 #![cfg(feature = "kernel-tests")]
 
-// The shared surface re-exports a packet builder and a verdict this file has no use for
-// — it never runs a packet — and every test target compiles the whole module. The allow
-// rides on this declaration rather than on the shared file, which belongs to everybody.
-#[allow(unused_imports)]
 mod support;
 
 use std::{
@@ -327,5 +323,33 @@ fn the_list_memlock_grows_with_the_entries_written() {
     assert!(
         counters >= u64::from(COUNTER_ENTRIES) * 8,
         "a per-CPU array of {COUNTER_ENTRIES} u64 cannot cost less than one value each, got {counters}"
+    );
+}
+
+/// A reader built for the named counters must read the named counters, and not the whole
+/// map with the rest thrown away.
+///
+/// This is a cost assertion disguised as a correctness one, and it is here because the
+/// first version of the agent paid for it: the read walked to the end of the map whatever
+/// it was built for, so adding a cheap reader over eighteen slots doubled the CPU of the
+/// tick instead of costing nothing. The cost is exactly linear in elements walked, so
+/// elements walked is the thing to assert on.
+#[test]
+fn a_reader_built_for_fewer_slots_walks_fewer_slots() {
+    let ebpf = maps();
+    let slots = COUNTER_ENTRIES;
+
+    let mut whole = maps::counters(&ebpf, slots, 1_000).expect("reader over the whole map");
+    whole.read().expect("read failed");
+    assert_eq!(whole.walked(), slots as usize);
+
+    let named = CounterId::COUNT;
+    let mut head = maps::counters(&ebpf, named, 1_000).expect("reader over the named counters");
+    head.read().expect("read failed");
+    assert_eq!(
+        head.walked(),
+        named as usize,
+        "a reader over {named} slots asked the kernel for {} elements, so it costs what          the whole map costs and buys a fraction of it",
+        head.walked()
     );
 }

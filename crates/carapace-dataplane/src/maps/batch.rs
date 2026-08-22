@@ -83,6 +83,8 @@ pub struct PerCpuU64Reader<'fd> {
     values: Vec<u64>,
     /// The result, one sum per slot.
     sums: Vec<u64>,
+    /// Elements the last read asked the kernel for. See [`Self::walked`].
+    walked: usize,
 }
 
 impl<'fd> PerCpuU64Reader<'fd> {
@@ -107,6 +109,7 @@ impl<'fd> PerCpuU64Reader<'fd> {
             // the online count — is an out-of-bounds write.
             values: vec![0; batch as usize * cpus],
             sums: vec![0; entries as usize],
+            walked: 0,
         })
     }
 
@@ -117,18 +120,37 @@ impl<'fd> PerCpuU64Reader<'fd> {
         self.batch
     }
 
-    /// Walks the whole map and returns one sum per slot. Allocates nothing.
+    /// How many elements the last read actually asked the kernel for.
+    ///
+    /// The cost of a read is exactly linear in this and in nothing else — 264 ns an
+    /// element on the target, measured — so it is the number to look at when a reader
+    /// costs more than expected, and the number a test asserts on to prove that a reader
+    /// built for the named counters is not quietly walking fifty thousand slots.
+    pub const fn walked(&self) -> usize {
+        self.walked
+    }
+
+    /// Walks the slots this reader was built for and returns one sum per slot. Allocates
+    /// nothing.
+    ///
+    /// It stops at `entries` rather than at the end of the map. An array map is walked in
+    /// index order from zero, so a bound on the count is a bound on the slots, and without
+    /// it a reader built for the eighteen named counters would read every per-entry slot
+    /// above them and throw the answers away — paying the full cost for a fraction of the
+    /// data, which is the whole cost this reader exists to control.
     pub fn read(&mut self) -> io::Result<&[u64]> {
-        // A slot the walk does not reach — the map is not the size this reader was built
+        // A slot the walk does not reach — the map is smaller than this reader was built
         // for — must read zero and not the previous tick's number.
         self.sums.fill(0);
+        self.walked = 0;
 
         // in_batch and out_batch are pointers to one key: the kernel resumes the walk
         // from the key it left off at, and for an array map that key is the index.
         let mut token = 0u32;
         let mut resuming = false;
 
-        loop {
+        while self.walked < self.sums.len() {
+            let remaining = self.sums.len() - self.walked;
             let mut attr = Attr {
                 in_batch: if resuming {
                     (&raw mut token).addr() as u64
@@ -138,7 +160,8 @@ impl<'fd> PerCpuU64Reader<'fd> {
                 out_batch: (&raw mut token).addr() as u64,
                 keys: self.keys.as_mut_ptr().addr() as u64,
                 values: self.values.as_mut_ptr().addr() as u64,
-                count: self.batch,
+                // Never more than the buffers hold, and never more than is left to read.
+                count: (self.batch as usize).min(remaining) as u32,
                 map_fd: self.fd.as_raw_fd() as u32,
                 ..Attr::default()
             };
@@ -160,6 +183,7 @@ impl<'fd> PerCpuU64Reader<'fd> {
                     *slot = self.values[i * self.cpus..(i + 1) * self.cpus].iter().sum();
                 }
             }
+            self.walked += n;
 
             if done {
                 return Ok(&self.sums);
@@ -171,6 +195,7 @@ impl<'fd> PerCpuU64Reader<'fd> {
             }
             resuming = true;
         }
+        Ok(&self.sums)
     }
 }
 
