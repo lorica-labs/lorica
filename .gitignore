@@ -1,3 +1,6 @@
+/target/
+/crates/carapace-ebpf/target/
 /bench/latency-probe/target/
+/bench/store-probe/target/
 /bench/progs/*.o
 /bench/data/

@@ -1,0 +1,57 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/carapace-common",
+    "crates/carapace-dataplane",
+    "crates/carapace-detect",
+    "crates/carapace-policy",
+    "crates/carapace-escalate",
+    "crates/carapaced",
+    "crates/carapace-ctl",
+]
+# carapace-ebpf is a workspace of its own, not a member. bpfel-unknown-none is a
+# tier 3 target: it needs nightly and -Z build-std=core, and a toolchain cannot be
+# selected per workspace member. Building it is an explicit step, not a side effect
+# of `cargo check --workspace`.
+exclude = ["bench", "crates/carapace-ebpf"]
+
+[workspace.package]
+edition = "2024"
+license = "Apache-2.0 OR MIT"
+repository = "https://github.com/hookwood/carapace"
+rust-version = "1.85"
+
+[workspace.dependencies]
+carapace-common = { path = "crates/carapace-common" }
+carapace-dataplane = { path = "crates/carapace-dataplane" }
+carapace-detect = { path = "crates/carapace-detect" }
+carapace-escalate = { path = "crates/carapace-escalate" }
+carapace-policy = { path = "crates/carapace-policy" }
+
+anyhow = "1.0.104"
+aya = "0.14.0"
+aya-obj = "0.3.0"
+libc = "0.2.189"
+serde = { version = "1.0.229", features = ["derive"] }
+thiserror = "2.0.20"
+tokio = { version = "1.53.1", default-features = false }
+toml = "1.1.4"
+tracing = "0.1.44"
+tracing-subscriber = "0.3.23"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+# The failure model is "the agent dies and the rules expire by TTL", so unwinding
+# buys nothing and catch_unwind must not exist. To be stated in the public README.
+panic = "abort"
+strip = true
+
+# opt-level = "z" is deliberately absent: the text segment is file-backed and
+# demand-paged, so shrinking it wins no RSS.
+[profile.profiling]
+inherits = "release"
+debug = true
+strip = false
+split-debuginfo = "off"

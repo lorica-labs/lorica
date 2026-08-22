@@ -1,0 +1,11 @@
+# Frame pointers only. Without them a profile stops at the first inlined frame and
+# both the softirq flamegraph and the agent profile become useless.
+#
+# Nothing else belongs in this file. In particular -C link-arg=--btf here breaks
+# every userspace build; it lives in crates/carapace-ebpf/.cargo/config.toml and
+# nowhere else.
+[target.x86_64-unknown-linux-gnu]
+rustflags = ["-C", "force-frame-pointers=yes"]
+
+[target.x86_64-unknown-linux-musl]
+rustflags = ["-C", "force-frame-pointers=yes"]

@@ -1,0 +1,14 @@
+# This file, and only this file, carries --btf. Putting it in the workspace root
+# config breaks every userspace build, and that is the most common mistake of this
+# setup.
+[build]
+target = "bpfel-unknown-none"
+# Its own target dir. Sharing one with the userspace crates makes cargo rebuild
+# core on every switch between the two targets.
+target-dir = "target"
+
+[unstable]
+build-std = ["core"]
+
+[target.bpfel-unknown-none]
+rustflags = ["-C", "link-arg=--btf"]
