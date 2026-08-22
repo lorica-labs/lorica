@@ -20,20 +20,42 @@ pub enum FragState {
 }
 
 /// What only the parser can see, because it is the only code that reads the option
-/// and extension header chains. The sanity stage turns these into verdicts; the
+/// and extension header chains. The sanity checks turn these into verdicts; the
 /// parser states no policy.
 pub mod anomaly {
     pub const IP_OPTIONS_PRESENT: u8 = 1 << 0;
     pub const IPV6_EXT_PRESENT: u8 = 1 << 1;
 }
 
+/// Largest header offset the parser will look at: a 9216-byte jumbo frame.
+///
+/// The value is not cosmetic. `find_good_pkt_pointers` refuses to grant a range when
+/// the verifier upper estimate of the offset plus the size of the read exceeds
+/// MAX_PACKET_OFF, which is 0xffff. Bounding the offset here is what keeps that sum
+/// inside the limit, and a bound of 0xffff sat exactly on it: every read was refused.
+/// No header offset in a frame this pipeline sees can reach it, so nothing legitimate
+/// is lost.
+///
+/// It lives beside [`PacketView`] because both users of the bound need the same one:
+/// the window the parser reads headers through, and the payload accessor below, whose
+/// offset is a `u16` and would otherwise sit exactly on MAX_PACKET_OFF.
+pub const MAX_OFFSET: usize = 9216;
+
 /// Everything a stage decides on, built once per packet.
 ///
-/// Scalars and two addresses, and deliberately no packet pointer: a stage able to
-/// reach back into the packet would re-parse, and a packet pointer crossing a
-/// bpf-to-bpf call boundary is the kind of thing the verifier changes its mind about
-/// between kernel versions. Offsets are `u32` rather than `usize` so the layout does
-/// not depend on the width of the target.
+/// Scalars, one address, and the two packet pointers. The pointers were once left out
+/// on the argument that a stage able to reach back into the packet would re-parse, and
+/// that a packet pointer crossing a bpf-to-bpf call boundary is the kind of thing the
+/// verifier changes its mind about between kernel versions. The second half was tested
+/// and is false: `frame1: R1=pkt(...)` appears in the verifier log on 6.8, so a packet
+/// pointer does cross the boundary. The first half was a real cost that turned into a
+/// gap — the signature stage cannot read an A2S or a RakNet MAGIC without the packet,
+/// so those vectors were decided on port and size alone. What replaces the argument is
+/// [`PacketView::payload_bytes`]: one accessor, bounds-checked once, so no stage
+/// re-parses and none hand-rolls the comparison the verifier demands.
+///
+/// Offsets are `u16` and the pointers `u64` so the layout does not depend on the width
+/// of the target.
 ///
 /// It lives in this crate rather than beside the parser because the instrumented
 /// build writes it into a map for the tests to read, and a second declaration of the
@@ -46,14 +68,21 @@ pub mod anomaly {
 #[repr(C)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct PacketView {
+    /// The start of the packet, as the verifier hands it to the program.
+    pub data: u64,
+    /// One past the last byte. The two together are what a bounds check compares.
+    pub data_end: u64,
     pub src: [u8; 16],
-    pub dst: [u8; 16],
-    pub l3_off: u32,
-    pub l4_off: u32,
+    pub l3_off: u16,
+    pub l4_off: u16,
+    /// The first byte after the L4 header, or the L4 offset when the packet carries no
+    /// L4 header — a later fragment, or a protocol this parser writes no header for.
+    /// One meaning, so a stage reading a signature never has to ask which.
+    pub payload_off: u16,
     pub sport: u16,
     pub dport: u16,
-    /// Length the IP header claims, fixed header included on both families, for the
-    /// sanity stage to compare against what arrived.
+    /// Length the IP header claims, fixed header included on both families, to compare
+    /// against what arrived.
     pub ip_total_len: u16,
     /// Length the L4 header claims, when it carries one. Zero otherwise.
     pub l4_len: u16,
@@ -69,11 +98,34 @@ pub struct PacketView {
 }
 
 impl PacketView {
-    pub fn zeroed() -> Self {
-        // SAFETY: every byte pattern is a valid value of this type, and going through
-        // zeroed also initialises the tail padding, which is copied verbatim into a
-        // map by the instrumented build.
-        unsafe { core::mem::zeroed() }
+    /// A fixed-size run of payload bytes at `at` from the start of the payload.
+    ///
+    /// The one place a stage reaches back into the packet. `N` is at least two for the
+    /// same reason [`MAX_OFFSET`] is 9216: for `N == 1` the compiler rewrites
+    /// `ptr + 1 > end` into `ptr >= end`, which folds the offset into the register, and
+    /// `find_good_pkt_pointers` grants no range to a packet pointer whose constant
+    /// offset is zero. A four-byte MAGIC is readable; a one-byte type check at a
+    /// variable offset is not, and never will be.
+    #[inline(always)]
+    pub fn payload_bytes<const N: usize>(&self, at: u16) -> Option<[u8; N]> {
+        const {
+            assert!(
+                N >= 2,
+                "a one-byte read at a variable offset cannot be verified"
+            )
+        };
+        let off = self.payload_off as usize + at as usize;
+        if off > MAX_OFFSET {
+            return None;
+        }
+        let ptr = self.data as usize + off;
+        if ptr + N > self.data_end as usize {
+            return None;
+        }
+        // SAFETY: the comparison above is the shape the verifier recognises for a
+        // packet access, and `[u8; N]` has alignment 1, so this cannot become an
+        // unaligned load whatever the offset.
+        Some(unsafe { *(ptr as *const [u8; N]) })
     }
 
     pub const fn family(&self) -> Family {
@@ -84,20 +136,12 @@ impl PacketView {
         }
     }
 
-    pub const fn set_family(&mut self, family: Family) {
-        self.family_raw = family as u8;
-    }
-
     pub const fn frag(&self) -> FragState {
         match self.frag_raw {
             0 => FragState::None,
             1 => FragState::First,
             _ => FragState::Later,
         }
-    }
-
-    pub const fn set_frag(&mut self, frag: FragState) {
-        self.frag_raw = frag as u8;
     }
 
     pub const fn has(&self, anomaly: u8) -> bool {

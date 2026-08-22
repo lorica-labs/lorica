@@ -1,6 +1,6 @@
-use carapace_common::{Family, FragState, PacketView, anomaly};
+use carapace_common::{Family, FragState, anomaly};
 
-use super::{ParseError, Window};
+use super::{L3, ParseError, Window};
 
 const FIXED_HDR_LEN: usize = 40;
 /// Every extension header is at least eight bytes, which is what makes one read per
@@ -20,12 +20,10 @@ const IPPROTO_HOPOPTS: u8 = 0;
 const IPPROTO_ROUTING: u8 = 43;
 const IPPROTO_FRAGMENT: u8 = 44;
 const IPPROTO_AH: u8 = 51;
-const IPPROTO_NONE: u8 = 59;
 const IPPROTO_DSTOPTS: u8 = 60;
 
 #[inline(never)]
-pub fn parse(win: &Window, view: &mut PacketView) -> Result<(), ParseError> {
-    let base = view.l3_off as usize;
+pub fn parse(win: &Window, base: usize) -> Result<L3, ParseError> {
     let hdr = win
         .bytes::<FIXED_HDR_LEN>(base)
         .ok_or(ParseError::Truncated)?;
@@ -34,36 +32,27 @@ pub fn parse(win: &Window, view: &mut PacketView) -> Result<(), ParseError> {
         return Err(ParseError::UnknownEncap);
     }
 
-    view.set_family(Family::V6);
-    // IPv6 states the payload length, not the total. The sanity stage compares like
-    // with like, so the fixed header is added back here.
-    let payload_len = u16::from_be_bytes([hdr[4], hdr[5]]);
-    view.ip_total_len = payload_len.saturating_add(FIXED_HDR_LEN as u16);
-    view.src.copy_from_slice(&hdr[8..24]);
-    view.dst.copy_from_slice(&hdr[24..40]);
-
     let mut next = hdr[6];
     let mut off = base + FIXED_HDR_LEN;
+    let mut frag = FragState::None;
+    let mut anomalies = 0u8;
 
     // A bounded loop rather than bpf_loop. bpf_loop is a helper call, and the
     // per-packet helper budget is the binding constraint of the whole design; the
     // verifier has accepted bounded loops since 5.3, well under the floor.
     let mut depth = 0usize;
     while depth < MAX_EXT_HEADERS {
-        if next == IPPROTO_NONE {
-            // No upper layer at all. Not an error, but nothing left to parse.
-            view.proto = IPPROTO_NONE;
-            view.l4_off = off as u32;
-            return Ok(());
-        }
         if !is_extension(next) {
+            // `IPPROTO_NONE` leaves the loop here as well: no upper layer at all is
+            // not an error, and it needs no arm of its own because it ends the walk
+            // exactly where a transport header would, with the same offset.
             break;
         }
 
         let ext = win.bytes::<EXT_HDR_MIN>(off).ok_or(ParseError::Truncated)?;
         let len = match next {
             IPPROTO_FRAGMENT => {
-                view.set_frag(frag_state(u16::from_be_bytes([ext[2], ext[3]])));
+                frag = frag_state(u16::from_be_bytes([ext[2], ext[3]]));
                 EXT_HDR_MIN
             }
             // The authentication header measures itself in four-byte units minus two,
@@ -72,7 +61,7 @@ pub fn parse(win: &Window, view: &mut PacketView) -> Result<(), ParseError> {
             _ => (ext[1] as usize + 1) * 8,
         };
 
-        view.anomalies |= anomaly::IPV6_EXT_PRESENT;
+        anomalies |= anomaly::IPV6_EXT_PRESENT;
         next = ext[0];
         off += len;
         depth += 1;
@@ -82,9 +71,28 @@ pub fn parse(win: &Window, view: &mut PacketView) -> Result<(), ParseError> {
         return Err(ParseError::DepthExceeded);
     }
 
-    view.proto = next;
-    view.l4_off = off as u32;
-    Ok(())
+    // IPv6 states the payload length, not the total. The length checks compare like
+    // with like, so the fixed header is added back here.
+    let payload_len = u16::from_be_bytes([hdr[4], hdr[5]]);
+    Ok(L3 {
+        family: Family::V6,
+        src: source(&hdr),
+        ip_total_len: payload_len.saturating_add(FIXED_HDR_LEN as u16),
+        frag,
+        proto: next,
+        l4_off: off,
+        anomalies,
+    })
+}
+
+/// The source address out of the fixed header, written out rather than sliced: a
+/// slice-to-array conversion carries a length check, and a panic path in a program
+/// whose handler is `unreachable_unchecked` is not a path worth emitting.
+const fn source(hdr: &[u8; FIXED_HDR_LEN]) -> [u8; 16] {
+    [
+        hdr[8], hdr[9], hdr[10], hdr[11], hdr[12], hdr[13], hdr[14], hdr[15], hdr[16], hdr[17],
+        hdr[18], hdr[19], hdr[20], hdr[21], hdr[22], hdr[23],
+    ]
 }
 
 /// From the offset field of a fragment extension header. The layout differs from

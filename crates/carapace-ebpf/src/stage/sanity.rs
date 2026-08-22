@@ -35,8 +35,8 @@ pub fn run(view: &PacketView) -> Outcome {
 }
 
 fn refusal(view: &PacketView) -> Option<CounterId> {
-    let ip_bytes = view.packet_len.saturating_sub(view.l3_off as u16);
-    let header_bytes = view.l4_off.saturating_sub(view.l3_off) as u16;
+    let ip_bytes = view.packet_len.saturating_sub(view.l3_off);
+    let header_bytes = view.l4_off.saturating_sub(view.l3_off);
 
     // Both directions are inconsistencies. A total length below the headers that were
     // parsed describes an impossible packet; one above what arrived is a forged
@@ -57,7 +57,7 @@ fn refusal(view: &PacketView) -> Option<CounterId> {
         return None;
     }
 
-    let l4_bytes = view.packet_len.saturating_sub(view.l4_off as u16);
+    let l4_bytes = view.packet_len.saturating_sub(view.l4_off);
     match view.proto {
         IPPROTO_UDP if view.l4_len < UDP_HDR_LEN || view.l4_len > l4_bytes => {
             Some(CounterId::SanityL4Length)

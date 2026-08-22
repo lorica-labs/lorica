@@ -10,17 +10,7 @@ pub mod ipv6;
 pub mod l4;
 
 use aya_ebpf::{bindings::xdp_action, programs::XdpContext};
-use carapace_common::{CounterId, FragState, PacketView};
-
-/// Largest header offset the parser will look at: a 9216-byte jumbo frame.
-///
-/// The value is not cosmetic. `find_good_pkt_pointers` refuses to grant a range when
-/// the verifier upper estimate of the offset plus the size of the read exceeds
-/// MAX_PACKET_OFF, which is 0xffff. Bounding the offset here is what keeps that sum
-/// inside the limit, and a bound of 0xffff sat exactly on it: every read was refused.
-/// No header offset in a frame this pipeline sees can reach it, so nothing legitimate
-/// is lost.
-pub const MAX_OFFSET: usize = 9216;
+use carapace_common::{CounterId, Family, FragState, MAX_OFFSET, PacketView};
 
 #[derive(Clone, Copy)]
 pub enum ParseError {
@@ -48,6 +38,25 @@ impl ParseError {
             Self::Malformed => (xdp_action::XDP_DROP, CounterId::SanityIpLength),
         }
     }
+}
+
+/// What the network layer contributes, handed back rather than written through a
+/// pointer.
+///
+/// The parsers used to take `&mut PacketView` and fill a zeroed struct in stages. The
+/// zeroing was a 60-byte memset on every packet — 15.8 % of all cycles in a profile —
+/// and no optimiser could remove it, because each parser was a call and the stores
+/// happened on the other side of the boundary. Each layer returning its own small
+/// result is what lets `parse` build the view once, in one struct literal, with every
+/// field named.
+pub struct L3 {
+    pub family: Family,
+    pub src: [u8; 16],
+    pub ip_total_len: u16,
+    pub frag: FragState,
+    pub proto: u8,
+    pub l4_off: usize,
+    pub anomalies: u8,
 }
 
 /// The packet window.
@@ -115,19 +124,32 @@ impl Window {
 pub fn parse(ctx: &XdpContext) -> Result<PacketView, ParseError> {
     let win = Window::of(ctx);
     let l2 = eth::parse(&win)?;
-
-    let mut view = PacketView::zeroed();
-    view.packet_len = win.total_len().min(u16::MAX as usize) as u16;
-    view.l3_off = l2.l3_off as u32;
-    view.vlan_tags = l2.vlan_tags;
-    view.set_frag(FragState::None);
-
-    match l2.ethertype {
-        eth::ETH_P_IP => ipv4::parse(&win, &mut view)?,
-        eth::ETH_P_IPV6 => ipv6::parse(&win, &mut view)?,
+    let l3 = match l2.ethertype {
+        eth::ETH_P_IP => ipv4::parse(&win, l2.l3_off)?,
+        eth::ETH_P_IPV6 => ipv6::parse(&win, l2.l3_off)?,
         _ => return Err(ParseError::UnknownEncap),
-    }
+    };
+    let l4 = l4::parse(&win, &l3)?;
 
-    l4::parse(&win, &mut view)?;
-    Ok(view)
+    Ok(PacketView {
+        data: win.start as u64,
+        data_end: win.end as u64,
+        src: l3.src,
+        l3_off: l2.l3_off as u16,
+        l4_off: l3.l4_off as u16,
+        payload_off: (l3.l4_off + l4.hdr_len) as u16,
+        sport: l4.sport,
+        dport: l4.dport,
+        ip_total_len: l3.ip_total_len,
+        l4_len: l4.l4_len,
+        packet_len: win.total_len().min(u16::MAX as usize) as u16,
+        family_raw: l3.family as u8,
+        proto: l3.proto,
+        frag_raw: l3.frag as u8,
+        tcp_flags: l4.tcp_flags,
+        icmp_type: l4.icmp_type,
+        icmp_code: l4.icmp_code,
+        anomalies: l3.anomalies,
+        vlan_tags: l2.vlan_tags,
+    })
 }

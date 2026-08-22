@@ -96,7 +96,13 @@ pub fn list_lookup(src: &[u8; 16]) -> Option<LpmValue> {
 #[inline(never)]
 pub fn probe(view: &carapace_common::PacketView) {
     if let Some(slot) = crate::maps::PARSE_PROBE.get_ptr_mut(0) {
+        // The two packet pointers are cleared first: the verifier refuses a store of a
+        // pointer into a map value, and their values would mean nothing to a reader in
+        // userspace anyway.
+        let mut copy = *view;
+        copy.data = 0;
+        copy.data_end = 0;
         // SAFETY: the pointer comes from a successful per-CPU lookup.
-        unsafe { *slot = *view }
+        unsafe { *slot = copy }
     }
 }

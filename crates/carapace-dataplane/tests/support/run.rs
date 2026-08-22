@@ -220,7 +220,7 @@ impl TestProg {
             .iter()
             .map(|probe| probe.0)
             .find(|view| view.packet_len != 0)
-            .unwrap_or_else(PacketView::zeroed)
+            .expect("no CPU slot of the parse probe was written")
     }
 
     pub fn helper_counts(&self) -> HelperCounts {
