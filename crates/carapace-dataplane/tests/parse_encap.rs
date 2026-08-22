@@ -385,6 +385,10 @@ fn a_legitimate_packet_reads_the_clock_once_and_looks_nothing_up() {
     assert_eq!(prog.run(&pkt), XdpAction::Pass);
 
     let counts = prog.helper_counts();
-    assert_eq!(counts.clock_reads, 1, "the clock was read {} times", counts.clock_reads);
+    assert_eq!(
+        counts.clock_reads, 1,
+        "the clock was read {} times",
+        counts.clock_reads
+    );
     assert_eq!(counts.map_lookups, 0, "nothing looks anything up yet");
 }
