@@ -35,17 +35,15 @@ jobs:
           cargo +nightly clippy --release -- -D warnings
         working-directory: crates/carapace-ebpf
       - run: cargo test --workspace
-      # Assertion 1: helper calls present in the program, all branches counted.
-      - name: helper call budget
-        run: cargo test -p carapace-dataplane --test helper_budget
-      # Assertion 6: no allocation inside the tick.
-      - name: no allocation in the tick
-        continue-on-error: true
-        run: cargo test -p carapaced --test no_alloc_in_tick
-      # Assertion 7: Prometheus series ceiling. Arrives with /metrics.
-      - name: Prometheus series ceiling
-        continue-on-error: true
-        run: cargo test -p carapaced --test series_ceiling
+      # Assertions 1 and 6 need the crate that cannot be built here, so they live in
+      # the integration job. The table in mesure-et-outillage.md marks both as
+      # runnable on Windows; that rests on a premise the code disproved. aya uses
+      # std::os::fd, so carapace-dataplane and carapaced do not build on Windows at
+      # all, and both assertions need one of them.
+      #
+      # Assertion 7, the Prometheus series ceiling, arrives with /metrics in a later
+      # phase. It is named here so its absence is a gap somebody can see rather than
+      # a step nobody wrote.
 
   # Loads the program on the runner kernel and attaches it to a veth pair.
   integration:
@@ -79,10 +77,26 @@ jobs:
       # kernel instead, which is the field bpftool renders as bytes_jited.
       - name: kernel tests, and assertions 1, 2 and 4
         run: bash scripts/lab/kernel-tests.sh
-      # Assertion 5: agent RSS after a minute of load.
-      - name: agent RSS
-        continue-on-error: true
-        run: scripts/ci/agent-rss.sh
+      # Assertion 6: no allocation inside the tick. A separate step because the run
+      # above tests the dataplane crate and this assertion lives in the agent.
+      - name: no allocation in the tick
+        run: bash scripts/lab/kernel-tests.sh --crate carapaced --test no_alloc_in_tick
+      # Assertion 5: the agent's RSS, and its CPU while it is at it. Both come from
+      # the same run, because measuring them separately would measure two agents.
+      #
+      # The cadence is the one the phase settled on and not the default: fifty
+      # thousand slots swept every two seconds with the named counters at ten hertz.
+      # Reading every slot every tick costs 13 % of a core on the target, measured,
+      # so passing the default here would assert a budget nothing meets.
+      #
+      # The runner has more cores and a different memory system than the target, so
+      # the CPU budget is looser here than the 0.74 % measured there: this step
+      # catches a regression of an order of magnitude, and the number that stands is
+      # the one from the target.
+      - name: agent RSS and CPU
+        run: |
+          cargo build --release -p carapaced
+          scripts/lab/measure-agent-cpu.sh             --agent target/release/carapaced             --object crates/carapace-ebpf/target/bpfel-unknown-none/release/carapace-ebpf             --counters 50000 --hz 10 --sweep-every 20             --duration 70 --settle 30 --cpu-budget 3.0 --rss-max 51200             --out bench/results/agent-cpu
 
   # 6.8 is the core floor, 6.12 the floor of the SYN cookie module, plus the
   # newest LTS. A failure on 6.8 is blocking: it is the audience.
