@@ -4,7 +4,11 @@
 #
 #   capture-env.sh <outdir> [iface]
 
-set -euo pipefail
+# Deliberately neither -e nor pipefail. A capture records what the machine will
+# give it and always prints its path: `clang --version | head -1` kills clang with
+# SIGPIPE, which under pipefail would abort the capture and leave the caller with
+# an empty filename for a file that exists.
+set -u
 
 outdir=${1:?usage: capture-env.sh <outdir> [iface]}
 iface=${2:-${CARAPACE_IFACE:-enp6s19}}
