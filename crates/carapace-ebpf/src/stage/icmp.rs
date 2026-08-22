@@ -47,6 +47,13 @@ enum Class {
     Other,
 }
 
+/// Every stage keeps its boundary unconditionally, unlike the parsers, and not for
+/// instrumentation. A parser had to be inlined because LLVM has to see through it to
+/// scalarise the view it builds; a stage only reads fields that are already there.
+/// Inlining the seven of them into the one frame measured **+65 instructions a packet**
+/// on VM 900 — a single frame holding the whole view live across two helper calls spills
+/// what it cannot keep — against **-30** for the four parsers. So the trade is taken
+/// where it pays and refused where it does not.
 #[inline(never)]
 pub fn run(view: &PacketView) -> Outcome {
     if view.proto != IPPROTO_ICMP && view.proto != IPPROTO_ICMPV6 {

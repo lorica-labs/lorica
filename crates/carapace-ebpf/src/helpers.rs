@@ -5,8 +5,10 @@
 //! it is a single call site rather than one per caller: inlining the counter bump
 //! would multiply its map lookup by the number of stages that count.
 //!
-//! Each wrapper also gets its own JIT symbol, which is the only way to obtain a cost
-//! breakdown inside the data path.
+//! These four keep `#[inline(never)]` unconditionally, unlike the parsers and the
+//! stages, which carry it only under the `profiling` feature. Here it is not
+//! instrumentation: the static call budget is a count of the calls present in the
+//! object, and inlining a wrapper would multiply its call by the number of callers.
 
 use aya_ebpf::{helpers::bpf_ktime_get_ns, maps::lpm_trie::Key};
 use carapace_common::{CounterId, LpmValue};
@@ -96,7 +98,13 @@ pub fn list_lookup(src: &[u8; 16]) -> Option<LpmValue> {
 #[inline(never)]
 pub fn probe(view: &carapace_common::PacketView) {
     if let Some(slot) = crate::maps::PARSE_PROBE.get_ptr_mut(0) {
+        // The two packet pointers are cleared first: the verifier refuses a store of a
+        // pointer into a map value, and their values would mean nothing to a reader in
+        // userspace anyway.
+        let mut copy = *view;
+        copy.data = 0;
+        copy.data_end = 0;
         // SAFETY: the pointer comes from a successful per-CPU lookup.
-        unsafe { *slot = *view }
+        unsafe { *slot = copy }
     }
 }

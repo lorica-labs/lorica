@@ -1,15 +1,20 @@
 //! The order of the pipeline lives here and nowhere else.
 //!
-//! sanity, ICMP policy, unified LPM list, fragment policy, role-conditional uRPF,
-//! signatures, leaky buckets, SYN cookies, counters. A stage never calls the next
-//! one: it returns and this function decides, so the order is one readable list
-//! rather than a chain to reconstruct.
+//! ICMP policy, unified LPM list, fragment policy, role-conditional uRPF, signatures,
+//! leaky buckets, SYN cookies, counters. A stage never calls the next one: it returns
+//! and this function decides, so the order is one readable list rather than a chain to
+//! reconstruct.
+//!
+//! Sanity was the first of them and no longer is. Its three checks are comparisons on
+//! fields the parse has just loaded, so they are made there, in `parse::refuse`, and the
+//! four counters they bump keep their names. What is left in this list is every stage
+//! that needs something the parse does not have: a map, the clock, or a policy word read
+//! against more than one field.
 
 pub mod bucket;
 pub mod fragment;
 pub mod icmp;
 pub mod lpm;
-pub mod sanity;
 pub mod signature;
 pub mod urpf;
 
@@ -130,16 +135,14 @@ pub fn run(ctx: &XdpContext) -> u32 {
     let now_ns = helpers::now_ns();
 
     cut!(2);
-    decide!(sanity::run(&view));
-    cut!(3);
     decide!(icmp::run(&view));
-    cut!(4);
+    cut!(3);
     decide!(lpm::run(&view, now_ns));
-    cut!(5);
+    cut!(4);
     decide!(fragment::run(&view));
-    cut!(6);
+    cut!(5);
     decide!(urpf::run(&view));
-    cut!(7);
+    cut!(6);
 
     // Stage 6 has three answers and only two of them end the walk. Rate-limiting is not a
     // verdict, so it is routed here and not returned: the packet reaches the buckets
@@ -150,9 +153,9 @@ pub fn run(ctx: &XdpContext) -> u32 {
         settled => return settled.action(),
     };
 
-    cut!(8);
+    cut!(7);
     decide!(bucket::run(&view, now_ns, budget));
-    cut!(9);
+    cut!(8);
 
     // The SYN cookie stage sits here, between the buckets and the counters. It is a
     // separate module on a higher kernel floor and is not part of this program.

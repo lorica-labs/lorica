@@ -18,10 +18,12 @@ use support::{
     program, program_with,
 };
 
-const ETH: u32 = 14;
-const IPV4_FIXED: u32 = 20;
-const IPV6_FIXED: u32 = 40;
-const VLAN_TAG: u32 = 4;
+const ETH: u16 = 14;
+const IPV4_FIXED: u16 = 20;
+const IPV6_FIXED: u16 = 40;
+const VLAN_TAG: u16 = 4;
+const UDP_HDR: u16 = 8;
+const TCP_HDR: u16 = 20;
 /// A flag combination the sanity stage accepts, so a parsing case is not refused by a
 /// later stage for a reason that has nothing to do with parsing.
 const TCP_SYN: u8 = 1 << 1;
@@ -111,6 +113,9 @@ fn ipv4_without_options() {
     assert_eq!(view.l4_off, ETH + IPV4_FIXED);
     assert_eq!(view.proto, IPPROTO_TCP);
     assert!(!view.has(anomaly::IP_OPTIONS_PRESENT));
+    // The data offset of the header the builder writes, and the one thing the payload
+    // offset is allowed to mean: the first byte after the transport header.
+    assert_eq!(view.payload_off, ETH + IPV4_FIXED + TCP_HDR);
 }
 
 /// The case the plan calls out by name: with options present, assuming a 20-byte
@@ -270,6 +275,9 @@ fn a_later_fragment_has_no_port_at_all() {
     // port filter.
     assert_eq!(view.dport, 0);
     assert_eq!(view.sport, 0);
+    // The other half of what the payload offset means: with no transport header there
+    // is nothing to skip, so it sits on the L4 offset.
+    assert_eq!(view.payload_off, view.l4_off);
 }
 
 #[test]
@@ -377,6 +385,7 @@ fn the_stated_lengths_reach_the_view() {
     assert_eq!(view.packet_len as usize, pkt.len());
     assert_eq!(view.ip_total_len as usize, pkt.len() - ETH as usize);
     assert_eq!(view.l4_len, 8 + 16);
+    assert_eq!(view.payload_off, ETH + IPV4_FIXED + UDP_HDR);
 }
 
 /// The clock is read exactly once per packet whatever the encapsulation, because it is

@@ -7,7 +7,48 @@
 
 use std::mem::{align_of, offset_of, size_of};
 
-use carapace_common::{Action, Deadline, LpmKey, LpmValue, SCOPE_MAX, Scope};
+use carapace_common::{Action, Deadline, LpmKey, LpmValue, PacketView, SCOPE_MAX, Scope};
+
+/// The view is copied verbatim out of a kernel map by the parse tests, so a hole in it
+/// would be read as a field. There is none: the two pointers, the address, eight
+/// `u16`s and eight `u8`s fill 56 bytes exactly.
+#[test]
+fn the_parsed_view_has_no_hole_in_it() {
+    assert_eq!(offset_of!(PacketView, data), 0);
+    assert_eq!(offset_of!(PacketView, data_end), 8);
+    assert_eq!(offset_of!(PacketView, src), 16);
+    assert_eq!(offset_of!(PacketView, l3_off), 32);
+    assert_eq!(offset_of!(PacketView, family_raw), 48);
+    assert_eq!(size_of::<PacketView>(), 56);
+    assert_eq!(align_of::<PacketView>(), 8);
+}
+
+/// The accessor the signature stage reads a MAGIC through. The bound is what the
+/// verifier is shown; here it is checked against real memory, which is the only place
+/// an off-by-one in it can be seen at all.
+#[test]
+fn a_payload_read_stops_at_the_end_of_the_packet() {
+    let packet: [u8; 12] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
+    let mut view = view_over(&packet);
+    view.payload_off = 8;
+
+    assert_eq!(view.payload_bytes::<4>(0), Some([8, 9, 10, 11]));
+    assert_eq!(view.payload_bytes::<2>(2), Some([10, 11]));
+    assert_eq!(view.payload_bytes::<4>(1), None, "one byte past the end");
+    assert_eq!(view.payload_bytes::<2>(3), None);
+    // A payload offset outside the frame the parser bounds itself to, which is what
+    // keeps the sum of the offset and the read under MAX_PACKET_OFF.
+    view.payload_off = u16::MAX;
+    assert_eq!(view.payload_bytes::<2>(0), None);
+}
+
+fn view_over(packet: &[u8]) -> PacketView {
+    let mut view: PacketView = unsafe { std::mem::zeroed() };
+    view.data = packet.as_ptr() as u64;
+    view.data_end = view.data + packet.len() as u64;
+    view.packet_len = packet.len() as u16;
+    view
+}
 
 #[test]
 fn lpm_key_matches_what_the_trie_requires() {
