@@ -16,106 +16,17 @@ use std::{path::PathBuf, process::Command};
 
 use aya::{
     EbpfLoader,
-    programs::{Xdp, XdpMode, xdp::XdpLinkId},
+    programs::{XdpMode, xdp::XdpLinkId},
 };
-use carapace_common::{DEFAULT_SETTINGS, SETTINGS_SYMBOL};
+use carapace_common::DEFAULT_SETTINGS;
 use carapace_dataplane::loader::{
     AttachError, attach_native, detach,
     hook_probe::{self, AttachMode},
 };
-
-/// A throwaway interface, up, deleted when the test ends however it ends.
-///
-/// Synthetic rather than real for two reasons: nothing depends on it, so a test that
-/// leaves a program attached breaks nothing outside itself, and the two kinds answer the
-/// two questions this file asks. A `veth` supports native XDP, which a test of native
-/// attach cannot do without. A `dummy` has no `ndo_bpf` at all, which is the only honest
-/// way to reach the refusal for a driver that cannot do native mode. `lo` looks like a
-/// candidate and is not: an overlay agent is usually already holding its generic hook,
-/// and then the kernel refuses for the other reason entirely.
-struct Link {
-    name: String,
-}
-
-impl Link {
-    fn veth(name: &str) -> Self {
-        let peer = format!("{name}p");
-        let link = Self::add(name, &["type", "veth", "peer", "name", &peer]);
-        ip(&["link", "set", &peer, "up"]).expect("bringing the peer up failed");
-        link
-    }
-
-    fn dummy(name: &str) -> Self {
-        Self::add(name, &["type", "dummy"])
-    }
-
-    fn add(name: &str, kind: &[&str]) -> Self {
-        assert!(name.len() <= 14, "an interface name is at most 15 bytes");
-        // A previous run killed between the attach and the delete leaves the interface
-        // behind, and `ip link add` then fails on a name that is nobody fault but ours.
-        let _ = ip(&["link", "del", name]);
-        let mut args = vec!["link", "add", name];
-        args.extend_from_slice(kind);
-        ip(&args).expect("creating the interface failed");
-        ip(&["link", "set", name, "up"]).expect("bringing the interface up failed");
-        Self {
-            name: name.to_owned(),
-        }
-    }
-}
-
-impl Drop for Link {
-    fn drop(&mut self) {
-        let _ = ip(&["link", "del", &self.name]);
-    }
-}
-
-fn ip(args: &[&str]) -> Result<(), String> {
-    let out = Command::new("ip")
-        .args(args)
-        .output()
-        .map_err(|err| format!("cannot run ip: {err}"))?;
-    if out.status.success() {
-        Ok(())
-    } else {
-        Err(String::from_utf8_lossy(&out.stderr).trim().to_owned())
-    }
-}
-
-/// The mode `ip -d link show` renders, which is the only thing that attests a native
-/// attach: on kernel 6.8 an attach disables not one virtio offload, so a diff of
-/// `ethtool -k` proves nothing either way.
-fn ip_link_mode(iface: &str) -> String {
-    let out = Command::new("ip")
-        .args(["-d", "link", "show", iface])
-        .output()
-        .expect("cannot run ip -d link show");
-    let text = String::from_utf8_lossy(&out.stdout);
-    text.split_whitespace()
-        .find(|word| word.starts_with("xdp"))
-        .unwrap_or("none")
-        .to_owned()
-}
-
-fn carapace() -> aya::Ebpf {
-    let path = support::run::object_path();
-    let object = std::fs::read(&path)
-        .unwrap_or_else(|err| panic!("cannot read the eBPF object at {}: {err}", path.display()));
-    EbpfLoader::new()
-        .override_global(SETTINGS_SYMBOL, &DEFAULT_SETTINGS, true)
-        .load(&object)
-        .expect("loading the carapace object failed")
-}
-
-fn xdp_program<'a>(ebpf: &'a mut aya::Ebpf, name: &str) -> &'a mut Xdp {
-    let program: &mut Xdp = ebpf
-        .program_mut(name)
-        .unwrap_or_else(|| panic!("no program named {name}"))
-        .try_into()
-        .expect("the program is not an XDP program");
-    program.load().expect("the verifier rejected the program");
-    program
-}
+use support::{
+    net::{Link, ip_link_mode},
+    run::{load_raw, object_path, xdp_program},
+};
 
 /// The occupant of these tests: a program that does nothing, so whatever the attach does
 /// next is about the hook and not about the program.
@@ -163,7 +74,7 @@ fn occupy(iface: &str, mode: XdpMode) -> (aya::Ebpf, XdpLinkId) {
 #[test]
 fn attaching_to_a_free_hook_lands_in_native_mode() {
     let veth = Link::veth("cara-free");
-    let mut ebpf = carapace();
+    let mut ebpf = load_raw(&object_path(), DEFAULT_SETTINGS);
     let program = xdp_program(&mut ebpf, support::PROGRAM);
 
     let link = attach_native(program, &veth.name).expect("the hook was free");
@@ -203,7 +114,7 @@ fn attaching_over_an_occupied_hook_is_refused_and_names_the_occupant() {
         .expect("probing the hook failed")
         .expect("the occupant took the hook but the kernel names nobody");
 
-    let mut ebpf = carapace();
+    let mut ebpf = load_raw(&object_path(), DEFAULT_SETTINGS);
     let program = xdp_program(&mut ebpf, support::PROGRAM);
     let err = attach_native(program, &veth.name)
         .expect_err("carapace replaced a program that was already there");
@@ -244,7 +155,7 @@ fn attaching_over_an_occupied_hook_is_refused_and_names_the_occupant() {
 #[test]
 fn a_driver_without_native_support_is_refused_rather_than_downgraded() {
     let dummy = Link::dummy("cara-dumb");
-    let mut ebpf = carapace();
+    let mut ebpf = load_raw(&object_path(), DEFAULT_SETTINGS);
     let program = xdp_program(&mut ebpf, support::PROGRAM);
 
     let err = attach_native(program, &dummy.name).expect_err("a dummy has no ndo_bpf");
@@ -275,7 +186,7 @@ fn a_hook_held_in_another_mode_is_refused_and_names_the_occupant() {
     );
 
     let held = hook_probe::occupant(&veth.name).unwrap().unwrap();
-    let mut ebpf = carapace();
+    let mut ebpf = load_raw(&object_path(), DEFAULT_SETTINGS);
     let program = xdp_program(&mut ebpf, support::PROGRAM);
     let err = attach_native(program, &veth.name).expect_err("the generic hook is taken");
 
@@ -298,7 +209,7 @@ fn a_hook_held_in_another_mode_is_refused_and_names_the_occupant() {
 #[test]
 fn a_detached_hook_can_be_taken_again() {
     let veth = Link::veth("cara-cycle");
-    let mut ebpf = carapace();
+    let mut ebpf = load_raw(&object_path(), DEFAULT_SETTINGS);
     let program = xdp_program(&mut ebpf, support::PROGRAM);
 
     let mut ids = Vec::new();
@@ -320,7 +231,7 @@ fn a_detached_hook_can_be_taken_again() {
 
 #[test]
 fn an_unknown_interface_is_named_in_the_error() {
-    let mut ebpf = carapace();
+    let mut ebpf = load_raw(&object_path(), DEFAULT_SETTINGS);
     let program = xdp_program(&mut ebpf, support::PROGRAM);
 
     let err = attach_native(program, "cara-nosuch").expect_err("the interface does not exist");

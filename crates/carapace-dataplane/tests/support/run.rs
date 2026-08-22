@@ -250,6 +250,46 @@ pub fn object_path() -> PathBuf {
     if let Ok(path) = env::var("CARAPACE_EBPF_OBJ") {
         return PathBuf::from(path);
     }
+    default_object_path()
+}
+
+/// The object without instrumentation, which is the one that ships.
+///
+/// Anything measured as a property of the program — its call budget, its JITed size —
+/// comes from this one: the instrumented build adds a map write per counted call, so
+/// measuring that build would be measuring the instrumentation.
+pub fn plain_object_path() -> PathBuf {
+    if let Ok(path) = env::var("CARAPACE_EBPF_PLAIN_OBJ") {
+        return PathBuf::from(path);
+    }
+    default_object_path()
+}
+
+fn default_object_path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../carapace-ebpf/target/bpfel-unknown-none/release/carapace-ebpf")
+}
+
+/// Loads an object into the kernel without the test-run wrapper, for the tests that
+/// attach it to a real interface rather than feeding it packets.
+pub fn load_raw(path: &std::path::Path, settings: u32) -> Ebpf {
+    let object = fs::read(path)
+        .unwrap_or_else(|err| panic!("cannot read the eBPF object at {}: {err}", path.display()));
+    EbpfLoader::new()
+        .override_global(SETTINGS_SYMBOL, &settings, true)
+        .load(&object)
+        .unwrap_or_else(|err| panic!("loading {} failed: {err}", path.display()))
+}
+
+/// Verifies one program of a loaded object and hands it back ready to attach.
+pub fn xdp_program<'a>(ebpf: &'a mut Ebpf, name: &str) -> &'a mut Xdp {
+    let program: &mut Xdp = ebpf
+        .program_mut(name)
+        .unwrap_or_else(|| panic!("no program named {name}"))
+        .try_into()
+        .expect("the program is not an XDP program");
+    program
+        .load()
+        .unwrap_or_else(|err| panic!("the verifier rejected {name}: {err}"));
+    program
 }

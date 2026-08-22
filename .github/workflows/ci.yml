@@ -58,23 +58,27 @@ jobs:
           components: rust-src
       - uses: Swatinem/rust-cache@v2
       - run: cargo install bpf-linker --locked
-      - run: sudo apt-get update && sudo apt-get install -y linux-tools-common linux-tools-generic
-      - name: build the eBPF program
-        run: cargo +nightly build --release
-        working-directory: crates/carapace-ebpf
+      # clang builds the bench objects the attach test takes the hook with, perf
+      # counts the xdp_exception tracepoint.
+      - run: sudo apt-get update && sudo apt-get install -y clang linux-tools-common linux-tools-generic
       - run: cargo clippy --workspace --all-targets --features carapace-dataplane/kernel-tests -- -D warnings
-      - run: cargo test --workspace --features carapace-dataplane/kernel-tests
-      # Assertion 2: JITed size against the baseline. bpftool 7.4 renamed the
-      # field to bytes_jited; reading only the old name would compare against
-      # null and pass silently.
-      - name: JITed code size
-        continue-on-error: true
-        run: scripts/ci/jited-size.sh
-      # Assertion 4: strict. An XDP_ABORTED is a correctness bug wearing a
-      # statistic as a disguise.
-      - name: no unintended drops
-        continue-on-error: true
-        run: scripts/ci/xdp-exception.sh
+      # Loading an XDP program needs CAP_BPF and CAP_NET_ADMIN, so the test
+      # binaries run under sudo while the build stays unprivileged. This is the
+      # same script the lab runs, and it builds both eBPF objects: the one that
+      # ships and the instrumented one the tests read counters out of.
+      #
+      # Three of the seven assertions are test files inside this run, and they are
+      # named here rather than re-run as separate steps:
+      #   assertion 1  tests/helper_budget.rs    helper calls present in the program
+      #   assertion 2  tests/jited_size.rs       size of the JIT-compiled program
+      #   assertion 4  tests/xdp_exception.rs    unintended drops, strict, == 0
+      #
+      # Assertion 2 does not use `bpftool prog show --json` as originally planned:
+      # bpftool cannot load this object at all, because aya emits legacy map
+      # definitions that libbpf dropped in 1.0. It reads jited_prog_len from the
+      # kernel instead, which is the field bpftool renders as bytes_jited.
+      - name: kernel tests, and assertions 1, 2 and 4
+        run: bash scripts/lab/kernel-tests.sh
       # Assertion 5: agent RSS after a minute of load.
       - name: agent RSS
         continue-on-error: true

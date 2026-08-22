@@ -5,6 +5,7 @@
 // another target uses looks dead from here.
 #![allow(dead_code, unused_imports)]
 
+pub mod net;
 pub mod pkt;
 pub mod run;
 
