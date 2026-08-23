@@ -96,6 +96,18 @@ pub const BUCKET_RATE_SYMBOLS: [[&str; 2]; 2] = [
     ["BUCKET_SUSPECT_RATE", "BUCKET_SUSPECT_BURST"],
 ];
 
+/// Dead words read between the load and the store of a bucket, so the leak of the
+/// lock-free bank can be measured as a function of the width of its read-modify-write
+/// window instead of at the one width the program happens to have.
+///
+/// Zero in every load that is not a measurement, and zero here is not a short loop but no
+/// loop at all: `.rodata` is constant to the verifier, so the body is removed before the
+/// program is JITed — the same mechanism as [`SIGNATURE_VECTORS_SYMBOL`], and the same
+/// evidence, a JITed size that does not move. A load-time global and not a cargo feature
+/// for the reason this project has already paid for once: a feature would mean the object
+/// the campaign measures is not the object that ships.
+pub const BUCKET_STALL_SYMBOL: &str = "BUCKET_STALL";
+
 /// One bit per vector of the signature catalogue, in catalogue order, patched by the
 /// loader like the policy word.
 ///

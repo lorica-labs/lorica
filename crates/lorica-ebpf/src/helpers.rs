@@ -17,7 +17,7 @@ use aya_ebpf::{
     maps::lpm_trie::Key,
     programs::XdpContext,
 };
-use lorica_common::{Charge, CounterId, Family, LpmValue, PacketView, Rate};
+use lorica_common::{Bucket, Charge, CounterId, Family, LpmValue, PacketView, Rate};
 
 use crate::maps::{BUCKET_BANK, COUNTERS, UNIFIED_LIST};
 
@@ -241,8 +241,49 @@ pub fn bank_charge(index: u32, rate: Rate, now: u64, size: u32) -> Charge {
     match BUCKET_BANK.get_ptr_mut(index) {
         // SAFETY: the pointer comes from a successful lookup, and `BankSlot` is `repr(C)`
         // with the bucket as its only field, so the value starts where the slot does.
-        Some(slot) => unsafe { (*slot).bucket.charge(rate, now, size) },
+        //
+        // The four accesses are volatile, which is what pins [`stall`] between the load and
+        // the store: nothing else in the language orders an unrelated side effect against a
+        // plain load and a plain store the optimiser is free to move it across. The words
+        // are also genuinely shared with every other CPU, so a volatile read and a volatile
+        // write are the honest spelling of the update either way.
+        Some(slot) => unsafe {
+            let mut bucket = Bucket {
+                level: core::ptr::read_volatile(&raw const (*slot).bucket.level),
+                last_tick: core::ptr::read_volatile(&raw const (*slot).bucket.last_tick),
+            };
+            stall();
+            let verdict = bucket.charge(rate, now, size);
+            core::ptr::write_volatile(&raw mut (*slot).bucket.level, bucket.level);
+            core::ptr::write_volatile(&raw mut (*slot).bucket.last_tick, bucket.last_tick);
+            verdict
+        },
         None => Charge::Within,
+    }
+}
+
+/// Widens the window [`bank_charge`] holds a bucket open for, by as many reads of one
+/// read-only word as `BUCKET_STALL` names, so the leak of the bank can be measured as a
+/// function of that width rather than at the single width the program happens to have.
+///
+/// Zero in every load that is not a measurement, and zero means absent rather than cheap:
+/// the verifier constant-folds the `.rodata` word and removes the loop before the JIT sees
+/// it, the same way it removes an unarmed signature vector.
+///
+/// **Why this shape and not another.** The dead work has to survive the optimiser, has to
+/// sit between the load and the store, and has to cost nothing but time. A volatile read is
+/// the only construct that gets all three: it may not be deleted for having an unused
+/// result, it may not be hoisted out of the loop, and it may not be reordered against the
+/// volatile accesses of the bucket around it. An arithmetic chain would have needed its
+/// result to reach the verdict in order to survive, which would have changed the verdict.
+/// It is deliberately not a division — this program carries none, `helper_budget` asserts
+/// that, and a division inside the window would confound the length of the window with the
+/// cost of what fills it. And the word it reads is a line of this program's own `.rodata`
+/// that no other CPU wants, so what the loop adds is window and not coherence traffic.
+#[inline(always)]
+fn stall() {
+    for _ in 0..crate::settings::bucket_stall() {
+        crate::settings::bucket_stall();
     }
 }
 

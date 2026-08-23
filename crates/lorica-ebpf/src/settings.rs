@@ -53,6 +53,16 @@ static BUCKET_SUSPECT_BURST: u64 = BURST_MAX;
 #[unsafe(no_mangle)]
 static SIGNATURE_VECTORS: u32 = 0;
 
+/// Dead words the bucket update reads while it holds the bucket open, so the leak of the
+/// bank can be measured against the width of its read-modify-write window.
+///
+/// Zero everywhere but in a measurement load, and zero costs nothing rather than little:
+/// the verifier reads `.rodata` as constant, so it removes the loop before the program is
+/// JITed exactly as it removes an unarmed signature vector. Not a cargo feature, because a
+/// feature would mean the object the campaign measures is not the object that ships.
+#[unsafe(no_mangle)]
+static BUCKET_STALL: u32 = 0;
+
 /// Same `read_volatile` as the policy word and for the same reason: a folded read would
 /// compile the initialiser into the program the loader is about to patch.
 #[inline(always)]
@@ -116,6 +126,15 @@ pub fn mark_over_budget() -> bool {
 pub fn signature_vectors() -> u32 {
     // SAFETY: a plain aligned read of a static in this program own read-only data.
     unsafe { core::ptr::read_volatile(&SIGNATURE_VECTORS) }
+}
+
+/// One read of the stall word. Volatile, and every iteration of the window takes its own:
+/// a volatile access is a side effect the optimiser may neither remove nor hoist out of the
+/// loop, which is what makes the dead work dead and still present.
+#[inline(always)]
+pub fn bucket_stall() -> u32 {
+    // SAFETY: a plain aligned read of a static in this program own read-only data.
+    unsafe { core::ptr::read_volatile(&BUCKET_STALL) }
 }
 
 #[inline(always)]
