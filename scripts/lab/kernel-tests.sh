@@ -88,11 +88,16 @@ for line in sys.stdin:
 ' < "$manifest")
 [ "${#binaries[@]}" -gt 0 ] || die "cargo produced no test executable"
 
+# sudo resets the environment, so a variable a test reads has to be named here or the
+# test sees its default and reports on something else entirely. The wire trace is driven
+# through these three: which interface it holds, how long it holds it, and which subnet a
+# device has to be addressed inside to be accepted at all.
+KEEP=LORICA_EBPF_OBJ,LORICA_EBPF_PLAIN_OBJ,LORICA_IFACE,LORICA_TEST_SUBNET,LORICA_WIRE_WINDOW_MS
+
 status=0
 for binary in "${binaries[@]}"; do
     printf '\n--- %s\n' "$(basename "$binary")"
-    sudo -n --preserve-env=LORICA_EBPF_OBJ,LORICA_EBPF_PLAIN_OBJ \
-        "$binary" "${PASS_THROUGH[@]}" || status=1
+    sudo -n --preserve-env="$KEEP" "$binary" "${PASS_THROUGH[@]}" || status=1
 done
 
 exit $status
