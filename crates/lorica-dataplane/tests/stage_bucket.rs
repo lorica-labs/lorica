@@ -263,6 +263,11 @@ fn the_excess_is_counted_and_passed_when_the_stage_is_not_armed() {
 /// drain and only one of the stores survives — one tick can be spent up to N times. That is
 /// the same N the per-CPU layout was rejected for diluting by, which makes it the honest
 /// gate: the retained layout has to beat the layout it was retained over.
+///
+/// The printed figure is only the measurement when this case runs alone — libtest runs the
+/// rest of this file on the other CPUs, which competes with the four pinned threads and
+/// reads back as less contention than there is. Alone it reproduces inside a tenth:
+/// `--exact the_lock_free_bank_leaks_less_than_the_layout_it_was_retained_over`.
 #[test]
 fn the_lock_free_bank_leaks_less_than_the_layout_it_was_retained_over() {
     /// What four cores doing nothing but the update measured. Reported against, not

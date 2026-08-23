@@ -5,6 +5,18 @@
 //! boundary. Correct behaviour, marginally more tolerant of micro-bursts, and it needs
 //! no workaround.
 //!
+//! **What it costs, measured, because it is not the figure the layout study assumed.** 100
+//! to 112 ns on the 901 against a whole-pipeline baseline of 81 ns, so this stage costs more
+//! than everything before it put together. Attributed by measuring the same path with the
+//! index replaced by one byte of the address: 61 to 73 ns is the keyed SipHash-2-4 and 39 ns
+//! is the lookup and the charge. The hash is not negotiable — an unkeyed index is a bucket
+//! an attacker chooses — and its price on this ISA is that BPF has no rotate instruction, so
+//! each of the six rotations in each of the ten siprounds becomes a shift, a shift and an
+//! or. The 39 ns is dominated by one 64-bit division: the drain divides by 10^9 / 512, LLVM
+//! cannot strength-reduce it because the reciprocal multiply would need a high multiply BPF
+//! does not have, and a `div` is tens of cycles. Both are worth revisiting. Neither is
+//! revisited here.
+//!
 //! Over budget and enforcing, the stage answers `Drop`, or `Mark` when the operator asked
 //! for the excess to reach the stack tagged instead. `Mark` does not write the metadata it
 //! is named after: the write is `bpf_xdp_adjust_meta`, which needs the `XdpContext` this
