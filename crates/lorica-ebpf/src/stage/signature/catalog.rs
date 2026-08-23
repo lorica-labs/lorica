@@ -40,6 +40,17 @@ pub enum VectorId {
 }
 
 impl VectorId {
+    /// This vector's place in the activation word the loader patched, by the same ordinal
+    /// the discriminant already is.
+    ///
+    /// A configuration that leaves a vector out clears its bit, and the word is a `.rodata`
+    /// global: the verifier reads it as an immediate and takes the branch behind a clear bit
+    /// out of the program. Not a run-time skip — the vectors nobody asked for are not in the
+    /// JITed code at all, which is why every test of a bit sits *before* what it guards.
+    pub const fn bit(self) -> u32 {
+        1 << self as u32
+    }
+
     pub const fn counter(self) -> CounterId {
         match self {
             Self::AmpDns => CounterId::SignatureAmpDns,

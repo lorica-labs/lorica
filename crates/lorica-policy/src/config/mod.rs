@@ -23,6 +23,16 @@ pub struct Config {
     #[serde(default)]
     pub mitigation_reserve: Option<u32>,
 
+    /// The vectors of the signature catalogue stage 6 carries, named by their counter
+    /// without the `signature_` prefix.
+    ///
+    /// Absent is the whole catalogue. An empty list is none of it, and the two cannot share
+    /// a spelling: a vector left out is not in the loaded program at all, so a list that
+    /// silently meant "everything" when the operator wrote "nothing" would be the one
+    /// mistake in this file nobody can see from the outside.
+    #[serde(default)]
+    pub signatures: Option<Vec<String>>,
+
     #[serde(default)]
     pub rules: Vec<Rule>,
 }

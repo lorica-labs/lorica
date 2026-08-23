@@ -20,5 +20,6 @@ pub use ttl::{Clock, Deadline};
 pub use wire::{
     Action, BUCKET_KEY_SYMBOLS, BUCKET_RATE_SYMBOLS, CounterId, DEFAULT_SETTINGS, EventHeader,
     Family, FragState, LpmKey, LpmValue, MAX_OFFSET, NO_CUTOFF, PacketView, SCOPE_MAX,
-    SETTINGS_SYMBOL, STAGE_CUTOFF_SHIFT, Scope, V4_MAPPED_PREFIX_BITS, anomaly, setting,
+    SETTINGS_SYMBOL, SIGNATURE_VECTORS_ALL, SIGNATURE_VECTORS_SYMBOL, STAGE_CUTOFF_SHIFT, Scope,
+    V4_MAPPED_PREFIX_BITS, anomaly, setting,
 };

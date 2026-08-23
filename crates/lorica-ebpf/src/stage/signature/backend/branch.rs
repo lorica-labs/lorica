@@ -10,6 +10,13 @@
 //! the bytes their protocol puts on the wire and keep the port and the size as
 //! corroboration.
 //!
+//! Every vector is behind its bit of the activation word, tested before anything it
+//! guards. That is not a run-time skip: the word is a `.rodata` global the loader patches
+//! before verification, so the verifier propagates it and takes the branch of an
+//! unconfigured vector out of the program. A configuration naming two vectors carries two
+//! comparisons, and the cascade a packet matching nothing walks is as long as the
+//! catalogue the operator asked for rather than as long as the catalogue.
+//!
 //! The families stay separate functions because each answers a different question, but
 //! their `inline(never)` is conditional now: the object that ships merges them into the
 //! stage frame and only a `profiling` build gives each a JIT symbol. Merging frames is
@@ -20,6 +27,7 @@ use lorica_common::{FragState, PacketView};
 
 use crate::{
     parse::l4::{IPPROTO_TCP, IPPROTO_UDP, TCP_ACK, TCP_RST, TCP_SYN},
+    settings,
     stage::signature::{backend::SignatureBackend, catalog::VectorId},
 };
 
@@ -59,6 +67,21 @@ const AMPLIFIERS: [(u16, u16, VectorId); 4] = [
     // UDP `get` answer for a small value does not reach a kilobyte.
     (11211, 1024, VectorId::AmpMemcached),
 ];
+
+/// Every bit of the reflector family, so a configuration holding none of it loses the
+/// protocol test and both length computations below along with the rows.
+///
+/// Derived from the table rather than written beside it: a row added without its bit would
+/// be a vector that never fires however the operator configures it.
+const AMP_MASK: u32 = {
+    let mut mask = VectorId::AmpA2s.bit() | VectorId::AmpRaknet.bit();
+    let mut row = 0;
+    while row < AMPLIFIERS.len() {
+        mask |= AMPLIFIERS[row].2.bit();
+        row += 1;
+    }
+    mask
+};
 
 const A2S_PORT: u16 = 27_015;
 
@@ -143,22 +166,39 @@ pub struct Branch;
 
 impl SignatureBackend for Branch {
     fn classify(view: &PacketView) -> Option<VectorId> {
+        // Read once and passed down. Ten reads of the same word would each be a load the
+        // verifier keeps — a `read_volatile` is never folded, and the instruction before a
+        // branch is a visited instruction whatever the branch resolves to. One read and ten
+        // compares against it means an empty catalogue costs one load and nothing else.
+        let armed = settings::signature_vectors();
+
         // Ordered cheapest-and-most-certain last: the two port families are the ones a
         // flood is made of, so they answer first and the coherence checks, which every
         // packet reaches, are the ones a matching packet never gets to.
-        if let Some(vector) = amplification(view) {
-            return Some(vector);
+        if armed & AMP_MASK != 0 {
+            if let Some(vector) = amplification(view, armed) {
+                return Some(vector);
+            }
         }
-        if let Some(vector) = loop_pair(view) {
-            return Some(vector);
+        if armed & VectorId::LoopyPortPair.bit() != 0 {
+            if let Some(vector) = loop_pair(view) {
+                return Some(vector);
+            }
         }
-        if let Some(vector) = fragment_abuse(view) {
-            return Some(vector);
+        if armed & VectorId::FragAbuse.bit() != 0 {
+            if let Some(vector) = fragment_abuse(view) {
+                return Some(vector);
+            }
         }
-        if let Some(vector) = impossible_flags(view) {
-            return Some(vector);
+        if armed & VectorId::ImpossibleTcpFlags.bit() != 0 {
+            if let Some(vector) = impossible_flags(view) {
+                return Some(vector);
+            }
         }
-        length_mismatch(view)
+        if armed & VectorId::LengthMismatch.bit() != 0 {
+            return length_mismatch(view);
+        }
+        None
     }
 }
 
@@ -180,7 +220,7 @@ const fn stated_l4_len(view: &PacketView) -> u16 {
 /// packet read of the stage happens only for a datagram already coming from that port at
 /// that size. A flood of anything else pays two compares for it.
 #[cfg_attr(feature = "profiling", inline(never))]
-fn amplification(view: &PacketView) -> Option<VectorId> {
+fn amplification(view: &PacketView, armed: u32) -> Option<VectorId> {
     if view.proto != IPPROTO_UDP {
         return None;
     }
@@ -196,17 +236,19 @@ fn amplification(view: &PacketView) -> Option<VectorId> {
     // A `for` over an array whose length is a literal: the bound is structural, so the
     // verifier reads it out of the code and no index needs masking.
     for (port, floor, vector) in AMPLIFIERS {
-        if view.sport == port && payload >= floor {
+        if armed & vector.bit() != 0 && view.sport == port && payload >= floor {
             return Some(vector);
         }
     }
-    if view.sport == A2S_PORT
+    if armed & VectorId::AmpA2s.bit() != 0
+        && view.sport == A2S_PORT
         && payload >= A2S_FLOOR
         && view.payload_bytes::<4>(0) == Some(SOURCE_QUERY_MAGIC)
     {
         return Some(VectorId::AmpA2s);
     }
-    if view.sport == RAKNET_PORT
+    if armed & VectorId::AmpRaknet.bit() != 0
+        && view.sport == RAKNET_PORT
         && payload >= RAKNET_FLOOR
         && view.payload_bytes::<16>(RAKNET_PONG_MAGIC_OFF) == Some(RAKNET_MAGIC)
     {

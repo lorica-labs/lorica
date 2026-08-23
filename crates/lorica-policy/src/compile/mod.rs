@@ -24,6 +24,10 @@ use crate::{
 pub struct Compiled {
     pub profile: ProfileKind,
     pub settings: u32,
+    /// The vectors stage 6 is loaded with, one bit per row of the catalogue. Patched into
+    /// the program like the settings word, and the rows it leaves out are removed from the
+    /// program by the verifier rather than skipped at run time.
+    pub signature_vectors: u32,
     pub entries: Vec<(LpmKey, LpmValue)>,
     /// The bogon entries, which go into the same map behind the same lookup. They are
     /// kept apart from the operator entries because they are not the operator's: they
@@ -46,6 +50,13 @@ pub enum Warning {
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum CompileError {
+    #[error(
+        "{name} is not a vector of the signature catalogue; the names are the signature \
+         counters without their prefix, and accepting a misspelt one would leave that \
+         vector out of the loaded program with nothing to read about it"
+    )]
+    UnknownSignatureVector { name: String },
+
     #[error("{spec} is not an address or a prefix")]
     BadPrefix { spec: String },
 
@@ -212,6 +223,7 @@ pub fn compile(
     Ok(Compiled {
         profile: config.profile,
         settings: settings_word(&config.settings),
+        signature_vectors: signature::vectors_word(config.signatures.as_deref())?,
         entries,
         bogons,
         sizes,
