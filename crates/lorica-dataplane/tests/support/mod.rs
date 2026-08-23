@@ -27,6 +27,13 @@ pub fn program_with_buckets(settings: u32, buckets: BucketGlobals) -> TestProg {
     TestProg::load_buckets(PROGRAM, settings, buckets)
 }
 
+/// The bucket load with the read-modify-write window of the bank widened by `stall` dead
+/// reads. Only the contention measurement wants this; everything else wants zero, which is
+/// the program's own initialiser and no loop at all.
+pub fn program_with_stalled_buckets(settings: u32, buckets: BucketGlobals, stall: u32) -> TestProg {
+    TestProg::load_buckets_stalled(PROGRAM, settings, buckets, stall)
+}
+
 pub fn program_with_vectors(settings: u32, vectors: u32) -> TestProg {
     TestProg::load_vectors(PROGRAM, settings, vectors)
 }

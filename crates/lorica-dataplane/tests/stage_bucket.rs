@@ -13,11 +13,16 @@ mod support;
 
 use std::{
     collections::BTreeSet,
+    env,
+    sync::Mutex,
     time::{Duration, Instant},
 };
 
 use lorica_common::{DEFAULT_SETTINGS, Drain, Rate, UNITS_PER_BYTE, setting};
-use support::{BucketGlobals, PktBuilder, TestProg, XdpAction, program, program_with_buckets};
+use support::{
+    BucketGlobals, PktBuilder, TestProg, XdpAction, program, program_with_buckets,
+    program_with_stalled_buckets,
+};
 
 /// 14 Ethernet, 20 IPv4, 8 UDP and this much payload.
 const PAYLOAD: usize = 64;
@@ -283,16 +288,14 @@ fn the_excess_is_counted_and_passed_when_the_stage_is_not_armed() {
 /// fits more updates per CPU inside one jiffy, so more CPUs land in the same window per tick
 /// and one tick's drain is spent more times. **Speed buys contention here, not accuracy**,
 /// and an optimisation that degrades enforcement precision is worth knowing about even when
-/// the gate still holds.
+/// the gate still holds. That mechanism is still a conjecture, and the case below is what
+/// turns it into a measurement: the same leak swept over the window width it blames.
 #[test]
 fn the_lock_free_bank_leaks_less_than_the_layout_it_was_retained_over() {
     /// What four cores doing nothing but the update measured. Reported against, not
     /// asserted against — see above.
     const CEILING: f64 = 2.62;
     const REPEAT: u32 = 4_000_000;
-    /// 10 MB/s, far under what one core can offer through `BPF_PROG_TEST_RUN`, so the
-    /// enforcement binds and what gets through is what the bank let through.
-    const BYTES_PER_SEC: u64 = 10_000_000;
 
     let cpus = online_cpus();
     assert!(
@@ -300,22 +303,20 @@ fn the_lock_free_bank_leaks_less_than_the_layout_it_was_retained_over() {
         "a contention measurement needs more than one CPU; this machine reports {cpus}"
     );
     let threads = cpus.min(4);
+    let _alone = serialised();
+    let (rate, _) = budget_rate();
 
-    // The one case in this file with a real rate, so the one that needs the jiffy width.
-    // `Drain::per_jiffy` is the conversion the loader does, called here the same way, which
-    // is the point of it living in the type: the number below stays in bytes per second and
-    // nothing on the packet path multiplies.
-    let hz = program().clock().hz;
-    let rate = Rate {
-        drain: Drain::per_jiffy(BYTES_PER_SEC, hz),
-        burst: 4 * BYTES_PER_SEC / u64::from(hz),
-    };
+    let one = observe(
+        rate,
+        Shape::Concentrated,
+        1,
+        0,
+        REPEAT * u32::try_from(threads).unwrap(),
+    );
+    let many = observe(rate, Shape::Concentrated, threads, 0, REPEAT);
 
-    let one = enforced_rate(rate, 1, REPEAT * u32::try_from(threads).unwrap());
-    let many = enforced_rate(rate, threads, REPEAT);
-
-    let single = one / BYTES_PER_SEC as f64;
-    let leak = many / BYTES_PER_SEC as f64;
+    let single = one.leak;
+    let leak = many.leak;
     println!(
         "bucket bank on {threads} pinned CPU: one thread enforced {single:.4} of the \
          configured rate, {threads} threads enforced {leak:.4} — a leak factor of \
@@ -338,16 +339,280 @@ fn the_lock_free_bank_leaks_less_than_the_layout_it_was_retained_over() {
     );
 }
 
-/// Bytes per second the bank actually let through, hammered by `threads` pinned threads
-/// offering `repeat` packets each.
-fn enforced_rate(rate: Rate, threads: usize, repeat: u32) -> f64 {
-    let prog = program_with_buckets(ENFORCE, BucketGlobals::fixed(rate));
-    let pkt = udp([10, 90, 1, 2], SPORT);
+/// **The surface.** The same leak, measured as a function of the two variables it could
+/// depend on: the number of contending cores `C` and the width `Δ` of the read-modify-write
+/// window, in dead reads placed between the load and the store of the bucket.
+///
+/// This exists because a hypothesis died on a point reading and a point reading could not
+/// say why. Removing the division from `charge` shortened the window and the leak went *up*,
+/// median 1.79 to 2.98, which is backwards from the guess that a shorter window races less.
+/// The mechanism proposed for it — a shorter update fits more updates per CPU inside one
+/// jiffy, so more CPUs land in the same window per tick and one tick's drain is spent more
+/// times — is a conjecture, and `Δ` is what turns it into a measurement. If the leak is a
+/// function of window width, `leak(C, Δ)` is monotone in `Δ` and that pair of medians is two
+/// points on a curve. If it is flat in `Δ`, the mechanism is something else, which is the
+/// more interesting outcome.
+///
+/// **The arms.** `concentrated` puts every thread on one bucket: the attack shape the layout
+/// exists to survive and the one the lock collapsed under. `uniform` gives each thread a
+/// bucket of its own on a cache line of its own, which shares nothing and so says how much
+/// of a concentrated figure is contention rather than harness. The denominator differs with
+/// the arm and has to: every bucket the traffic touches brings a budget of its own, so the
+/// leak of a uniform arm is against `C` budgets and the leak of a concentrated one against
+/// one.
+///
+/// **Nothing here asserts a leak value**, for the reason the case above states at length: it
+/// is a distribution between 1.6 and 4.0 and bimodal, and five point readings each looked
+/// like a result. What is asserted is the gate — every observation under the thread count,
+/// the dilution the per-CPU layout would have imposed — and the one-thread control, which is
+/// what says the harness measures the bank rather than the burst or the syscall. At one
+/// thread the gate degenerates (nothing races, and the control has read 0.994 to 0.996), so
+/// there the control band is the assertion.
+///
+/// **Read the samples, not their median.** The default is three per arm and a campaign wants
+/// more: the bimodality is the finding, and a median is exactly the operation that hid it.
+///
+/// **What the first serialised run said, on the dev guest and not on the campaign host**, so
+/// this is the harness working and not the number: concentrated at four cores read 1.84 and
+/// 1.39 at `Δ = 0`, 2.57 and 3.21 at 64, 3.83 and 3.84 at 1024, against a control of 0.994 to
+/// 0.996 at every width and a uniform arm flat at 0.98. Monotone in `Δ`, which is the
+/// direction the refuted hypothesis needs, and 64 dead reads already move the leak further
+/// than the whole 1.79-to-2.98 pair it was blamed for. Two samples per point is not a
+/// distribution and one guest is not a campaign; the spread inside `Δ = 0` alone, 1.39 to
+/// 1.84, is why this prints samples instead of a median.
+///
+/// The window costs what it should and nothing when it is zero: the same object JITs to
+/// 8 167 bytes at `Δ = 0` and 8 186 at any `Δ` above it — 19 bytes of loop the verifier
+/// removes when the word is zero — and a packet cost 182 ns of `duration` at 0, 236 at 64 and
+/// 713 at 1024, which is about one cycle per dead read.
+///
+/// Knobs, all optional, defaults in brackets: `LORICA_BANK_CORES` [the machine, capped at 4],
+/// `LORICA_BANK_WINDOW` [0], `LORICA_BANK_SHAPES` [concentrated,uniform],
+/// `LORICA_BANK_SAMPLES` [3], `LORICA_BANK_REPEAT` [1000000] packets per thread per sample.
+/// Cores and windows take comma-separated lists.
+///
+/// Like the case above, this is only a measurement when it runs alone: libtest otherwise
+/// runs the rest of the file on the CPUs the pinned threads were promised. Run it with
+/// `--exact the_bank_leak_is_a_surface_over_cores_and_window`.
+#[test]
+fn the_bank_leak_is_a_surface_over_cores_and_window() {
+    let cpus = online_cpus();
+    assert!(
+        cpus >= 2,
+        "a contention measurement needs more than one CPU; this machine reports {cpus}"
+    );
+    let _alone = serialised();
+    let (rate, hz) = budget_rate();
 
-    // Warm the bucket to its ceiling first, so the burst is spent before the clock starts
-    // and what is timed is the steady state.
-    for _ in 0..64 {
-        prog.run(&pkt);
+    let cores = list("LORICA_BANK_CORES", &[cpus.min(4)]);
+    let windows: Vec<u32> = list("LORICA_BANK_WINDOW", &[0]);
+    let samples = number("LORICA_BANK_SAMPLES", 3);
+    let repeat = number("LORICA_BANK_REPEAT", 1_000_000);
+    let widest = u32::try_from(*cores.iter().max().expect("no core count to sweep")).unwrap();
+
+    for shape in shapes() {
+        for &window in &windows {
+            // The control first, and offered the same total as the widest arm so the burst
+            // is the same fraction of the run: a short control reports the burst back as
+            // enforcement. One thread races nothing, so anything but one here means the arm
+            // measures the wall clock or the syscall rather than the bank.
+            let control = observe(rate, shape, 1, window, repeat * widest);
+            emit(shape, 1, window, 0, control.leak, hz, &control);
+            assert!(
+                (0.5..1.5).contains(&control.leak),
+                "one thread enforced {:.4} of the configured rate at window {window}, so \
+                 this arm measures something other than the bank",
+                control.leak
+            );
+
+            for &threads in &cores {
+                for sample in 1..=samples {
+                    let seen = observe(rate, shape, threads, window, repeat);
+                    emit(shape, threads, window, sample, control.leak, hz, &seen);
+                    assert!(
+                        threads < 2 || seen.leak < threads as f64,
+                        "the bank leaked {:.2}x on {threads} CPU at window {window}, which \
+                         is the dilution the per-CPU layout was rejected for: the retained \
+                         layout no longer beats the one it was retained over, and the layout \
+                         question is open again",
+                        seen.leak
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// Held by each contention case for its whole run, so the two of them never overlap.
+///
+/// Not tidiness. libtest runs this file's cases on the very CPUs these threads are pinned
+/// to, and the two measurements are seconds each: run at once, each is the other's noise.
+/// Measured, and the direction is not obvious — the one-thread control read **0.1997** while
+/// the other case had four threads pinned, against 0.994 alone, because a leaky bucket
+/// credits a preempted offerer nothing beyond its burst, so a thread that is descheduled for
+/// four fifths of the wall clock reports the bank as five times stricter than it is. The
+/// seven verdict cases above are milliseconds and do not need the lock.
+///
+/// This is not the isolation a campaign needs. That still means one case at a time on an
+/// idle machine, which is what `--exact` is for; the lock only keeps these two from ruining
+/// each other in an ordinary suite run.
+static CONTENTION: Mutex<()> = Mutex::new(());
+
+/// The lock, ignoring poison: a failed measurement should report its own failure and not
+/// turn the other case into a confusing panic about a mutex.
+fn serialised() -> std::sync::MutexGuard<'static, ()> {
+    CONTENTION.lock().unwrap_or_else(|held| held.into_inner())
+}
+
+/// 10 MB/s per bucket, far under what one core can offer through `BPF_PROG_TEST_RUN`, so the
+/// enforcement binds and what gets through is what the bank let through.
+const BYTES_PER_SEC: u64 = 10_000_000;
+
+/// The `duration` field of `BPF_PROG_TEST_RUN` against the CPU time it accounts for: 128 ns
+/// of `duration` for 262 ns of task-clock, measured on the campaign host, a stable factor of
+/// 2.06. Ratios out of that field are sound; absolutes are about half the CPU time, so a
+/// cost quoted in cycles goes through this first.
+const TASK_CLOCK_PER_DURATION: f64 = 2.06;
+
+/// Core clock of the campaign host, out of `cycles / task-clock`, no turbo. The measured
+/// band is 1.875 to 1.953 GHz and this is its midpoint: the ±2 % it costs is an order below
+/// the spread of the leak figures, and the line also prints `ns_per_pkt`, so a host that
+/// clocks differently can redo the conversion from the same output.
+const CAMPAIGN_GHZ: f64 = 1.914;
+
+/// One source address for every concentrated thread: the same one, so the same bucket.
+const HOT_SRC: [u8; 4] = [10, 90, 1, 2];
+
+/// The rate every contention arm is measured against.
+///
+/// The one configuration in this file with a real drain, so the one that needs the jiffy
+/// width. `Drain::per_jiffy` is the conversion the loader does, called here the same way,
+/// which is the point of it living in the type: the number above stays in bytes per second
+/// and nothing on the packet path multiplies. The burst is four jiffies of the rate and not
+/// a handful of frames — a jiffy is 1 to 4 ms wide, so a burst below one jiffy's release
+/// would cap the throughput instead of the rate and the measurement would report the burst
+/// back to itself.
+fn budget_rate() -> (Rate, u32) {
+    let hz = program().clock().hz;
+    (
+        Rate {
+            drain: Drain::per_jiffy(BYTES_PER_SEC, hz),
+            burst: 4 * BYTES_PER_SEC / u64::from(hz),
+        },
+        hz,
+    )
+}
+
+/// How the threads are spread over the bank.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Shape {
+    Concentrated,
+    Uniform,
+}
+
+impl Shape {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Concentrated => "concentrated",
+            Self::Uniform => "uniform",
+        }
+    }
+
+    /// Buckets the arm touches, which is the denominator of its leak: each one brings a
+    /// budget of its own, so four threads on four buckets are allowed four times the bytes
+    /// four threads on one are.
+    fn buckets(self, threads: usize) -> usize {
+        match self {
+            Self::Concentrated => 1,
+            Self::Uniform => threads,
+        }
+    }
+
+    /// One source address per thread, chosen so the addresses land where the arm says.
+    fn sources(self, globals: &BucketGlobals, bank: u32, threads: usize) -> Vec<[u8; 4]> {
+        match self {
+            Self::Concentrated => vec![HOT_SRC; threads],
+            Self::Uniform => spread(globals, bank, threads),
+        }
+    }
+}
+
+/// The arms to sweep, from `LORICA_BANK_SHAPES`.
+fn shapes() -> Vec<Shape> {
+    let Ok(named) = env::var("LORICA_BANK_SHAPES") else {
+        return vec![Shape::Concentrated, Shape::Uniform];
+    };
+    named
+        .split(',')
+        .filter(|field| !field.is_empty())
+        .map(|field| match field.trim() {
+            "concentrated" => Shape::Concentrated,
+            "uniform" => Shape::Uniform,
+            other => panic!("LORICA_BANK_SHAPES names {other}, which is no arm of this harness"),
+        })
+        .collect()
+}
+
+/// A comma-separated list of numbers out of the environment. A trailing comma is not an
+/// error, because a campaign builds these strings in a shell loop.
+fn list<T: Clone + std::str::FromStr>(var: &str, default: &[T]) -> Vec<T> {
+    let Ok(value) = env::var(var) else {
+        return default.to_vec();
+    };
+    value
+        .split(',')
+        .filter(|field| !field.is_empty())
+        .map(|field| {
+            field
+                .trim()
+                .parse()
+                .unwrap_or_else(|_| panic!("{var} holds {value:?}, which is not a list of numbers"))
+        })
+        .collect()
+}
+
+fn number(var: &str, default: u32) -> u32 {
+    let Ok(value) = env::var(var) else {
+        return default;
+    };
+    value
+        .trim()
+        .parse()
+        .unwrap_or_else(|_| panic!("{var} holds {value:?}, which is not a number"))
+}
+
+/// One observation of one arm.
+struct Observed {
+    /// Bytes the bank let through over the bytes the buckets it touched were configured for.
+    /// One is enforced exactly; the thread count is the dilution per-CPU would have cost.
+    leak: f64,
+    /// The `duration` field of `BPF_PROG_TEST_RUN`, averaged over the threads. Not CPU time
+    /// and not cycles: see [`TASK_CLOCK_PER_DURATION`].
+    ns_per_pkt: f64,
+    offered: u64,
+    refused: u64,
+    elapsed: Duration,
+    /// Bytes of the program that produced this line, which is what says the widening loop
+    /// is absent at `Δ = 0` rather than merely cheap.
+    jited: u32,
+}
+
+/// What `threads` pinned threads got past the bank, and what the kernel charged them for it.
+fn observe(rate: Rate, shape: Shape, threads: usize, window: u32, repeat: u32) -> Observed {
+    let globals = BucketGlobals::fixed(rate);
+    let prog = program_with_stalled_buckets(ENFORCE, globals, window);
+    let packets: Vec<Vec<u8>> = shape
+        .sources(&globals, prog.bank_len(), threads)
+        .into_iter()
+        .map(|src| udp(src, SPORT))
+        .collect();
+
+    // Warm every bucket the arm touches to its ceiling, so the burst is spent before the
+    // clock starts and what is timed is the steady state.
+    for pkt in &packets {
+        for _ in 0..64 {
+            prog.run(pkt);
+        }
     }
 
     let before = prog.counter("bucket_over_budget");
@@ -356,15 +621,23 @@ fn enforced_rate(rate: Rate, threads: usize, repeat: u32) -> f64 {
     // descriptor and nothing on this side of it is mutated, which is what lets the same
     // program be hammered from several threads at once.
     let shared = Shared(&prog);
-    std::thread::scope(|scope| {
-        for cpu in 0..threads {
-            let shared = &shared;
-            let pkt = pkt.clone();
-            scope.spawn(move || {
-                pin_to(cpu);
-                shared.0.ns_per_run(&pkt, repeat);
-            });
-        }
+    let ns: u128 = std::thread::scope(|scope| {
+        let running: Vec<_> = packets
+            .iter()
+            .enumerate()
+            .map(|(cpu, pkt)| {
+                let shared = &shared;
+                let pkt = pkt.clone();
+                scope.spawn(move || {
+                    pin_to(cpu);
+                    shared.0.ns_per_run(&pkt, repeat)
+                })
+            })
+            .collect();
+        running
+            .into_iter()
+            .map(|thread| thread.join().expect("a measuring thread panicked"))
+            .sum()
     });
     let elapsed = start.elapsed();
     let refused = prog.counter("bucket_over_budget") - before;
@@ -378,7 +651,38 @@ fn enforced_rate(rate: Rate, threads: usize, repeat: u32) -> f64 {
         elapsed > Duration::from_millis(100),
         "the run lasted {elapsed:?}, which is too short against a jiffy"
     );
-    (offered - refused) as f64 * FRAME as f64 / elapsed.as_secs_f64()
+
+    let passed = (offered - refused) as f64 * FRAME as f64 / elapsed.as_secs_f64();
+    let configured = (shape.buckets(threads) as u64 * BYTES_PER_SEC) as f64;
+    Observed {
+        leak: passed / configured,
+        ns_per_pkt: ns as f64 / threads as f64,
+        offered,
+        refused,
+        elapsed,
+        jited: prog.jited_len(),
+    }
+}
+
+/// The line a campaign parses: one per observation, space-separated `key=value`, fixed
+/// field order. `cyc_per_pkt` is derived from `ns_per_pkt` through the two constants above
+/// and is cycles of the campaign host; `ns_per_pkt` is the kernel's `duration` field and is
+/// about half the CPU time.
+fn emit(shape: Shape, cores: usize, window: u32, sample: u32, single: f64, hz: u32, o: &Observed) {
+    println!(
+        "bank shape={} cores={cores} window={window} sample={sample} buckets={} \
+         leak={:.4} single={single:.4} ns_per_pkt={:.1} cyc_per_pkt={:.0} offered={} \
+         refused={} elapsed_ms={} hz={hz} jited={}",
+        shape.name(),
+        shape.buckets(cores),
+        o.leak,
+        o.ns_per_pkt,
+        o.ns_per_pkt * TASK_CLOCK_PER_DURATION * CAMPAIGN_GHZ,
+        o.offered,
+        o.refused,
+        o.elapsed.as_millis(),
+        o.jited,
+    );
 }
 
 struct Shared<'a>(&'a TestProg);
