@@ -1,4 +1,5 @@
-//! The call budget, both halves of it.
+//! The call budget, both halves of it, and the arithmetic the packet path is not allowed
+//! to contain.
 //!
 //! The static half: how many helper calls are *present* in the program, all branches
 //! counted, read from the compiled object before it is ever loaded. Deterministic,
@@ -97,6 +98,19 @@ const OBSERVED_LOOKUPS: u64 = 2;
 const CALL_OPCODE: u8 = 0x85;
 const INSN_LEN: usize = 8;
 
+/// Divisions and modulos allowed anywhere in the object, packet path or not.
+///
+/// Zero, and a ceiling of zero rather than of a few, because on this target a division is
+/// never cheap and never becomes cheap. Strength reduction into a reciprocal multiply needs
+/// a 64-by-64-to-128 multiply, BPF has no such instruction, so LLVM emits a real `BPF_DIV`
+/// however constant the divisor is and the x86 JIT emits a real `div`: tens of cycles,
+/// unpipelined, on the dependency chain of every packet. Every quotient this program needs
+/// is therefore either a shift or computed once in userspace by the loader.
+///
+/// Nothing is excluded, not even the calibration program the call budget leaves out: an
+/// exclusion is a hole in an assertion, and this assertion has none to describe.
+const DIVISION_BUDGET: usize = 0;
+
 #[derive(Default, Debug, PartialEq, Eq)]
 struct Calls {
     helper: usize,
@@ -124,8 +138,29 @@ fn count(code: &[u8]) -> Calls {
     calls
 }
 
+/// `BPF_DIV` and `BPF_MOD`, both widths and both operand forms.
+///
+/// The opcode byte carries the operation in the top nibble, the source in bit 3 and the
+/// instruction class in the low three bits, so a divide is `0x30` over class `0x04`
+/// (32-bit) or `0x07` (64-bit) and a modulo is `0x90` over the same two; bit 3 says
+/// immediate or register and is deliberately not looked at, because both are the same
+/// instruction to the JIT. The signed forms ISA v4 added reuse these opcodes with a nonzero
+/// offset field, so they are counted here too. The class check is what keeps the jumps out:
+/// `0x35` is `BPF_JGE` and shares the top nibble with a divide.
+fn divisions(code: &[u8]) -> usize {
+    code.chunks_exact(INSN_LEN)
+        .filter(|insn| {
+            matches!(insn[0] & 0xf0, 0x30 | 0x90) && matches!(insn[0] & 0x07, 0x04 | 0x07)
+        })
+        .count()
+}
+
 /// Per-function counts, so a failure names the function that grew.
 fn program_calls(object_bytes: &[u8]) -> Vec<(String, Calls)> {
+    per_symbol(object_bytes, count)
+}
+
+fn per_symbol<T>(object_bytes: &[u8], decode: impl Fn(&[u8]) -> T) -> Vec<(String, T)> {
     let file = object::File::parse(object_bytes).expect("the eBPF object is not a valid ELF");
     let mut per_function = Vec::new();
 
@@ -151,7 +186,7 @@ fn program_calls(object_bytes: &[u8]) -> Vec<(String, Calls)> {
         );
 
         let name = symbol.name().unwrap_or("<unnamed>").to_owned();
-        per_function.push((name, count(&data[start..end])));
+        per_function.push((name, decode(&data[start..end])));
     }
 
     per_function
@@ -240,6 +275,60 @@ fn the_program_calls_no_kfunc() {
         "the core data path must reach no kfunc\n{}",
         breakdown(&per_function)
     );
+}
+
+/// No division and no modulo anywhere in the program.
+///
+/// The one this replaced was the drain of stage 7, `rate * dt / (10^9 / 512)`, on the
+/// dependency chain of every packet that reached the buckets. The level unit is a power of
+/// two and the `Drain` word is fixed point, so that quotient is a shift; the bucket index
+/// is the top bits of the hash, so that reduction is a shift; and
+/// every remaining conversion — the jiffy width, the shard apportioning — happens once in
+/// userspace. This is what stops the next one from arriving unnoticed, because a division
+/// costs nothing that a test which only counts calls or bytes can see.
+#[test]
+fn the_program_divides_nowhere() {
+    let per_function = per_symbol(&plain_object(), divisions);
+    let total: usize = per_function.iter().map(|(_, found)| found).sum();
+
+    let culprits: Vec<String> = per_function
+        .iter()
+        .filter(|(_, found)| *found > 0)
+        .map(|(name, found)| format!("  {name}: {found}\n"))
+        .collect();
+    assert_eq!(
+        total,
+        DIVISION_BUDGET,
+        "{total} division or modulo instructions in the object:\n{}",
+        culprits.concat()
+    );
+}
+
+/// A decoder that answered zero for everything would pass the guard above without ever
+/// looking at the program, and the opcode encoding is where that mistake would hide: the
+/// four forms of a divide differ by two bits, and one of the nibbles it matches on belongs
+/// to a jump in another class.
+#[test]
+fn the_division_decoder_reads_all_four_forms_and_nothing_else() {
+    let mut code = Vec::new();
+    // div and mod, immediate and register, 32-bit and 64-bit: eight instructions.
+    for op in [0x30u8, 0x90] {
+        for source in [0x00u8, 0x08] {
+            for class in [0x04u8, 0x07] {
+                code.extend_from_slice(&[op | source | class, 0x12, 0, 0, 0, 0, 0, 0]);
+            }
+        }
+    }
+    assert_eq!(divisions(&code), 8);
+
+    // Same nibbles, other classes: a conditional jump, an exit, a multiply, a load.
+    for opcode in [0x35u8, 0x95, 0x27, 0x39] {
+        assert_eq!(
+            divisions(&[opcode, 0x12, 0, 0, 0, 0, 0, 0]),
+            0,
+            "opcode {opcode:#04x} is not a division"
+        );
+    }
 }
 
 /// The guard that makes the other two mean something. A counter that read the wrong
