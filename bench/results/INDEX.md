@@ -17,11 +17,16 @@ E5-2683 v3, virtio-net, 4 pinned vCPU). The recipe to regenerate any of these is
 | XDP_TX ceiling | â‰¥ 290 kpps, ratio ~1.0 | `scripts/lab/measure-xdp-tx.sh` | `xdp-tx/xdp-tx.csv` | `xdp-tx/env-20260822T111604Z.txt` |
 | fsync latency | p50 3.16 ms, p99 6.26 ms | `scripts/lab/measure-storage.sh` | `storage/storage.json`, `storage/fsync-fio.json` | `storage/env-20260822T111941Z.txt` |
 | Cold read | 1.4 GB/s (host cache, see report) | `scripts/lab/measure-storage.sh` | `storage/storage.json` | `storage/env-20260822T111941Z.txt` |
-| Per-packet cost, parsing | 148 ns (61 % of the total) | `scripts/lab/measure-stage-cost.sh` | `stage-cost/stage-cost.csv`, `stage-cost/sweep-*.txt` | `stage-cost/env-20260822T211828Z.txt` |
-| Per-packet cost, one clock read | 54 ns (22 %) | `scripts/lab/measure-stage-cost.sh` | `stage-cost/stage-cost.csv` | `stage-cost/env-20260822T211828Z.txt` |
-| Per-packet cost, four implemented stages | 44 ns together | `scripts/lab/measure-stage-cost.sh` | `stage-cost/stage-cost.csv` | `stage-cost/env-20260822T211828Z.txt` |
-| Per-packet cost, whole pipeline | 243 ns, spread 15 ns over 7 passes | `scripts/lab/measure-stage-cost.sh` | `stage-cost/sweep-*.txt` | `stage-cost/env-20260822T211828Z.txt` |
-| Campaign-to-campaign spread, same object | 236 to 288 ns (±11 %) | `scripts/lab/measure-stage-cost.sh` | `stage-cost/sweep-*.txt` | `stage-cost/env-20260822T211828Z.txt` |
+| Per-packet cost, parsing, before the fixes | 148 ns (61 % of the total) | `scripts/lab/measure-stage-cost.sh` | `stage-cost/stage-cost.csv` | `stage-cost/env-20260822T211828Z.txt` |
+| Per-packet cost, parsing, after | 35 ns | `scripts/lab/measure-stage-cost.sh` | `stage-cost/stage-cost.csv` | `stage-cost/env-20260823T001233Z.txt` |
+| Per-packet cost, one clock read, before | 54 ns | `scripts/lab/measure-stage-cost.sh` | `stage-cost/stage-cost.csv` | `stage-cost/env-20260822T211828Z.txt` |
+| Per-packet cost, one clock read, after | 4 ns | `scripts/lab/measure-stage-cost.sh` | `stage-cost/stage-cost.csv` | `stage-cost/env-20260823T001233Z.txt` |
+| Per-packet cost, unified list lookup | 22 ns, the dominant item now | `scripts/lab/measure-stage-cost.sh` | `stage-cost/stage-cost.csv` | `stage-cost/env-20260823T001233Z.txt` |
+| Per-packet cost, whole pipeline, before | 243 ns, spread 15 ns | `scripts/lab/measure-stage-cost.sh` | `stage-cost/sweep-*.txt` | `stage-cost/env-20260822T211828Z.txt` |
+| Per-packet cost, whole pipeline, after | 70 ns, spread 3 ns | `scripts/lab/measure-stage-cost.sh` | `stage-cost/sweep-*.txt` | `stage-cost/env-20260823T001233Z.txt` |
+| Campaign-to-campaign spread, before the fixes | 236 to 288 ns (11 %) | `scripts/lab/measure-stage-cost.sh` | `stage-cost/sweep-*.txt` | `stage-cost/env-20260822T211828Z.txt` |
+| Campaign-to-campaign spread, after | 70, 70, 71 ns (1.4 %) | `scripts/lab/measure-stage-cost.sh` | `stage-cost/sweep-*.txt` | `stage-cost/env-20260823T001233Z.txt` |
+| Assertion 3 quantity, instructions per packet | 748.4 to 749.6 (0.16 %), ceiling 765 | `scripts/lab/measure-stage-cost.sh --max-instructions` | `stage-cost/stage-cost.csv` | `stage-cost/env-20260823T001233Z.txt` |
 | Bank layout, per-CPU, cost | 85 ns, scales 3.83x on 4 cores | `scripts/lab/measure-bucket-contention.sh` | `bucket-contention/bucket-contention.csv` | `bucket-contention/env-20260822T215728Z.txt` |
 | Bank layout, shared unlocked, cost | 84 ns, 250 ns under a concentrated attack | `scripts/lab/measure-bucket-contention.sh` | `bucket-contention/bucket-contention.csv` | `bucket-contention/env-20260822T215728Z.txt` |
 | Bank layout, shared locked, cost | 107 ns, 1988 ns and 0.24x under a concentrated attack | `scripts/lab/measure-bucket-contention.sh` | `bucket-contention/bucket-contention.csv` | `bucket-contention/env-20260822T215728Z.txt` |
