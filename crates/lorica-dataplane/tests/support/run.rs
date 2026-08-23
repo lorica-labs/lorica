@@ -16,9 +16,9 @@ use aya::{
     programs::{TestRun, TestRunOptions, Xdp},
 };
 use lorica_common::{
-    BUCKET_KEY_SYMBOLS, BUCKET_RATE_SYMBOLS, Bucket, Clock, CounterId, DEFAULT_SETTINGS, LpmKey,
-    LpmValue, MultiplyShift, PacketView, Rate, SETTINGS_SYMBOL, SIGNATURE_VECTORS_ALL,
-    SIGNATURE_VECTORS_SYMBOL, key_words,
+    BUCKET_KEY_SYMBOLS, BUCKET_RATE_SYMBOLS, BUCKET_STALL_SYMBOL, Bucket, Clock, CounterId,
+    DEFAULT_SETTINGS, LpmKey, LpmValue, MultiplyShift, PacketView, Rate, SETTINGS_SYMBOL,
+    SIGNATURE_VECTORS_ALL, SIGNATURE_VECTORS_SYMBOL, key_words,
 };
 use lorica_dataplane::clock;
 
@@ -164,11 +164,28 @@ impl TestProg {
     /// are about the buckets. Everything else keeps the unconfigured budget the program
     /// carries in its own `.rodata`, which enforces nothing.
     pub fn load_buckets(name: &str, settings: u32, buckets: BucketGlobals) -> Self {
+        Self::load_buckets_stalled(name, settings, buckets, 0)
+    }
+
+    /// The same load with the read-modify-write window of the bank widened by `stall` dead
+    /// reads, which is the second axis of the contention measurement: the leak is a surface
+    /// over the number of contending cores and the width of that window, and a point on it
+    /// is worth what a point on any surface is worth.
+    ///
+    /// Zero is what every other load passes and what the program carries on its own, so it
+    /// patches the initialiser with itself and the verifier removes the loop.
+    pub fn load_buckets_stalled(
+        name: &str,
+        settings: u32,
+        buckets: BucketGlobals,
+        stall: u32,
+    ) -> Self {
         Self::load_full(
             &object_path(),
             name,
             settings,
             Some(buckets),
+            stall,
             SIGNATURE_VECTORS_ALL,
         )
     }
@@ -176,7 +193,7 @@ impl TestProg {
     /// Loads a named object rather than the one the environment points at, for the one
     /// measurement that has to compare two builds of the same program in one process.
     pub fn load_object(path: &std::path::Path, name: &str, settings: u32) -> Self {
-        Self::load_full(path, name, settings, None, SIGNATURE_VECTORS_ALL)
+        Self::load_full(path, name, settings, None, 0, SIGNATURE_VECTORS_ALL)
     }
 
     /// Loads with only the named signature vectors in the program at all.
@@ -186,7 +203,7 @@ impl TestProg {
     /// measured rather than the cost of the catalogue, and the two differ by more than the
     /// gates that survive.
     pub fn load_vectors(name: &str, settings: u32, vectors: u32) -> Self {
-        Self::load_full(&object_path(), name, settings, None, vectors)
+        Self::load_full(&object_path(), name, settings, None, 0, vectors)
     }
 
     fn load_full(
@@ -194,6 +211,7 @@ impl TestProg {
         name: &str,
         settings: u32,
         buckets: Option<BucketGlobals>,
+        stall: u32,
         vectors: u32,
     ) -> Self {
         let object = fs::read(path).unwrap_or_else(|err| {
@@ -212,6 +230,9 @@ impl TestProg {
         // initialiser is none of it, so a vector left unpatched is not merely off — it is
         // not in the verified program, and every counter assertion about it would read zero.
         loader.override_global(SIGNATURE_VECTORS_SYMBOL, &vectors, true);
+        // Zero for every load but a window sweep, and zero is the program's own initialiser:
+        // the verifier folds it and the widening loop is not in the JITed program at all.
+        loader.override_global(BUCKET_STALL_SYMBOL, &stall, true);
         // Kept alive past the borrow: `override_global` records a reference, and the
         // patching happens in `load`.
         let words = buckets.map(|b| {
@@ -309,6 +330,19 @@ impl TestProg {
             })
             .expect("test_run failed");
         result.duration.as_nanos()
+    }
+
+    /// Bytes of the program the CPU actually runs, `bpf_prog_info.jited_prog_len`.
+    ///
+    /// The ceiling assertion reads the same field of a raw load; this reads it off a loaded
+    /// [`TestProg`], which is what lets one measurement print the size of the very program
+    /// it timed. That is the whole evidence that a load-time global costs nothing when it is
+    /// zero: the number does not move.
+    pub fn jited_len(&self) -> u32 {
+        self.program()
+            .info()
+            .expect("reading the program info failed")
+            .size_jitted()
     }
 
     pub fn counter(&self, name: &str) -> u64 {
