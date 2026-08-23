@@ -35,7 +35,15 @@ set -uo pipefail
 cd "$(dirname "$0")/../.." || exit 1
 
 OUT=bench/results/stage-cost
-LEVELS=1,2,3,4,5,6,7,8,9
+# Empty by default: the sweep prints how many levels the pipeline has and this script
+# reads it from there. A list written down here went stale the day a stage folded into the
+# parse, and the script then asked for a level that does not exist and reported the refusal
+# as a broken measurement. --levels stays, for measuring one level on purpose.
+LEVELS=
+# Empty means report only. Set it and the deepest level is compared against it and the
+# script fails on excess: that is assertion 3, armed on instructions and not on nanoseconds
+# because instructions reproduce to about one per packet where the nanoseconds drift.
+MAX_INSTRUCTIONS=
 IFACE=${CARAPACE_IFACE:-enp6s19}
 BUILD_HOST=${CARAPACE_BUILD_HOST:-lab-dev}
 TARGET_HOST=${CARAPACE_TARGET_HOST:-lab-target}
@@ -52,6 +60,7 @@ while [ $# -gt 0 ]; do
     case $1 in
         --out)     OUT=$2; shift 2 ;;
         --levels)  LEVELS=$2; shift 2 ;;
+        --max-instructions) MAX_INSTRUCTIONS=$2; shift 2 ;;
         --iface)   IFACE=$2; shift 2 ;;
         -h|--help) sed -n '2,28p' "$0"; exit 0 ;;
         *) echo "unknown argument: $1" >&2; exit 2 ;;
@@ -94,13 +103,30 @@ remote "$TARGET_HOST" "bash ~/$RUN_DIR/target-tests/target-run.sh --nocapture" 2
 
 runner="cd ~/$RUN_DIR/target-tests && b=\$(ls bin/* | head -1) && sudo -n perf stat -x, \
 -e cycles,instructions,cache-misses -- env CARAPACE_EBPF_OBJ=\$PWD/ebpf/instrumented \
-CARAPACE_EBPF_PLAIN_OBJ=\$PWD/ebpf/plain CARAPACE_STAGE_CUTOFF=LEVEL \$b \
+CARAPACE_EBPF_PLAIN_OBJ=\$PWD/ebpf/plain \
+CARAPACE_STAGE_CUTOFF=LEVEL \$b \
 one_level_of_the_pipeline_under_a_profiler --exact --nocapture"
 
 echo 'stages,label,ns_raw,ns_above_floor,ns_this_level,cycles,instructions,ipc,llc_misses,llc_misses_per_packet' > "$csv"
 
 previous_above=0
 rows=0
+if [ -z "$LEVELS" ]; then
+    count=$(grep "^LEVELS," "$sweep" | tail -1 | cut -d, -f2 | tr -dc "[:digit:]")
+    case $count in
+        ''|*[!0-9]*) die "the sweep did not say how many levels the pipeline has, see $sweep" ;;
+    esac
+    # From one, because level one is the program returning immediately: it is this object's
+    # own startup, which every figure below subtracts. A profiler around this process counts
+    # the load and the verifier once, and the only term that cancels them is another run of
+    # the same object.
+    level=1
+    while [ "$level" -le "$count" ]; do
+        LEVELS="$LEVELS $level"
+        level=$((level + 1))
+    done
+fi
+
 for level in ${LEVELS//,/ }; do
     printf '\n--- level %s\n' "$level"
     out=$(remote "$TARGET_HOST" "${runner//LEVEL/$level}" 2>&1)
@@ -146,13 +172,28 @@ done
 
 [ "$rows" -gt 1 ] || die "one level is not a ventilation"
 
-# A flat curve is the failure mode that looks like a result. Refuse it here rather than
-# leave it to a reader: the whole point of the sweep is that the levels differ.
-first=$(awk -F, 'NR == 2 { print $4 }' "$csv")
-last=$(awk -F, 'END { print $4 }' "$csv")
-case $first$last in ''|*[!0-9]*) die "the CSV carries no nanosecond column" ;; esac
-[ "$last" -gt "$first" ] \
-    || die "the deepest level costs $last ns and the shallowest $first ns: the object was built without the stage-cutoff feature, so every level ran the whole pipeline"
+# A flat curve is the failure mode that looks like a result, so it is refused here rather
+# than left to a reader. On the instruction column and not on the nanoseconds: the whole
+# pipeline is seventy nanoseconds now, so a single-shot per-level figure carries more drift
+# than the difference between two levels, and this guard fired on its own noise. Instructions
+# are deterministic to about one per packet, which is what a "did the cutoff take" check needs.
+floor=$(awk -F, 'NR == 2 { print $7 }' "$csv")
+deepest=$(awk -F, 'END { print $7 }' "$csv")
+case $floor$deepest in ''|*[!0-9]*) die "the CSV carries no instruction column" ;; esac
+[ "$deepest" -gt "$floor" ] || die "the deepest level executes $deepest instructions and the empty program $floor: the object was built without the stage-cutoff feature, so every level ran the whole pipeline"
+
+# The program, with the harness subtracted. This is the figure assertion 3 is armed on:
+# the syscall and the kernel test-run loop are in both terms and cancel, which is what
+# makes it comparable at all, and it reproduces to about one instruction per packet.
+per_packet=$(awk -v d="$deepest" -v f="$floor" -v p="$PACKETS" 'BEGIN { printf "%.1f", (p > 0 ? (d - f) / p : 0) }')
+echo
+echo "instructions per packet, harness subtracted: $per_packet"
+
+if [ -n "$MAX_INSTRUCTIONS" ]; then
+    over=$(awk -v v="$per_packet" -v m="$MAX_INSTRUCTIONS" 'BEGIN { print (v > m ? 1 : 0) }')
+    [ "$over" -eq 0 ] || die "$per_packet instructions per packet against a ceiling of $MAX_INSTRUCTIONS"
+    echo "assertion 3: $per_packet instructions per packet, ceiling $MAX_INSTRUCTIONS, within budget"
+fi
 
 printf '\n%s\n' "$csv"
 column -s, -t "$csv" 2>/dev/null || cat "$csv"

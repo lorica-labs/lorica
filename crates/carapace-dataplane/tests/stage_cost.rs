@@ -4,8 +4,8 @@
 //! a budget of 10 ns in the spec, and did not say where they go. This file says it, before
 //! three more stages are added to the path.
 //!
-//! **Why by subtraction and not by profile.** Every parser and every stage is
-//! `#[inline(never)]`, so each has its own JIT symbol, and `perf` does resolve them:
+//! **Why by subtraction and not by profile.** Every stage, and every parser in a build
+//! with the `profiling` feature, has its own JIT symbol, and `perf` does resolve them:
 //! `bpf_prog_<tag>_<name>` appears in a report. It is not usable as a ventilation. Four of
 //! the stage symbols are named `run` and three of the parser symbols `parse`, because the
 //! name the kernel keeps is the last component of the Rust path; and on this hardware
@@ -15,7 +15,7 @@
 //!
 //! **What it costs to be measurable.** The cutoff is a compare against a load-time global,
 //! present only in a build with the `stage-cutoff` feature. The object that ships has none
-//! of them. So the pipeline measured here is up to nine compares away from the pipeline
+//! of them. So the pipeline measured here is up to eight compares away from the pipeline
 //! that runs, and the last line of the report is that difference, measured rather than
 //! declared negligible.
 
@@ -40,13 +40,21 @@ const GAME_PORT: u16 = 30_120;
 
 /// The pipeline, in order, and what each cutoff adds to the one before it.
 ///
-/// The first two are not stages. Parsing and the one clock reading are what every packet
-/// pays before any stage has an opinion, and a ventilation that hides them inside stage 1
-/// would blame the wrong code.
+/// The first three are not stages. `entry` is the program returning immediately, and it is
+/// there so a per-packet instruction count can have this object's own startup subtracted:
+/// loading and verifying the program is thousands of instructions a profiler counts once
+/// per process, and the only term that cancels them is another run of the same object.
+/// Parsing and the one clock reading are what every packet pays before any stage has an
+/// opinion, and a ventilation that hid them inside a stage would blame the wrong code.
+///
+/// Stage 1 is absent, and that is the point of the level named `parse`: its three checks
+/// are comparisons on fields the parse has just loaded, so they are made there and their
+/// cost is inside that level rather than in one of its own. The other labels keep the
+/// numbers of the specification, which is what an operator reads.
 const LEVELS: [(u32, &str); 9] = [
-    (1, "parse"),
-    (2, "clock read"),
-    (3, "stage 1 sanity"),
+    (1, "entry"),
+    (2, "parse"),
+    (3, "clock read"),
     (4, "stage 2 ICMP"),
     (5, "stage 3 LPM list"),
     (6, "stage 4 fragments"),
@@ -141,6 +149,11 @@ fn each_stage_of_the_pipeline_costs_what_it_costs() {
     }
     let packet = steady_state_packet();
     let passes = passes();
+    // The count first, on a line of its own, because the script that wraps this in a
+    // profiler has to know how many levels to ask for. It used to carry the number itself
+    // and went stale the day a stage folded into the parse: it asked for a tenth level of
+    // a pipeline that had eight and read the refusal as a broken measurement.
+    println!("LEVELS,{}", LEVELS.len());
     println!("floor subtracted: {FLOOR_NS} ns, repeat = {REPEAT}, {passes} interleaved passes");
 
     // The plain object rides in the same interleaving as the cutoff levels: it is the

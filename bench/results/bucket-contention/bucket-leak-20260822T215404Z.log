@@ -1,0 +1,3 @@
+variant,cpus,repeat,offered_units,enforced_units,total_units,enforced_fraction,total_fraction
+/home/hookwood/t0/scripts/lab/bucket-bench-run.sh: line 188: $2: unbound variable
+bucket-bench-run: xdp_bucket_percpu_entry: could not read a level out of percpu_entries

@@ -25,6 +25,12 @@ stage-cutoff = []
 name = "measure_batch"
 harness = false
 
+# Same reason as measure_batch: it takes parameters and prints a record. The depth of a
+# full LPM trie is a number the end of the phase decides the blocklist shape on.
+[[test]]
+name = "measure_lpm_depth"
+harness = false
+
 [dev-dependencies]
 # Reads the compiled eBPF object. Portable and already in the tree through aya, so
 # the static guard adds nothing to the dependency surface.

@@ -1,18 +1,22 @@
 //! One test per refusal. A refusal without a test is an intention.
 
+use carapace_common::Clock;
 use carapace_policy::{CompileError, Config, MemlockModel, Warning, compile};
 
-const NOW: u64 = 1_000_000_000;
+const CLOCK: Clock = Clock {
+    hz: 250,
+    jiffies: 1_000_000,
+};
 
 fn refusal(text: &str) -> CompileError {
     let config = Config::from_toml(text).expect("the configuration did not parse");
-    compile(&config, NOW, MemlockModel::MEASURED)
+    compile(&config, CLOCK, MemlockModel::MEASURED)
         .expect_err("the configuration compiled when it should have been refused")
 }
 
 fn accepted(text: &str) -> carapace_policy::Compiled {
     let config = Config::from_toml(text).expect("the configuration did not parse");
-    compile(&config, NOW, MemlockModel::MEASURED).expect("the configuration did not compile")
+    compile(&config, CLOCK, MemlockModel::MEASURED).expect("the configuration did not compile")
 }
 
 /// Two entries on the same prefix leave the trie with no answer. Resolving it here by

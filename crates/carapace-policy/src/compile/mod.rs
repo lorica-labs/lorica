@@ -4,13 +4,15 @@
 //! A rule the data path cannot honour is a rule the operator has to hear about while
 //! reading the file, not one that quietly does nothing under attack.
 
+pub mod bogon;
+pub mod bogon_table;
 pub mod lpm;
 pub mod service;
 pub mod signature;
 
 use std::collections::BTreeMap;
 
-use carapace_common::{Action, CounterId, Deadline, LpmKey, LpmValue, SCOPE_MAX, setting};
+use carapace_common::{Action, Clock, CounterId, Deadline, LpmKey, LpmValue, SCOPE_MAX, setting};
 
 use crate::{
     config::{ActionName, Config},
@@ -23,6 +25,11 @@ pub struct Compiled {
     pub profile: ProfileKind,
     pub settings: u32,
     pub entries: Vec<(LpmKey, LpmValue)>,
+    /// The bogon entries, which go into the same map behind the same lookup. They are
+    /// kept apart from the operator entries because they are not the operator's: they
+    /// share one counter slot instead of owning one each, and what the file asked for
+    /// stays readable without subtracting a generated table from it.
+    pub bogons: Vec<(LpmKey, LpmValue)>,
     pub sizes: MapSizes,
     pub warnings: Vec<Warning>,
 }
@@ -70,6 +77,14 @@ pub enum CompileError {
     DuplicatePrefix { prefix: String },
 
     #[error(
+        "{prefix} is one of the built-in bogon prefixes, so the rule lands on the trie \
+         key the built-in entry already holds, and there the trie has no answer; drop \
+         the rule if it says the same thing, or write a longer prefix if it is an \
+         exception, because a longer prefix is what the trie prefers"
+    )]
+    BogonPrefix { prefix: String },
+
+    #[error(
         "the allow rule on {prefix} has no scope, which makes it a bare source \
          address and a total bypass on UDP; give it a protocol and a port range"
     )]
@@ -94,12 +109,14 @@ pub enum CompileError {
     },
 }
 
-/// `now_ns` is the kernel monotonic clock, passed in rather than read here: the
-/// deadlines this produces are compared against that clock in the data path, and a
-/// function that reads a clock cannot be tested against a table of expectations.
+/// `clock` is the kernel's jiffy counter — one reading of it and the rate it ticks at —
+/// passed in rather than read here: the deadlines this produces are compared against that
+/// counter in the data path, and a function that reads a clock cannot be tested against a
+/// table of expectations. The rate comes with the reading because measuring it is the
+/// agent's job, and it is measured, never assumed.
 pub fn compile(
     config: &Config,
-    now_ns: u64,
+    clock: Clock,
     model: MemlockModel,
 ) -> Result<Compiled, CompileError> {
     let mut entries: Vec<(LpmKey, LpmValue)> = Vec::with_capacity(config.rules.len());
@@ -140,7 +157,7 @@ pub fn compile(
             // Only a mitigation entry is required to expire. An operator rule is
             // allowed to last as long as the file it is written in.
             None => Deadline::never(),
-            Some(secs) => Deadline::after(now_ns, secs.saturating_mul(1_000_000_000)),
+            Some(secs) => clock.deadline(secs),
         };
 
         for (index, spec) in rule.scopes.iter().enumerate() {
@@ -158,10 +175,23 @@ pub fn compile(
         entries.push((key, value));
     }
 
+    // The bogons join the same list. A rule on a prefix the table already holds is
+    // refused for the reason two rules on one prefix are refused: the trie keys on the
+    // prefix alone, so one of the two entries would win by nothing an operator can read.
+    let mut bogons = Vec::with_capacity(bogon_table::BOGONS.len());
+    for (key, value) in bogon::entries() {
+        if seen.insert((key.prefix_len, key.addr), ()).is_some() {
+            return Err(CompileError::BogonPrefix {
+                prefix: lpm::describe(&key),
+            });
+        }
+        bogons.push((key, value));
+    }
+
     let reserve = config
         .mitigation_reserve
         .unwrap_or_else(|| config.profile.default_mitigation_reserve());
-    let unified_list_entries = (entries.len() as u32).saturating_add(reserve);
+    let unified_list_entries = ((entries.len() + bogons.len()) as u32).saturating_add(reserve);
     let sizes = MapSizes {
         unified_list_entries,
         // The named counters, then one slot per entry the list can hold.
@@ -182,6 +212,7 @@ pub fn compile(
         profile: config.profile,
         settings: settings_word(&config.settings),
         entries,
+        bogons,
         sizes,
         warnings,
     })

@@ -11,9 +11,15 @@
 //! either side of filling the map; this file is what tells us whether the design fits
 //! under the estimate in the meantime.
 
+use carapace_common::Clock;
 use carapace_policy::{CompileError, Config, MemlockModel, ProfileKind, compile};
 
-const NOW: u64 = 0;
+/// No rule here carries a TTL, so the reading is arbitrary and the rate is only there
+/// to be a rate.
+const CLOCK: Clock = Clock {
+    hz: 250,
+    jiffies: 0,
+};
 
 fn config(profile: &str, reserve: u32) -> Config {
     Config::from_toml(&format!(
@@ -43,10 +49,10 @@ fn each_profile_states_a_budget_and_they_are_ordered() {
 fn a_vps_refuses_a_configuration_a_gateway_would_hold() {
     let reserve = ProfileKind::Gateway.default_mitigation_reserve();
 
-    let on_gateway = compile(&config("gateway", reserve), NOW, MemlockModel::MEASURED);
+    let on_gateway = compile(&config("gateway", reserve), CLOCK, MemlockModel::MEASURED);
     assert!(on_gateway.is_ok(), "a gateway has to hold its own default");
 
-    let on_vps = compile(&config("vps", reserve), NOW, MemlockModel::MEASURED);
+    let on_vps = compile(&config("vps", reserve), CLOCK, MemlockModel::MEASURED);
     match on_vps {
         Err(CompileError::MemlockExceeded {
             profile,
@@ -70,7 +76,7 @@ fn every_profile_default_fits_its_own_budget() {
     for profile in [ProfileKind::Vps, ProfileKind::Host, ProfileKind::Gateway] {
         let name = profile.to_string();
         let reserve = profile.default_mitigation_reserve();
-        let out = compile(&config(&name, reserve), NOW, MemlockModel::MEASURED);
+        let out = compile(&config(&name, reserve), CLOCK, MemlockModel::MEASURED);
         assert!(
             out.is_ok(),
             "the {name} default does not fit the {name} budget: {out:?}"
@@ -86,7 +92,7 @@ fn the_defaults_leave_room_for_the_model_to_be_revised() {
     for profile in [ProfileKind::Vps, ProfileKind::Host, ProfileKind::Gateway] {
         let name = profile.to_string();
         let reserve = profile.default_mitigation_reserve();
-        let out = compile(&config(&name, reserve), NOW, MemlockModel::MEASURED)
+        let out = compile(&config(&name, reserve), CLOCK, MemlockModel::MEASURED)
             .expect("the default does not compile");
         let needed = out.sizes.memlock_bytes(MemlockModel::MEASURED);
         let budget = profile.memlock_budget();
@@ -109,7 +115,7 @@ fn the_rules_themselves_count_against_the_budget() {
         ));
     }
     let config = Config::from_toml(&text).expect("the configuration did not parse");
-    let out = compile(&config, NOW, MemlockModel::MEASURED).expect("it should fit");
+    let out = compile(&config, CLOCK, MemlockModel::MEASURED).expect("it should fit");
     assert_eq!(out.sizes.unified_list_entries, 16);
 }
 
@@ -118,7 +124,7 @@ fn the_rules_themselves_count_against_the_budget() {
 /// workload rather than a stress test.
 #[test]
 fn the_counter_map_holds_a_slot_per_entry() {
-    let out = compile(&config("host", 0), NOW, MemlockModel::MEASURED).unwrap();
+    let out = compile(&config("host", 0), CLOCK, MemlockModel::MEASURED).unwrap();
     assert_eq!(
         out.sizes.counter_entries,
         carapace_common::CounterId::COUNT + out.sizes.unified_list_entries

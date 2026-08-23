@@ -6,6 +6,7 @@
 
 use std::{fmt::Write as _, fs, io, path::Path};
 
+use carapace_common::Clock;
 use carapace_dataplane::capability::probe;
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
@@ -51,6 +52,11 @@ pub struct Snapshot {
     pub named_counted: u64,
     pub period_ms: u64,
     pub attached: bool,
+    /// The clock every deadline in the maps is expressed on. Published because a TTL
+    /// nobody can convert back into seconds is a decision nobody can check: the rate is
+    /// measured at startup and has no other interface, and the jiffy is what the data
+    /// path compares against right now.
+    pub clock: Clock,
 }
 
 fn status_json(snapshot: &Snapshot) -> String {
@@ -69,6 +75,8 @@ fn status_json(snapshot: &Snapshot) -> String {
     );
     let _ = writeln!(out, "  \"attached\": {},", snapshot.attached);
     let _ = writeln!(out, "  \"tick_period_ms\": {},", snapshot.period_ms);
+    let _ = writeln!(out, "  \"kernel_hz\": {},", snapshot.clock.hz);
+    let _ = writeln!(out, "  \"jiffies\": {},", snapshot.clock.jiffies);
     let _ = writeln!(out, "  \"counter_slots\": {},", snapshot.counter_slots);
     let _ = writeln!(out, "  \"ticks\": {},", snapshot.ticks);
     let _ = writeln!(out, "  \"full_sweeps\": {},", snapshot.full_sweeps);

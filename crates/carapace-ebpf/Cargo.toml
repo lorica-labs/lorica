@@ -23,11 +23,16 @@ parse-probe = []
 # ask for.
 signature-dfa = []
 # Stops the pipeline after a chosen stage, so the cost of one stage is the difference
-# between two whole-path measurements. Every stage already has its own JIT symbol, but a
-# profile attributes cycles to four symbols all named `run` and to a dispatcher
-# trampoline that absorbs a third of the samples; a difference of nanoseconds does not
-# need a denominator.
+# between two whole-path measurements. It measures whole paths and not symbols, which is
+# why it needs no subprogram boundary and works on the inlined object: a profile
+# attributes cycles to four symbols all named `run` and to a dispatcher trampoline that
+# absorbs a third of the samples, while a difference of nanoseconds needs no denominator.
 stage-cutoff = []
+# Puts each parser back in a subprogram of its own, so it has a JIT symbol a `perf`
+# campaign can attribute cycles to. Instrumentation, not a property of the program: the
+# object that ships inlines the parsers and pays for none of their boundaries. The stages
+# keep theirs either way, for the measured reason stated at the first of them.
+profiling = []
 
 [dependencies]
 carapace-common = { path = "../carapace-common" }

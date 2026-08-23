@@ -18,8 +18,8 @@ use std::{
 
 use anyhow::{Context, Result, bail};
 use aya::{Ebpf, EbpfLoader};
-use carapace_common::{CounterId, DEFAULT_SETTINGS, SETTINGS_SYMBOL};
-use carapace_dataplane::maps;
+use carapace_common::{Clock, CounterId, DEFAULT_SETTINGS, SETTINGS_SYMBOL};
+use carapace_dataplane::{clock, maps};
 use tokio::{runtime::Builder, time::MissedTickBehavior};
 
 #[global_allocator]
@@ -115,7 +115,7 @@ fn run(options: Options) -> Result<()> {
 }
 
 async fn serve(options: Options) -> Result<()> {
-    let ebpf = load(&options.object, options.counter_slots)?;
+    let (ebpf, clock) = load(&options.object, options.counter_slots)?;
     // Two readers over the same map: one stops at the named counters, one covers every
     // slot. Each owns its buffers, sized once, so neither allocates again.
     let named = maps::counters(ebpf, CounterId::COUNT, options.batch.min(CounterId::COUNT))
@@ -146,13 +146,15 @@ async fn serve(options: Options) -> Result<()> {
     // afterwards is measurable by difference.
     let settled = alloc::allocations();
     eprintln!(
-        "carapaced: {} counter slots, batch {}, {} Hz, full sweep every {} ticks,          {} slot reads per second, socket {}",
+        "carapaced: {} counter slots, batch {}, {} Hz, full sweep every {} ticks,          {} slot reads per second, socket {}, kernel clock {} Hz at jiffy {}",
         options.counter_slots,
         options.batch,
         options.hz,
         sweep.every(),
         sweep.slot_reads_per_second(options.hz),
-        options.socket.display()
+        options.socket.display(),
+        clock.hz,
+        clock.jiffies,
     );
 
     loop {
@@ -184,6 +186,14 @@ async fn serve(options: Options) -> Result<()> {
                     named_counted: sweep.named_counted(),
                     period_ms: period.as_millis() as u64,
                     attached: false,
+                    // The rate was measured once at startup; the jiffy is read here,
+                    // because the number worth publishing is the one the deadlines are
+                    // being compared against at the moment somebody asks. A zero is a
+                    // probe that stopped answering, which no running counter can be.
+                    clock: Clock {
+                        jiffies: clock::read(ebpf).unwrap_or(0),
+                        ..clock
+                    },
                 };
                 // Awaited rather than spawned. One client at a time is the whole protocol,
                 // and a task per connection would let a slow reader hold the tick behind
@@ -194,13 +204,18 @@ async fn serve(options: Options) -> Result<()> {
     }
 }
 
-/// Loads and verifies the program, and leaks it.
+/// Loads and verifies the program, calibrates the clock its deadlines are written in, and
+/// leaks it.
 ///
 /// Deliberately leaked: the maps have to outlive every reader of them, and the program is
 /// meant to live as long as the process. Threading a lifetime through the runtime to say
 /// so would buy nothing, and dropping it early would close the map descriptors under the
 /// sweep.
-fn load(object: &Path, slots: u32) -> Result<&'static Ebpf> {
+///
+/// The calibration happens here because it needs the program mutable, which it only is
+/// before the leak, and because it sleeps: a few hundred milliseconds at startup, once,
+/// where no tick is waiting on it.
+fn load(object: &Path, slots: u32) -> Result<(&'static Ebpf, Clock)> {
     let bytes = std::fs::read(object)
         .with_context(|| format!("cannot read the eBPF object at {}", object.display()))?;
     let mut ebpf = EbpfLoader::new()
@@ -220,5 +235,8 @@ fn load(object: &Path, slots: u32) -> Result<&'static Ebpf> {
         .load()
         .context("the verifier rejected the program")?;
 
-    Ok(Box::leak(Box::new(ebpf)))
+    let clock = clock::calibrate(&mut ebpf)
+        .context("cannot measure the rate of the kernel clock the deadlines are compared to")?;
+
+    Ok((Box::leak(Box::new(ebpf)), clock))
 }

@@ -1,13 +1,12 @@
-use carapace_common::{Family, FragState, PacketView, anomaly};
+use carapace_common::{Family, FragState, anomaly};
 
-use super::{ParseError, Window};
+use super::{L3, ParseError, Window};
 
 /// The header without options.
 const FIXED_HDR_LEN: usize = 20;
 
-#[inline(never)]
-pub fn parse(win: &Window, view: &mut PacketView) -> Result<(), ParseError> {
-    let base = view.l3_off as usize;
+#[cfg_attr(feature = "profiling", inline(never))]
+pub fn parse(win: &Window, base: usize) -> Result<L3, ParseError> {
     let hdr = win
         .bytes::<FIXED_HDR_LEN>(base)
         .ok_or(ParseError::Truncated)?;
@@ -20,22 +19,11 @@ pub fn parse(win: &Window, view: &mut PacketView) -> Result<(), ParseError> {
     if ihl_words < FIXED_HDR_LEN / 4 {
         // A header shorter than its own fixed part. Parseable bytes, impossible
         // packet: the L4 offset it implies would point inside the IP header.
-        return Err(ParseError::Malformed);
+        return Err(ParseError::IpLength);
     }
     // IHL is four bits, so the header is at most sixty bytes and no bound on the
     // option area needs stating.
     let hdr_len = ihl_words * 4;
-
-    view.set_family(Family::V4);
-    view.ip_total_len = u16::from_be_bytes([hdr[2], hdr[3]]);
-    view.set_frag(frag_state(u16::from_be_bytes([hdr[6], hdr[7]])));
-    view.proto = hdr[9];
-    view.src = mapped([hdr[12], hdr[13], hdr[14], hdr[15]]);
-    view.dst = mapped([hdr[16], hdr[17], hdr[18], hdr[19]]);
-
-    if hdr_len > FIXED_HDR_LEN {
-        view.anomalies |= anomaly::IP_OPTIONS_PRESENT;
-    }
 
     // The option chain is deliberately not walked.
     //
@@ -48,14 +36,26 @@ pub fn parse(win: &Window, view: &mut PacketView) -> Result<(), ParseError> {
     // hazard instead of guarding it.
     //
     // Nothing is let through by the omission either. If the option area runs past the
-    // end of the packet, this offset lands outside the window and the L4 read below
-    // refuses the packet with the truncation counter.
-    view.l4_off = (base + hdr_len) as u32;
-    Ok(())
+    // end of the packet, this offset lands outside the window and the L4 read refuses
+    // the packet with the truncation counter.
+    Ok(L3 {
+        family: Family::V4,
+        src: mapped([hdr[12], hdr[13], hdr[14], hdr[15]]),
+        ip_total_len: u16::from_be_bytes([hdr[2], hdr[3]]),
+        frag: frag_state(u16::from_be_bytes([hdr[6], hdr[7]])),
+        proto: hdr[9],
+        l4_off: base + hdr_len,
+        anomalies: if hdr_len > FIXED_HDR_LEN {
+            anomaly::IP_OPTIONS_PRESENT
+        } else {
+            0
+        },
+    })
 }
 
-/// From the flags and fragment offset field, read as one big-endian word.
-const fn frag_state(word: u16) -> FragState {
+/// From the flags and fragment offset field, read as one big-endian word. Shared with
+/// the fast path, which reads the same word at a constant offset.
+pub(super) const fn frag_state(word: u16) -> FragState {
     const MORE_FRAGMENTS: u16 = 0x2000;
     const OFFSET_MASK: u16 = 0x1fff;
 
@@ -69,7 +69,7 @@ const fn frag_state(word: u16) -> FragState {
 }
 
 /// IPv4 in the unified 16-byte key, as `::ffff:a.b.c.d`.
-const fn mapped(addr: [u8; 4]) -> [u8; 16] {
+pub(super) const fn mapped(addr: [u8; 4]) -> [u8; 16] {
     [
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff, addr[0], addr[1], addr[2], addr[3],
     ]

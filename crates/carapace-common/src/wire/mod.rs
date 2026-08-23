@@ -10,7 +10,7 @@ mod verdict;
 pub use counters::CounterId;
 pub use event::EventHeader;
 pub use keys::{LpmKey, V4_MAPPED_PREFIX_BITS};
-pub use packet::{Family, FragState, PacketView, anomaly};
+pub use packet::{Family, FragState, MAX_OFFSET, PacketView, anomaly};
 pub use settings::{DEFAULT_SETTINGS, NO_CUTOFF, SETTINGS_SYMBOL, STAGE_CUTOFF_SHIFT, setting};
 pub use verdict::{Action, LpmValue, SCOPE_MAX, Scope};
 
@@ -27,5 +27,5 @@ const _: () = assert!(size_of::<LpmKey>() == 20);
 const _: () = assert!(align_of::<LpmKey>() == 4);
 const _: () = assert!(size_of::<EventHeader>() == 16);
 const _: () = assert!(align_of::<EventHeader>() == 8);
-const _: () = assert!(size_of::<PacketView>() == 60);
-const _: () = assert!(align_of::<PacketView>() == 4);
+const _: () = assert!(size_of::<PacketView>() == 56);
+const _: () = assert!(align_of::<PacketView>() == 8);
