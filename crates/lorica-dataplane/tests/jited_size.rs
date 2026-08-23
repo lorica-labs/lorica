@@ -32,7 +32,19 @@ use support::run::{load_raw, plain_object_path, xdp_program};
 /// Headroom is 10 % over the larger of the two measurements. The observed spread between
 /// kernels is under 1 %, so 10 % leaves room for a kernel this has not run on without
 /// leaving room for a stage to be added unnoticed.
-const JITED_CEILING: u32 = 5_853;
+///
+/// **Raised once since**, from 5 853 to 7 770. Two changes moved it and both were meant
+/// to: inlining the parsers in the object that ships took 5 321 to 5 622, buying a
+/// per-packet cost of 70 ns where it was 243, and the ten-vector signature cascade took it
+/// to **7 063 measured** on 7.0.0-30. The new ceiling is the same 10 % over that.
+///
+/// It will move again. Two stages of this phase are still stubs, and the raise that covers
+/// them is the last one: a ceiling that is raised without a measured reason each time is a
+/// rubber stamp, and one left below the truth for a whole phase hides every regression
+/// behind a failure everyone has learned to ignore. That second failure mode is why this
+/// was raised here rather than at the end — a red guard had begun to mask the kernel
+/// matrix.
+const JITED_CEILING: u32 = 7_770;
 
 #[test]
 fn the_jited_program_stays_under_its_ceiling() {
