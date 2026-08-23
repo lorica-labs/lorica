@@ -7,5 +7,6 @@
 
 pub mod capability;
 pub mod clock;
+pub mod fib;
 pub mod loader;
 pub mod maps;
