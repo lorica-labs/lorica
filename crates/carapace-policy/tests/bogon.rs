@@ -4,13 +4,18 @@
 //! all, because the operator turns the whole thing off. Most of this file exists to make
 //! that failure mode loud.
 
-use carapace_common::{Action, CounterId, Deadline, LpmKey, V4_MAPPED_PREFIX_BITS};
+use carapace_common::{Action, Clock, CounterId, Deadline, LpmKey, V4_MAPPED_PREFIX_BITS};
 use carapace_policy::{
     CompileError, Config, MemlockModel, compile,
     compile::{bogon_table::BOGONS, lpm},
 };
 
-const NOW: u64 = 1_000_000_000;
+/// 250 Hz rather than 1000, as `precedence.rs` uses: a deadline built by multiplying
+/// seconds by the wrong constant is off by a factor of four here and exactly right at 1000.
+const CLOCK: Clock = Clock {
+    hz: 250,
+    jiffies: 1_000_000,
+};
 
 fn holds(spec: &str) -> bool {
     let key = lpm::parse_prefix(spec).expect("the spec did not parse");
@@ -19,12 +24,12 @@ fn holds(spec: &str) -> bool {
 
 fn compiled(text: &str) -> carapace_policy::Compiled {
     let config = Config::from_toml(text).expect("the configuration did not parse");
-    compile(&config, NOW, MemlockModel::MEASURED).expect("the configuration did not compile")
+    compile(&config, CLOCK, MemlockModel::MEASURED).expect("the configuration did not compile")
 }
 
 fn refusal(text: &str) -> CompileError {
     let config = Config::from_toml(text).expect("the configuration did not parse");
-    compile(&config, NOW, MemlockModel::MEASURED).expect_err("it should have been refused")
+    compile(&config, CLOCK, MemlockModel::MEASURED).expect_err("it should have been refused")
 }
 
 /// **The test that matters.** A host behind NAT receives RFC 1918 sources every second
