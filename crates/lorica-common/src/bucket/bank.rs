@@ -44,9 +44,12 @@ impl BankLayout {
     /// exactly the wrong end. It is also the whole reduction — one shift, no division.
     ///
     /// The modulo below survives for a bucket count that is not a power of two, which a
-    /// configuration file is free to name. It is a real division, so the count has to stay
-    /// a compile-time constant for the compiler to strength-reduce it; the bank the program
-    /// declares is 1024 and takes the shift. A bank of zero or one bucket answers `0`, which
+    /// configuration file is free to name. On this target it is not strength-reduced at any
+    /// divisor, only eliminated: the count the program declares is the constant 1024, the
+    /// `is_power_of_two` above folds and the branch never reaches the object — which
+    /// `helper_budget::the_program_divides_nowhere` asserts rather than assumes. A count that
+    /// is not a constant would put a `BPF_DIV` on the packet path and fail that test, which
+    /// is the answer wanted. A bank of zero or one bucket answers `0`, which
     /// is the only answer that cannot become an out-of-bounds map index — and the shift
     /// would be by 64, which is not a shift.
     pub const fn index(&self, hash: u64) -> u32 {

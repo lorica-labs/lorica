@@ -7,7 +7,8 @@
 //! available here precisely because it is not available in the kernel.
 
 use lorica_common::{
-    BURST_MAX, BankLayout, Bucket, Charge, Drain, Rate, SHARE_SCALE, UNITS_PER_BYTE,
+    BURST_MAX, BankLayout, Bucket, Charge, DRAIN_FRACTION_BITS, Drain, Rate, SHARE_SCALE,
+    UNITS_PER_BYTE,
 };
 use proptest::prelude::*;
 
@@ -164,20 +165,24 @@ proptest! {
     /// method lowers to a `__multi3` call the BPF target has no implementation of. This
     /// pins the halves against the wide product: exact where it fits, `u64::MAX` where it
     /// does not, and nowhere a wrap. The ranges straddle 2^64 so both answers are reached.
+    ///
+    /// The scaling of that product is a shift and not a division, so the expectation is
+    /// written as one. A `u128` wide product shifted by the same amount is the only
+    /// independent statement of what the packet path computes.
     #[test]
     fn the_drain_is_the_wide_product_or_saturated(
         per_sec in 1u64..(1 << 34),
         dt in 1u64..(1 << 34),
     ) {
-        const NS_PER_UNIT: u128 = 1_953_125;
+        let drain = Drain::per_nanosecond(per_sec);
         let start = u64::MAX / 2;
-        let expected = (u128::from(per_sec) * u128::from(dt)).min(u128::from(u64::MAX))
-            / NS_PER_UNIT;
+        let expected = ((u128::from(drain.into_raw()) * u128::from(dt))
+            .min(u128::from(u64::MAX))) >> DRAIN_FRACTION_BITS;
 
         // A burst of zero refuses the packet, so the level the drain left is the only
         // thing the call changed and the drain is readable as a difference.
         let mut bucket = Bucket { level: start, last_tick: 0 };
-        prop_assert_eq!(bucket.charge(Rate { drain: Drain::per_nanosecond(per_sec), burst: 0 }, dt, 64), Charge::Over);
+        prop_assert_eq!(bucket.charge(Rate { drain, burst: 0 }, dt, 64), Charge::Over);
         prop_assert_eq!(u128::from(start - bucket.level), expected.min(u128::from(start)));
     }
 }
@@ -210,6 +215,13 @@ fn a_starved_shard_keeps_its_floor() {
 /// writing: a byte rate handed over unscaled drains 64 units where 256 million are owed,
 /// and half a second of *nanoseconds* against a scaled rate saturates the product and
 /// empties the bucket.
+///
+/// Not an equality any more, and the inequality is the trade the shift bought. The drain
+/// word is `UNITS_PER_BYTE << DRAIN_FRACTION_BITS` over `hz`, which at 250 Hz is 2147483.648
+/// rounded down, so half a second comes out 78 units — 0.15 byte — short of the 256 million
+/// owed where the division by `10^9 / 512` was exact. Stated as short-and-never-over,
+/// because under-draining is the direction that cannot let traffic through, and bounded at
+/// one part in a million, which both directions of the swap above miss by four orders.
 #[test]
 fn half_a_second_of_jiffies_drains_half_a_second_of_bytes() {
     const HZ: u32 = 250;
@@ -219,8 +231,9 @@ fn half_a_second_of_jiffies_drains_half_a_second_of_bytes() {
         drain: Drain::per_jiffy(BYTES_PER_SEC, HZ),
         burst: BYTES_PER_SEC,
     };
+    let full = BYTES_PER_SEC * UNITS_PER_BYTE;
     let mut bucket = Bucket {
-        level: BYTES_PER_SEC * UNITS_PER_BYTE,
+        level: full,
         last_tick: 0,
     };
 
@@ -229,5 +242,10 @@ fn half_a_second_of_jiffies_drains_half_a_second_of_bytes() {
         Charge::Within,
         "half the level is drained, so a zero-length packet fits under the burst"
     );
-    assert_eq!(bucket.level, BYTES_PER_SEC * UNITS_PER_BYTE / 2);
+    let owed = full / 2;
+    let drained = full - bucket.level;
+    assert!(
+        drained <= owed && owed - drained <= owed / 1_000_000,
+        "half a second of jiffies drained {drained} units where {owed} are owed"
+    );
 }
