@@ -24,9 +24,13 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+      # Components are per toolchain, and a missing one fails at the step that needs it
+      # rather than at setup — so nightly declares rustfmt and clippy of its own, because
+      # the eBPF crate is linted with nightly and installing them on stable does nothing
+      # for it. rust-src is what build-std needs.
       - uses: dtolnay/rust-toolchain@nightly
         with:
-          components: rust-src
+          components: rust-src, rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
       - uses: ./.github/actions/bpf-linker
       - run: cargo fmt --all --check
@@ -55,7 +59,12 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
+      # clippy on stable, because this job lints the workspace with the kernel-tests
+      # feature; the action installs a minimal profile, so anything not named here is
+      # absent.
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
       - uses: dtolnay/rust-toolchain@nightly
         with:
           components: rust-src
@@ -98,7 +107,7 @@ jobs:
       # the CPU budget is looser here than the 0.74 % measured there: this step
       # catches a regression of an order of magnitude, and the number that stands is
       # the one from the target.
-      - name: agent RSS and CPU
+      - name: build the agent
         run: cargo build --release -p loricad
       - name: measure the agent RSS and CPU
         run: >
