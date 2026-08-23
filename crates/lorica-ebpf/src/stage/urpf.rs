@@ -5,10 +5,12 @@
 //! Armed by the loader and never by the operator, for the reason `setting::URPF_ENFORCE`
 //! carries: the criterion is a property of the routing table of the ingress interface, and
 //! on a host with a default route the strict check discriminates nothing. The gate matters
-//! in nanoseconds and not only in correctness — the lookup cost 48 ns on the measurement
-//! host against 9 ns for a lookup in a near-empty LPM trie, which is 59 % of the 81 ns the
-//! whole pipeline spends above the `XDP_PASS` floor. Arming it where it discriminates
-//! nothing would be paying 59 % for nothing, which is what the criterion exists to avoid.
+//! in nanoseconds and not only in correctness, and by a much wider margin than the plan
+//! expected: measured on the real pipeline, arming this stage takes the legitimate path
+//! from **86 ns to 226 ns** above the `XDP_PASS` floor. That is **+163 %**, not the 59 %
+//! an earlier C fixture predicted from a 48 ns helper — the fixture was wrong by about a
+//! factor of three. Arming it where it discriminates nothing would more than double the
+//! cost of every legitimate packet, which is what the criterion exists to avoid.
 //!
 //! The other half of the stage is that `bpf_fib_lookup` has nine return codes and only one
 //! of them is a statement about the packet. `FWD_DISABLED` is what a host that does not

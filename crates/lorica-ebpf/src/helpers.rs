@@ -150,14 +150,19 @@ pub struct FibAnswer {
 /// The reverse-path lookup: the source of the packet asked as if it were a destination.
 ///
 /// Here rather than in the stage for the same reason as the list lookup, and with more at
-/// stake. It is the most expensive call in the program — 48 ns on the measurement host
-/// against 9 ns for a lookup in a near-empty LPM trie — so both the static audit and the
-/// instrumented count have to see it, and a call issued straight from the stage would be
-/// invisible to both.
+/// stake. It is by a wide margin the most expensive call in the program — arming stage 5
+/// takes the legitimate path from 86 ns to 226 ns above the `XDP_PASS` floor, so **+140 ns
+/// for this one call and the counter that follows it**, against 9 ns for a lookup in a
+/// near-empty LPM trie. So both the static audit and the instrumented count have to see
+/// it, and a call issued straight from the stage would be invisible to both.
+///
+/// An earlier fixture in C priced the same helper at 48 ns and that figure is wrong by
+/// about a factor of three; the number above is the one measured on this wrapper, on the
+/// real pipeline, twice.
 ///
 /// `SKIP_NEIGH` because the only thing wanted here is the egress interface: without it the
 /// helper goes on to walk the neighbour table to fill in two MAC addresses this stage
-/// throws away, and on a host that really routes that is work on top of the 48 ns. The
+/// throws away, and on a host that really routes that is work on top of the 140 ns. The
 /// flag arrived in 6.7 and the floor of the lab is 6.8; below 6.7 the kernel rejects the
 /// flag word outright and the stage reads the negative return as an answer it cannot use,
 /// which passes the packet — the same direction the criterion takes when it disarms.
