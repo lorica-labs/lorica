@@ -103,8 +103,14 @@ const _: () = assert!(
 /// throughput of a single core: the second, third and fourth CPU do not fail to help, they
 /// slow the first one down. It collapses under exactly the attack shape it exists to
 /// handle, and it would have put the path at three lookups and three helpers, over budget.
-/// Lock-free measured 84 ns against 107 uncontended and leaks at most 2.62x in the worst
-/// concurrency case.
+/// Lock-free measured 84 ns against 107 uncontended.
+///
+/// The 2.62x that figure was once paired with was called a worst case and is not one: it
+/// came from a fixture where four cores did nothing but the update, and measuring the real
+/// stage put the factor between 1.6 and 4.0, bimodal, with single readings up to 3.27. What
+/// bounds it is the thread count, which is the dilution the per-CPU layout would have
+/// imposed by construction — so the retained layout beats the one it was retained over, and
+/// that is the whole claim. `tests/stage_bucket.rs` reports the distribution.
 ///
 /// **Which direction that leak goes, because it is the only reason tolerating one is
 /// defensible.** A lost update is an update that never reached the level, so the level runs
