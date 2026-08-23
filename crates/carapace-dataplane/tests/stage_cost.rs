@@ -40,22 +40,27 @@ const GAME_PORT: u16 = 30_120;
 
 /// The pipeline, in order, and what each cutoff adds to the one before it.
 ///
-/// The first two are not stages. Parsing and the one clock reading are what every packet
-/// pays before any stage has an opinion, and a ventilation that hides them inside a stage
-/// would blame the wrong code.
+/// The first three are not stages. `entry` is the program returning immediately, and it is
+/// there so a per-packet instruction count can have this object's own startup subtracted:
+/// loading and verifying the program is thousands of instructions a profiler counts once
+/// per process, and the only term that cancels them is another run of the same object.
+/// Parsing and the one clock reading are what every packet pays before any stage has an
+/// opinion, and a ventilation that hid them inside a stage would blame the wrong code.
+///
 /// Stage 1 is absent, and that is the point of the level named `parse`: its three checks
 /// are comparisons on fields the parse has just loaded, so they are made there and their
-/// cost is inside the first level rather than in a level of its own. The other labels
-/// keep the numbers of the specification, which is what an operator reads.
-const LEVELS: [(u32, &str); 8] = [
-    (1, "parse"),
-    (2, "clock read"),
-    (3, "stage 2 ICMP"),
-    (4, "stage 3 LPM list"),
-    (5, "stage 4 fragments"),
-    (6, "stage 5 uRPF"),
-    (7, "stage 6 signatures"),
-    (8, "stage 7 buckets"),
+/// cost is inside that level rather than in one of its own. The other labels keep the
+/// numbers of the specification, which is what an operator reads.
+const LEVELS: [(u32, &str); 9] = [
+    (1, "entry"),
+    (2, "parse"),
+    (3, "clock read"),
+    (4, "stage 2 ICMP"),
+    (5, "stage 3 LPM list"),
+    (6, "stage 4 fragments"),
+    (7, "stage 5 uRPF"),
+    (8, "stage 6 signatures"),
+    (9, "stage 7 buckets"),
 ];
 
 fn steady_state_packet() -> Vec<u8> {

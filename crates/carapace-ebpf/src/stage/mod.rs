@@ -115,6 +115,13 @@ macro_rules! cut {
 }
 
 pub fn run(ctx: &XdpContext) -> u32 {
+    // Level one is the program doing nothing: it exists so a per-packet instruction count
+    // can have its own startup subtracted. Loading and verifying this object is thousands
+    // of instructions that a profiler counts once per process, and the only term that
+    // cancels them is another run of the *same* object. An empty program from elsewhere
+    // cancels the kernel test-run loop and leaves its own, much smaller, load behind.
+    cut!(1);
+
     let view = match parse::parse(ctx) {
         Ok(view) => view,
         Err(err) => {
@@ -127,22 +134,22 @@ pub fn run(ctx: &XdpContext) -> u32 {
     #[cfg(feature = "parse-probe")]
     helpers::probe(&view);
 
-    cut!(1);
+    cut!(2);
 
     // Read once, passed down. The TTL comparison and, from the next phase, the leaky
     // buckets share this reading: taking it twice would double the one clock read the
     // per-packet budget allows outside the lookups.
     let now = helpers::now_jiffies();
 
-    cut!(2);
-    decide!(icmp::run(&view));
     cut!(3);
-    decide!(lpm::run(&view, now));
+    decide!(icmp::run(&view));
     cut!(4);
-    decide!(fragment::run(&view));
+    decide!(lpm::run(&view, now));
     cut!(5);
-    decide!(urpf::run(&view));
+    decide!(fragment::run(&view));
     cut!(6);
+    decide!(urpf::run(&view));
+    cut!(7);
 
     // Stage 6 has three answers and only two of them end the walk. Rate-limiting is not a
     // verdict, so it is routed here and not returned: the packet reaches the buckets
@@ -153,9 +160,9 @@ pub fn run(ctx: &XdpContext) -> u32 {
         settled => return settled.action(),
     };
 
-    cut!(7);
-    decide!(bucket::run(&view, now, budget));
     cut!(8);
+    decide!(bucket::run(&view, now, budget));
+    cut!(9);
 
     // The SYN cookie stage sits here, between the buckets and the counters. It is a
     // separate module on a higher kernel floor and is not part of this program.

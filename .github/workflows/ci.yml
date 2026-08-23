@@ -98,6 +98,20 @@ jobs:
           cargo build --release -p carapaced
           scripts/lab/measure-agent-cpu.sh             --agent target/release/carapaced             --object crates/carapace-ebpf/target/bpfel-unknown-none/release/carapace-ebpf             --counters 50000 --hz 10 --sweep-every 20             --duration 70 --settle 30 --cpu-budget 3.0 --rss-max 51200             --out bench/results/agent-cpu
 
+  # Assertion 3, the per-packet cost, is deliberately not a step here.
+  #
+  # It is armed, and it is armed on the measurement VM: `measure-stage-cost.sh
+  # --max-instructions 765`. Two reasons it cannot be a runner step. The script drives
+  # two lab machines over SSH, one to build a static musl binary and one to run it,
+  # because the machine with the target kernel has no toolchain. And the quantity is
+  # machine-specific: it is the instruction count of the whole pipeline with the count of
+  # the program returning immediately subtracted, which reproduces to 0.2 % on one machine
+  # and means something else on another.
+  #
+  # It is named here rather than left out so that its absence is visible, the same reason
+  # assertion 7 is named before `/metrics` exists. The ceiling and the figure behind it are
+  # in the phase measurement report.
+
   # 6.8 is the core floor, 6.12 the floor of the SYN cookie module, plus the
   # newest LTS. A failure on 6.8 is blocking: it is the audience.
   #
