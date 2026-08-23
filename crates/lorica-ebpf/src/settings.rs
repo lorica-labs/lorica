@@ -5,15 +5,18 @@
 //! direct memory access the verifier turns into an immediate, so it costs nothing at
 //! all. The bits and their meanings live in `lorica_common::wire::settings`.
 
-use lorica_common::{BURST_MAX, Rate, SipHasher24, setting};
+use lorica_common::{BURST_MAX, Drain, MultiplyShift, Rate, setting};
 
 #[unsafe(no_mangle)]
 static SETTINGS: u32 = 0;
 
-/// The 128-bit key the bucket index is hashed with, in two halves because `u64` is
+/// The two multipliers the bucket index is hashed with, in two globals because `u64` is
 /// unambiguously `aya::Pod` and a patched struct would need a layout both sides agree on
-/// for no gain. The loader draws it from `/dev/urandom` at every load: two source
+/// for no gain. The loader draws them from `/dev/urandom` at every load: two source
 /// addresses an attacker found sharing a bucket do not share one after the next load.
+///
+/// Patched as drawn. `MultiplyShift::new` forces them odd, which is where that belongs: an
+/// even multiplier breaks 2-universality silently and half of all random words are even.
 #[unsafe(no_mangle)]
 static BUCKET_KEY0: u64 = 0;
 #[unsafe(no_mangle)]
@@ -21,6 +24,11 @@ static BUCKET_KEY1: u64 = 0;
 
 /// The two budgets, four words. Globals and not a map because a map read is a helper call
 /// and the per-packet budget has no room for one here.
+///
+/// The two rate words are `Drain` and **not** bytes per second: this program hands
+/// `Bucket::charge` the jiffy counter, so the byte rate has to be scaled by the width of a
+/// jiffy, and that conversion is the loader's — once per load, in userspace, off the packet
+/// path. The kernel does not know `CONFIG_HZ` and could not do it here anyway.
 ///
 /// The initialisers are the *unconfigured* budget and not a strict one on purpose. Zero
 /// means refuse everything in this arithmetic, so a load that forgot to patch these would
@@ -93,14 +101,14 @@ pub fn mark_over_budget() -> bool {
 }
 
 #[inline(always)]
-pub fn bucket_hasher() -> SipHasher24 {
-    SipHasher24::new([word(&BUCKET_KEY0), word(&BUCKET_KEY1)])
+pub fn bucket_hasher() -> MultiplyShift {
+    MultiplyShift::new([word(&BUCKET_KEY0), word(&BUCKET_KEY1)])
 }
 
 #[inline(always)]
 pub fn bucket_normal_rate() -> Rate {
     Rate {
-        per_sec: word(&BUCKET_NORMAL_RATE),
+        drain: Drain::from_raw(word(&BUCKET_NORMAL_RATE)),
         burst: word(&BUCKET_NORMAL_BURST),
     }
 }
@@ -108,7 +116,7 @@ pub fn bucket_normal_rate() -> Rate {
 #[inline(always)]
 pub fn bucket_suspect_rate() -> Rate {
     Rate {
-        per_sec: word(&BUCKET_SUSPECT_RATE),
+        drain: Drain::from_raw(word(&BUCKET_SUSPECT_RATE)),
         burst: word(&BUCKET_SUSPECT_BURST),
     }
 }

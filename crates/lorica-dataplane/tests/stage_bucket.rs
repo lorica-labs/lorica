@@ -16,7 +16,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use lorica_common::{DEFAULT_SETTINGS, Rate, UNITS_PER_BYTE, setting};
+use lorica_common::{DEFAULT_SETTINGS, Drain, Rate, UNITS_PER_BYTE, setting};
 use support::{BucketGlobals, PktBuilder, TestProg, XdpAction, program, program_with_buckets};
 
 /// 14 Ethernet, 20 IPv4, 8 UDP and this much payload.
@@ -42,7 +42,7 @@ fn udp(src: [u8; 4], sport: u16) -> Vec<u8> {
 /// A burst of exactly `frames` packets of this fixture, and nothing draining it.
 fn burst_of(frames: u64) -> BucketGlobals {
     BucketGlobals::fixed(Rate {
-        per_sec: 0,
+        drain: Drain::NONE,
         burst: frames * FRAME,
     })
 }
@@ -258,8 +258,8 @@ fn the_excess_is_counted_and_passed_when_the_stage_is_not_armed() {
 /// numbers do not share a denominator and one cannot gate the other.
 ///
 /// What *does* bound this one is the thread count, and the mechanism says why. A bucket is
-/// two words written separately: `last_ns` is moved to the current jiffy before `level` is
-/// stored, so N CPUs that read the same `last_ns` each subtract the same tick's worth of
+/// two words written separately: `last_tick` is moved to the current jiffy before `level` is
+/// stored, so N CPUs that read the same `last_tick` each subtract the same tick's worth of
 /// drain and only one of the stores survives — one tick can be spent up to N times. That is
 /// the same N the per-CPU layout was rejected for diluting by, which makes it the honest
 /// gate: the retained layout has to beat the layout it was retained over.
@@ -285,16 +285,14 @@ fn the_lock_free_bank_leaks_less_than_the_layout_it_was_retained_over() {
     );
     let threads = cpus.min(4);
 
-    // The clock the stage compares against is the jiffy counter, and `Bucket::charge` was
-    // written for nanoseconds: it divides `per_sec * dt` by 10^9 / 512. Feeding it jiffies
-    // means the rate global has to be the byte rate scaled by nanoseconds per jiffy. That
-    // conversion belongs to whatever reads a rate out of a configuration file, which is not
-    // this phase; here it is done explicitly so the number below is in bytes per second.
-    let hz = u64::from(program().clock().hz);
-    let ns_per_jiffy = 1_000_000_000 / hz;
+    // The one case in this file with a real rate, so the one that needs the jiffy width.
+    // `Drain::per_jiffy` is the conversion the loader does, called here the same way, which
+    // is the point of it living in the type: the number below stays in bytes per second and
+    // nothing on the packet path multiplies.
+    let hz = program().clock().hz;
     let rate = Rate {
-        per_sec: BYTES_PER_SEC * ns_per_jiffy,
-        burst: 4 * BYTES_PER_SEC / hz,
+        drain: Drain::per_jiffy(BYTES_PER_SEC, hz),
+        burst: 4 * BYTES_PER_SEC / u64::from(hz),
     };
 
     let one = enforced_rate(rate, 1, REPEAT * u32::try_from(threads).unwrap());

@@ -19,7 +19,7 @@ use std::{
 use anyhow::{Context, Result, bail};
 use aya::{Ebpf, EbpfLoader};
 use lorica_common::{
-    BUCKET_KEY_SYMBOLS, Clock, CounterId, DEFAULT_SETTINGS, SETTINGS_SYMBOL, SipHasher24,
+    BUCKET_KEY_SYMBOLS, Clock, CounterId, DEFAULT_SETTINGS, SETTINGS_SYMBOL, key_words,
 };
 use lorica_dataplane::{clock, loader, maps};
 use tokio::{runtime::Builder, time::MissedTickBehavior};
@@ -224,9 +224,8 @@ fn load(object: &Path, slots: u32) -> Result<(&'static Ebpf, Clock)> {
     // packet, so an unkeyed one would have the same collisions on every host and at every
     // boot. The two budgets keep the unconfigured initialisers of the program: reading them
     // from a configuration file is not this phase.
-    let key = SipHasher24::key_words(
-        loader::draw_index_key().context("cannot draw the key of the bucket index")?,
-    );
+    let key =
+        key_words(loader::draw_index_key().context("cannot draw the key of the bucket index")?);
     let mut ebpf = EbpfLoader::new()
         .override_global(SETTINGS_SYMBOL, &DEFAULT_SETTINGS, true)
         .override_global(BUCKET_KEY_SYMBOLS[0], &key[0], true)

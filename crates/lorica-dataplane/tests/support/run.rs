@@ -17,7 +17,7 @@ use aya::{
 };
 use lorica_common::{
     BUCKET_KEY_SYMBOLS, BUCKET_RATE_SYMBOLS, Bucket, Clock, CounterId, DEFAULT_SETTINGS, LpmKey,
-    LpmValue, PacketView, Rate, SETTINGS_SYMBOL, SipHasher24,
+    LpmValue, MultiplyShift, PacketView, Rate, SETTINGS_SYMBOL, key_words,
 };
 use lorica_dataplane::clock;
 
@@ -103,7 +103,7 @@ impl BucketGlobals {
     /// pick addresses that share a bucket.
     pub fn index_of(&self, src: &[u8; 16], buckets: u32) -> u32 {
         lorica_common::BankLayout { buckets, shards: 1 }
-            .index(SipHasher24::from_bytes(self.key).hash(src))
+            .index(MultiplyShift::from_bytes(self.key).hash(src))
     }
 }
 
@@ -192,13 +192,13 @@ impl TestProg {
         // Kept alive past the borrow: `override_global` records a reference, and the
         // patching happens in `load`.
         let words = buckets.map(|b| {
-            let key = SipHasher24::key_words(b.key);
+            let key = key_words(b.key);
             [
                 key[0],
                 key[1],
-                b.normal.per_sec,
+                b.normal.drain.into_raw(),
                 b.normal.burst,
-                b.suspect.per_sec,
+                b.suspect.drain.into_raw(),
                 b.suspect.burst,
             ]
         });

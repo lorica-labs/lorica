@@ -11,8 +11,8 @@ pub mod hash;
 pub mod ttl;
 pub mod wire;
 
-pub use bucket::{BURST_MAX, BankLayout, Bucket, Charge, Rate, SHARE_SCALE, UNITS_PER_BYTE};
-pub use hash::{SipHasher24, fast_hash};
+pub use bucket::{BURST_MAX, BankLayout, Bucket, Charge, Drain, Rate, SHARE_SCALE, UNITS_PER_BYTE};
+pub use hash::{MultiplyShift, SipHasher24, fast_hash, key_words};
 pub use ttl::{Clock, Deadline};
 pub use wire::{
     Action, BUCKET_KEY_SYMBOLS, BUCKET_RATE_SYMBOLS, CounterId, DEFAULT_SETTINGS, EventHeader,
