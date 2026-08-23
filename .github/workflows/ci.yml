@@ -1,8 +1,13 @@
 name: ci
 
+# No branch filter on purpose. This project carries one integration branch per phase —
+# lab/measurements, core/foundation, core/deterministic-defenses, and so on — so the
+# default branch is renamed at every phase boundary. A branch name written here goes
+# stale silently: the filter said `master`, that branch was deleted once the phase-1
+# integration branch became the default, and the whole workflow simply stopped running.
+# A workflow that never fires looks exactly like a workflow that always passes.
 on:
   push:
-    branches: [master]
   pull_request:
 
 env:
@@ -120,7 +125,10 @@ jobs:
   # archive. A runner without /dev/kvm makes those versions declared unobtained
   # rather than silently skipped, which is why this job is allowed to report amber.
   kernel-matrix:
-    if: github.ref == 'refs/heads/master'
+    # The default branch, whatever it is called this phase, rather than a name spelled out
+    # here. The two jobs above are blocking on every branch; this one costs minutes and
+    # only has to hold on the branch a phase integrates into.
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
     runs-on: ubuntu-24.04
     continue-on-error: true
     steps:
