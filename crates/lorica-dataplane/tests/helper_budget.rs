@@ -30,19 +30,33 @@ use support::{
     program, program_with,
 };
 
-/// Calls present in the whole program, entry point and subprograms together.
+/// Calls present in the packet path, entry point and subprograms together.
 ///
 /// Six, not the two lookups and one clock read a legitimate packet pays. This ceiling
 /// counts every branch at once, including the ones a given packet never takes: the
 /// reverse-path lookup of stage 5 is in the object on every host and on the path only
 /// where the loader set `URPF_ENFORCE`.
 ///
-/// Six calls are present today, so the ceiling is exactly full. Five are the wrappers of
-/// the data path — the list, the bank, the counters, the clock, the reverse path — and the
-/// sixth belongs to `lorica_clock`, the calibration program, which reads its own array and
-/// never sees a packet. Anything added to the data path from here fails this assertion,
-/// which is what it is for.
+/// **Five are present today**, and they are the wrappers of the data path: the list, the
+/// bank, the counters, the clock, the reverse path. One slot of headroom, and it is a real
+/// one — see [`OFF_PACKET_PATH`] for the call this deliberately does not count and why.
 const BUDGET: usize = 6;
+
+/// The entry points whose calls this budget does not count, because no packet reaches
+/// them.
+///
+/// `lorica_clock` reads `CLOCK_PROBE` so the agent can turn a TTL in seconds into a
+/// deadline, since the kernel exposes neither `CONFIG_HZ` nor the current jiffy to
+/// userspace. Its one helper call is in the same object as the data path and would
+/// otherwise fill the last slot of a ceiling whose whole meaning is per-packet — a budget
+/// that a program which never sees a packet can exhaust is measuring the wrong thing, and
+/// the next call added anywhere would have failed an assertion that exists to catch calls
+/// added to the *packet path*.
+///
+/// An exclusion is a hole in an assertion, so [`the_excluded_program_is_the_one_named`]
+/// pins what is behind it: the symbol has to exist and to contribute exactly one call. A
+/// second call appearing there is a change worth seeing rather than one worth hiding.
+const OFF_PACKET_PATH: &[&str] = &["lorica_clock"];
 
 /// Not an intention, an assertion. Zero kfuncs on the core program is what guarantees
 /// no dependency on netfilter conntrack and no dependency on a git version of aya.
@@ -143,9 +157,12 @@ fn program_calls(object_bytes: &[u8]) -> Vec<(String, Calls)> {
     per_function
 }
 
+/// The total over the packet path only. [`OFF_PACKET_PATH`] says which symbols are left
+/// out and why the exclusion is not a way of making the number smaller.
 fn total(per_function: &[(String, Calls)]) -> Calls {
     per_function
         .iter()
+        .filter(|(name, _)| !OFF_PACKET_PATH.contains(&name.as_str()))
         .fold(Calls::default(), |mut sum, (_, calls)| {
             sum.helper += calls.helper;
             sum.bpf_to_bpf += calls.bpf_to_bpf;
@@ -186,6 +203,30 @@ fn the_program_stays_inside_its_call_budget() {
         calls.helper,
         breakdown(&per_function)
     );
+}
+
+/// What the exclusion of [`OFF_PACKET_PATH`] covers, stated so it cannot quietly widen.
+///
+/// A name that stopped matching would silently put the calibration call back inside the
+/// budget; a name that started covering more would silently take calls out of it. Both are
+/// caught here rather than in whichever assertion happened to move.
+#[test]
+fn the_excluded_program_is_the_one_named() {
+    let per_function = program_calls(&plain_object());
+
+    for name in OFF_PACKET_PATH {
+        let (_, calls) = per_function
+            .iter()
+            .find(|(symbol, _)| symbol == name)
+            .unwrap_or_else(|| {
+                panic!("{name} is excluded from the call budget but is not in the object")
+            });
+        assert_eq!(
+            calls.helper, 1,
+            "{name} is excluded from the call budget and makes {} helper calls, not 1",
+            calls.helper
+        );
+    }
 }
 
 #[test]
