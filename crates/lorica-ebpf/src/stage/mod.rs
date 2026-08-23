@@ -10,6 +10,31 @@
 //! four counters they bump keep their names. What is left in this list is every stage
 //! that needs something the parse does not have: a map, the clock, or a policy word read
 //! against more than one field.
+//!
+//! **Every drop this list can reach is confirmed, and the rule belongs here because this
+//! is where the order is decided.** Two stages classify rather than prove: the bank judges
+//! a hash of a source address that other sources share by construction — 1 024 buckets,
+//! see `bucket.rs` — and six of the ten signature vectors judge one datagram with no
+//! memory of what left the host. What those two produce is a *candidate*. A drop is only
+//! ever taken on an exact key, which is the address an operator listed and `lpm` matched;
+//! on a packet that is objectively invalid, which is `parse::refuse` and the four
+//! catalogue vectors that are facts about the datagram; or on a bit of the policy word,
+//! which is what the later-fragment default and the armed catalogue are as much as the
+//! armed bank. What a drop may never rest on is state another source can move, and a
+//! bucket level is exactly that.
+//!
+//! Arming stage 7 *is* that policy bit, and reading it that way is a judgement, so the
+//! reading it was taken against is worth stating. The stricter one has `bucket::run`
+//! answer a candidate and something downstream confirm it — but there is nothing
+//! downstream. Stage 7 is the last stage of this program; the only exact key that could
+//! confirm it is the list, four stages earlier and already consulted; and the SYN cookie
+//! stage that would follow is another program on a higher kernel floor. A candidate no
+//! stage can confirm is either always dropped or never dropped, and `ENFORCE_BUCKETS` is
+//! already that choice — made by the operator, clear in the shipped default, and the
+//! reason `legit_trace.rs` has to set it before the reference trace meets stage 7 at all.
+//! So the invariant is held by pinning that bit rather than by adding a confirmer nothing
+//! could implement: `lorica-dataplane/tests/candidate_verdicts.rs` fails if bucket state
+//! alone ever decides a verdict, in either direction.
 
 pub mod bucket;
 pub mod fragment;
