@@ -1,4 +1,4 @@
-use super::leaky::Rate;
+use super::leaky::{Drain, Rate};
 
 /// Denominator of an observed share: a share of `SHARE_SCALE` is all the traffic.
 ///
@@ -16,14 +16,25 @@ pub struct BankLayout {
 }
 
 impl BankLayout {
-    /// Bucket a keyed hash lands in.
+    /// Bucket a keyed hash lands in: the **top** `log2(buckets)` bits of it.
     ///
-    /// A modulo and not a mask: the bucket count comes from a configuration file and
-    /// is not required to be a power of two. An empty bank answers `0`, which is the
-    /// only answer that cannot become an out-of-bounds map index.
+    /// The top bits and never the low ones. The hash is multiply-shift, the low bits of a
+    /// wrapping multiply are weak, and taking the high end is what the 2-universality proof
+    /// of multiply-shift is about; a mask or a modulo of a power-of-two count would keep
+    /// exactly the wrong end. It is also the whole reduction — one shift, no division.
+    ///
+    /// The modulo below survives for a bucket count that is not a power of two, which a
+    /// configuration file is free to name. It is a real division, so the count has to stay
+    /// a compile-time constant for the compiler to strength-reduce it; the bank the program
+    /// declares is 1024 and takes the shift. A bank of zero or one bucket answers `0`, which
+    /// is the only answer that cannot become an out-of-bounds map index — and the shift
+    /// would be by 64, which is not a shift.
     pub const fn index(&self, hash: u64) -> u32 {
-        if self.buckets == 0 {
+        if self.buckets <= 1 {
             return 0;
+        }
+        if self.buckets.is_power_of_two() {
+            return (hash >> (64 - self.buckets.trailing_zeros())) as u32;
         }
         (hash % self.buckets as u64) as u32
     }
@@ -39,7 +50,9 @@ impl BankLayout {
         let shards = u64::from(self.shards.max(1));
         let share = u64::from(observed_share.min(SHARE_SCALE));
         Rate {
-            per_sec: apportion(global.per_sec, share, shards),
+            // Apportioning is linear, so it works on the scaled word and does not care
+            // which clock the drain was built against.
+            drain: Drain::from_raw(apportion(global.drain.into_raw(), share, shards)),
             burst: apportion(global.burst, share, shards),
         }
     }

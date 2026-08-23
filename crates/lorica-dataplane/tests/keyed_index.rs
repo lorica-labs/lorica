@@ -12,7 +12,7 @@ mod support;
 
 use std::collections::BTreeSet;
 
-use lorica_common::{BankLayout, DEFAULT_SETTINGS, Rate, SipHasher24, fast_hash};
+use lorica_common::{BankLayout, DEFAULT_SETTINGS, Drain, MultiplyShift, Rate, fast_hash};
 use lorica_dataplane::loader::draw_index_key;
 use support::{BucketGlobals, PktBuilder, program_with_buckets};
 
@@ -103,7 +103,7 @@ fn collisions_against_the_fast_hash_are_spread_by_the_keyed_one() {
         "the collisions were not built against the fast hash at all"
     );
 
-    let hasher = SipHasher24::from_bytes(KEY);
+    let hasher = MultiplyShift::from_bytes(KEY);
     let keyed = histogram(
         colliding
             .iter()
@@ -135,7 +135,7 @@ fn collisions_against_the_fast_hash_are_spread_by_the_keyed_one() {
 ///
 /// Through the program and not through the arithmetic, because what is being asserted is
 /// that the key is drawn per load and reaches the program — the arithmetic would only
-/// re-assert that SipHash depends on its key. The observable is the bank itself: a verdict
+/// re-assert that a multiply depends on its multiplier. The observable is the bank itself: a verdict
 /// cannot say which bucket a packet landed in, and two different indices both answer pass.
 #[test]
 fn two_loads_put_the_same_addresses_in_different_buckets() {
@@ -144,7 +144,7 @@ fn two_loads_put_the_same_addresses_in_different_buckets() {
     // Nothing drains and nothing overflows, so a bucket carries a level exactly when a
     // packet hashed to it.
     let unlimited = Rate {
-        per_sec: 0,
+        drain: Drain::NONE,
         burst: u64::MAX,
     };
 

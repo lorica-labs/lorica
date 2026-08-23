@@ -4,14 +4,16 @@
 //! the number that matters is the per-packet cost in the kernel.
 
 use criterion::{Criterion, criterion_group, criterion_main};
-use lorica_common::{BankLayout, Bucket, Rate};
+use lorica_common::{BankLayout, Bucket, Drain, Rate};
 use std::hint::black_box;
 
 fn charge(c: &mut Criterion) {
     let mut group = c.benchmark_group("bucket");
     group.sample_size(50);
+    // The gaps below are in nanoseconds, so the drain is built for a nanosecond clock; the
+    // program's is jiffies, and the arithmetic is the same instructions either way.
     let rate = Rate {
-        per_sec: 1_000_000_000,
+        drain: Drain::per_nanosecond(1_000_000_000),
         burst: 1 << 16,
     };
 
@@ -22,7 +24,7 @@ fn charge(c: &mut Criterion) {
         group.bench_function(name, |b| {
             let mut bucket = Bucket {
                 level: 0,
-                last_ns: 0,
+                last_tick: 0,
             };
             let mut now = 0u64;
             b.iter(|| {

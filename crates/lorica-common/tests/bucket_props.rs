@@ -6,7 +6,9 @@
 //! integration test is its own crate, so `u128` is available for the bounds; it is
 //! available here precisely because it is not available in the kernel.
 
-use lorica_common::{BURST_MAX, BankLayout, Bucket, Charge, Rate, SHARE_SCALE, UNITS_PER_BYTE};
+use lorica_common::{
+    BURST_MAX, BankLayout, Bucket, Charge, Drain, Rate, SHARE_SCALE, UNITS_PER_BYTE,
+};
 use proptest::prelude::*;
 
 const NS_PER_SEC: u128 = 1_000_000_000;
@@ -14,7 +16,7 @@ const NS_PER_SEC: u128 = 1_000_000_000;
 fn empty() -> Bucket {
     Bucket {
         level: 0,
-        last_ns: 0,
+        last_tick: 0,
     }
 }
 
@@ -29,7 +31,7 @@ proptest! {
         packets in 1usize..512,
     ) {
         let gap_ns = 2 * u64::from(size) * 1_000_000_000 / per_sec;
-        let rate = Rate { per_sec, burst: 4 * u64::from(size) };
+        let rate = Rate { drain: Drain::per_nanosecond(per_sec), burst: 4 * u64::from(size) };
         let mut bucket = empty();
         let mut now = 1_000_000_000u64;
         for _ in 0..packets {
@@ -52,7 +54,7 @@ proptest! {
     ) {
         let mean = u64::from(size) * 1_000_000_000 / per_sec;
         prop_assume!(mean > jitter);
-        let rate = Rate { per_sec, burst: 4 * u64::from(size) };
+        let rate = Rate { drain: Drain::per_nanosecond(per_sec), burst: 4 * u64::from(size) };
         let mut bucket = empty();
         let mut now = 1_000_000_000u64;
         for _ in 0..pairs {
@@ -71,7 +73,7 @@ proptest! {
         burst in 0u64..1_000_000,
         arrivals in prop::collection::vec((0u64..2_000_000, 0u32..9_000), 1..2_000),
     ) {
-        let rate = Rate { per_sec, burst };
+        let rate = Rate { drain: Drain::per_nanosecond(per_sec), burst };
         let mut bucket = empty();
         let start = 1u64 << 40;
         let mut now = start;
@@ -103,7 +105,7 @@ proptest! {
             1..64,
         ),
     ) {
-        let rate = Rate { per_sec, burst };
+        let rate = Rate { drain: Drain::per_nanosecond(per_sec), burst };
         let mut bucket = empty();
         for now in stamps {
             let _ = bucket.charge(rate, now, size);
@@ -120,14 +122,14 @@ proptest! {
         now in 1_000_000u64..(u64::MAX / 2),
         back in 0u64..1_000_000,
     ) {
-        let rate = Rate { per_sec, burst };
-        let mut bucket = Bucket { level: 0, last_ns: now };
+        let rate = Rate { drain: Drain::per_nanosecond(per_sec), burst };
+        let mut bucket = Bucket { level: 0, last_tick: now };
         prop_assert_eq!(bucket.charge(rate, now, 100), Charge::Within);
         let level = bucket.level;
 
         prop_assert_eq!(bucket.charge(rate, now - back, 100), Charge::Within);
         prop_assert_eq!(bucket.level, level + 100 * UNITS_PER_BYTE);
-        prop_assert_eq!(bucket.last_ns, now);
+        prop_assert_eq!(bucket.last_tick, now);
     }
 
     /// The floor, over every share including zero and shares above the scale.
@@ -135,18 +137,19 @@ proptest! {
     fn a_shard_never_falls_below_its_share_of_the_rate(
         buckets in any::<u32>(),
         shards in 0u32..4_096,
-        per_sec in 0u64..10_000_000_000,
+        drain in 0u64..10_000_000_000,
         burst in 0u64..1_000_000_000,
         share in 0u32..(2 * SHARE_SCALE),
     ) {
         let layout = BankLayout { buckets, shards };
-        let global = Rate { per_sec, burst };
+        let global = Rate { drain: Drain::from_raw(drain), burst };
         let shard = layout.shard_rate(global, share);
         let n = u64::from(shards.max(1));
+        let apportioned = shard.drain.into_raw();
 
-        prop_assert!(shard.per_sec >= per_sec / n, "{} < {}", shard.per_sec, per_sec / n);
+        prop_assert!(apportioned >= drain / n, "{} < {}", apportioned, drain / n);
         prop_assert!(shard.burst >= burst / n, "{} < {}", shard.burst, burst / n);
-        prop_assert!(shard.per_sec <= per_sec);
+        prop_assert!(apportioned <= drain);
         prop_assert!(shard.burst <= burst);
     }
 
@@ -156,7 +159,7 @@ proptest! {
         prop_assert!(layout.index(hash) < buckets.max(1));
     }
 
-    /// `per_sec * dt` is the one product here that can leave 64 bits, and it is written out
+    /// The drain word times `dt` is the one product here that can leave 64 bits, and it is written out
     /// in halves rather than as `u64::saturating_mul` because the intrinsic behind that
     /// method lowers to a `__multi3` call the BPF target has no implementation of. This
     /// pins the halves against the wide product: exact where it fits, `u64::MAX` where it
@@ -173,8 +176,8 @@ proptest! {
 
         // A burst of zero refuses the packet, so the level the drain left is the only
         // thing the call changed and the drain is readable as a difference.
-        let mut bucket = Bucket { level: start, last_ns: 0 };
-        prop_assert_eq!(bucket.charge(Rate { per_sec, burst: 0 }, dt, 64), Charge::Over);
+        let mut bucket = Bucket { level: start, last_tick: 0 };
+        prop_assert_eq!(bucket.charge(Rate { drain: Drain::per_nanosecond(per_sec), burst: 0 }, dt, 64), Charge::Over);
         prop_assert_eq!(u128::from(start - bucket.level), expected.min(u128::from(start)));
     }
 }
@@ -190,11 +193,41 @@ fn a_starved_shard_keeps_its_floor() {
     };
     let shard = layout.shard_rate(
         Rate {
-            per_sec: 8_000_000,
+            drain: Drain::from_raw(8_000_000),
             burst: 80_000,
         },
         0,
     );
-    assert_eq!(shard.per_sec, 1_000_000);
+    assert_eq!(shard.drain, Drain::from_raw(1_000_000));
     assert_eq!(shard.burst, 10_000);
+}
+
+/// The drain is built against the clock `charge` is handed, and in the program that clock
+/// counts jiffies.
+///
+/// Half a second of jiffies has to drain half a second of bytes. It fails in both
+/// directions of the swap that was in the tree, which is the only thing that makes it worth
+/// writing: a byte rate handed over unscaled drains 64 units where 256 million are owed,
+/// and half a second of *nanoseconds* against a scaled rate saturates the product and
+/// empties the bucket.
+#[test]
+fn half_a_second_of_jiffies_drains_half_a_second_of_bytes() {
+    const HZ: u32 = 250;
+    const BYTES_PER_SEC: u64 = 1_000_000;
+
+    let rate = Rate {
+        drain: Drain::per_jiffy(BYTES_PER_SEC, HZ),
+        burst: BYTES_PER_SEC,
+    };
+    let mut bucket = Bucket {
+        level: BYTES_PER_SEC * UNITS_PER_BYTE,
+        last_tick: 0,
+    };
+
+    assert_eq!(
+        bucket.charge(rate, u64::from(HZ) / 2, 0),
+        Charge::Within,
+        "half the level is drained, so a zero-length packet fits under the burst"
+    );
+    assert_eq!(bucket.level, BYTES_PER_SEC * UNITS_PER_BYTE / 2);
 }

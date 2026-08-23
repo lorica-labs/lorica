@@ -24,16 +24,71 @@ const NS_PER_UNIT: u64 = 1_953_125;
 /// with an absurd burst would fail to drain.
 pub const BURST_MAX: u64 = 1 << 34;
 
-/// A leak rate, in bytes per second, and the burst it tolerates, in bytes.
+/// A leak, and the burst it tolerates, in bytes.
 ///
-/// `per_sec == 0` and `burst == 0` are both reachable configurations and both mean
-/// refuse everything; neither is a division by zero, because the only division in
-/// the update is by `NS_PER_UNIT`.
+/// A zero drain and a zero burst are both reachable configurations and both mean refuse
+/// everything; neither is a division by zero, because the only division in the update is
+/// by `NS_PER_UNIT`.
 #[repr(C)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Rate {
-    pub per_sec: u64,
+    pub drain: Drain,
     pub burst: u64,
+}
+
+/// How fast one bucket leaks, against the clock [`Bucket::charge`] is handed: bucket units
+/// per tick of that clock, scaled by `NS_PER_UNIT` so the update is one multiply and one
+/// division by a constant.
+///
+/// **A newtype and not the `u64` it wraps, because the `u64` was called `per_sec` and was
+/// read as bytes per second.** The data path hands `charge` `bpf_jiffies64` — 4 ns against
+/// the 54 of `bpf_ktime_get_ns`, which is why it reads jiffies at all — and a jiffy is 1 to
+/// 4 ms, so every drain was out by about a factor of a million. Nothing caught it: the one
+/// test with a real rate converted at its own call site, and the conversion factor for a
+/// nanosecond clock is 1. There is now no way to build one of these without naming the tick
+/// it is built for, and the conversion happens once per load in userspace.
+#[repr(transparent)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Drain(u64);
+
+impl Drain {
+    /// Never leaks. The strictest configuration there is, and what a case about a burst
+    /// wants: a bucket that does not drain admits exactly its burst whatever the clock does.
+    pub const NONE: Self = Self(0);
+
+    /// From bytes per second — what an operator configures — for a `charge` whose clock
+    /// counts jiffies, which is the data path's clock and the only one that ships.
+    ///
+    /// `hz` is measured through `CLOCK_PROBE`, because the kernel exports neither
+    /// `CONFIG_HZ` nor the counter. `10^9 / hz` is exact for 100, 250 and 1000 Hz and
+    /// 3.3e-8 low for 300, which is four orders below the tolerance the rate itself is
+    /// recognised to. Saturating, because the unconfigured budget the program carries is
+    /// `u64::MAX` and scaling it must not wrap into a strict one.
+    pub const fn per_jiffy(bytes_per_sec: u64, hz: u32) -> Self {
+        let hz = if hz == 0 { 1 } else { hz as u64 };
+        Self(saturating_mul(bytes_per_sec, 1_000_000_000 / hz))
+    }
+
+    /// From bytes per second, for a `charge` whose clock counts nanoseconds. The scale is 1,
+    /// which is exactly why the mismatch above was invisible; no clock in the program is
+    /// this one, and the properties of the arithmetic are stated against it.
+    pub const fn per_nanosecond(bytes_per_sec: u64) -> Self {
+        Self(bytes_per_sec)
+    }
+
+    /// The scaled word itself.
+    ///
+    /// It crosses into the program's `.rodata` as a bare `u64` and comes back out as one,
+    /// and apportioning it across shards is linear, so both need the number without the
+    /// type. Nothing else does: `from_raw` on a byte rate is the mistake this type exists
+    /// to prevent.
+    pub const fn from_raw(raw: u64) -> Self {
+        Self(raw)
+    }
+
+    pub const fn into_raw(self) -> u64 {
+        self.0
+    }
 }
 
 /// Level of one leaky bucket and the clock reading it was last drained at.
@@ -49,7 +104,9 @@ pub struct Rate {
 pub struct Bucket {
     /// In units of `1 / UNITS_PER_BYTE` byte. Never in bytes.
     pub level: u64,
-    pub last_ns: u64,
+    /// The clock reading of the last update, in whatever tick the [`Drain`] was built
+    /// against. Jiffies in the program.
+    pub last_tick: u64,
 }
 
 const _: () = assert!(size_of::<Bucket>() == 16);
@@ -102,19 +159,21 @@ impl Bucket {
     /// level at the ceiling for as long as a flood lasts and keep dropping
     /// legitimate traffic after it stops, and it would leave the level unbounded,
     /// which is the only way this arithmetic could overflow.
-    pub fn charge(&mut self, rate: Rate, now_ns: u64, size: u32) -> Charge {
+    /// `now` is in the ticks `rate.drain` was built against, and the type is where that is
+    /// said: nothing here can tell a jiffy from a nanosecond.
+    pub fn charge(&mut self, rate: Rate, now: u64, size: u32) -> Charge {
         // The clock is read per packet on the CPU that handles the packet and is not
         // monotonic across cores, so a reading from the past becomes a gap of zero
-        // and never a huge unsigned one. `last_ns` is a high-water mark for the same
+        // and never a huge unsigned one. `last_tick` is a high-water mark for the same
         // reason: moving it backwards would hand the next packet the drain of a gap
         // that never elapsed.
-        let dt = now_ns.saturating_sub(self.last_ns);
-        self.last_ns = self.last_ns.max(now_ns);
+        let dt = now.saturating_sub(self.last_tick);
+        self.last_tick = self.last_tick.max(now);
 
         // Saturating rather than wrapping: the eBPF crate builds with
         // overflow-checks off, so a wrap there would be silent, and a saturated
         // product means a gap long enough to empty any level `BURST_MAX` allows.
-        let drained = saturating_mul(rate.per_sec, dt) / NS_PER_UNIT;
+        let drained = saturating_mul(rate.drain.into_raw(), dt) / NS_PER_UNIT;
         self.level = self.level.saturating_sub(drained);
 
         let ceiling = rate.burst.min(BURST_MAX) * UNITS_PER_BYTE;

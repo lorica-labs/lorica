@@ -38,25 +38,10 @@ impl SipHasher24 {
     }
 
     /// Reads a 16-byte secret as the two little-endian words the reference vectors
-    /// use, so a key read from `/dev/urandom` needs no byte-order decision at the
-    /// call site.
+    /// use. The byte order lives in [`super::key_words`], which both keyed hashes and
+    /// the loader share.
     pub const fn from_bytes(key: [u8; 16]) -> Self {
-        Self::new(Self::key_words(key))
-    }
-
-    /// The same two words, for a caller that has to hand them to something other than
-    /// this type — the loader patches them into the program's `.rodata` one `u64` at a
-    /// time, and the byte order has to be decided in exactly one place.
-    pub const fn key_words(key: [u8; 16]) -> [u64; 2] {
-        let mut k0 = 0u64;
-        let mut k1 = 0u64;
-        let mut i = 0;
-        while i < 8 {
-            k0 |= (key[i] as u64) << (8 * i);
-            k1 |= (key[i + 8] as u64) << (8 * i);
-            i += 1;
-        }
-        [k0, k1]
+        Self::new(super::key_words(key))
     }
 
     pub fn hash(&self, bytes: &[u8]) -> u64 {

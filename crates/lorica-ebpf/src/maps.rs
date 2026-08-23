@@ -65,9 +65,10 @@ pub static HELPER_COUNTS: PerCpuArray<u64> =
 
 /// Buckets in the bank.
 ///
-/// A compile-time constant and not a load-time global, unlike the sizes above, because
-/// the program computes an index modulo this number: resizing the bank would mean
-/// patching the modulo and the map size together, and nothing in this phase resizes it.
+/// A compile-time constant and not a load-time global, unlike the sizes above, because the
+/// index is the top `log2` of this number bits of the hash: resizing the bank would mean
+/// patching a shift width and the map size together, and nothing in this phase resizes it.
+/// A power of two, so the reduction is that shift and no division is emitted.
 pub const BANK_BUCKETS: u32 = 1024;
 
 /// One bucket, on a cache line of its own.
