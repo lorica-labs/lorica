@@ -40,6 +40,11 @@ pub fn allow_later_fragments() -> bool {
 }
 
 #[inline(always)]
+pub fn urpf_enforce() -> bool {
+    flags() & setting::URPF_ENFORCE != 0
+}
+
+#[inline(always)]
 pub fn enforce_signatures() -> bool {
     flags() & setting::ENFORCE_SIGNATURES != 0
 }

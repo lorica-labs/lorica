@@ -34,6 +34,18 @@ pub fn ip_link_mode(iface: &str) -> String {
         .to_owned()
 }
 
+/// The kernel index of an interface, which is what `xdp_md` carries and what
+/// `bpf_fib_lookup` is asked about. Read from sysfs rather than parsed out of `ip`, which
+/// renders it as a prefix of a line and not as a field.
+pub fn ifindex(iface: &str) -> u32 {
+    let path = format!("/sys/class/net/{iface}/ifindex");
+    std::fs::read_to_string(&path)
+        .unwrap_or_else(|err| panic!("cannot read {path}: {err}"))
+        .trim()
+        .parse()
+        .expect("sysfs reported an ifindex that is not a number")
+}
+
 /// An interface, up, deleted when the test ends however it ends.
 ///
 /// A `veth` supports native XDP, which a test of native attach cannot do without. A

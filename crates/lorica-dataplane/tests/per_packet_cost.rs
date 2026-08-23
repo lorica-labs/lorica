@@ -81,6 +81,20 @@ fn the_cost_of_each_path_through_the_pipeline() {
         prog.ns_per_run(&plain, REPEAT),
     );
 
+    // The same path with stage 5 armed, which is the whole cost of the reverse-path lookup:
+    // the difference against the line above is what the loader decides to pay or not.
+    //
+    // It is a floor and not the cost on a router. The frame carries no ingress interface,
+    // so the lookup asks about the loopback of a machine that does not forward and comes
+    // back `FWD_DISABLED` — the table was reached and the device check refused. A host that
+    // really routes walks the table and, without `SKIP_NEIGH`, the neighbour cache too.
+    let armed = program_with(setting::URPF_ENFORCE);
+    assert_eq!(armed.run(&plain), XdpAction::Pass);
+    report(
+        "UDP matching nothing, uRPF armed",
+        armed.ns_per_run(&plain, REPEAT),
+    );
+
     let v6 = PktBuilder::eth().ipv6().udp(1111, GAME_PORT).build();
     assert_eq!(prog.run(&v6), XdpAction::Pass);
     report("IPv6 UDP matching nothing", prog.ns_per_run(&v6, REPEAT));

@@ -143,7 +143,7 @@ pub fn run(ctx: &XdpContext) -> u32 {
     cut!(5);
     decide!(fragment::run(&view));
     cut!(6);
-    decide!(urpf::run(&view));
+    decide!(urpf::run(ctx, &view));
     cut!(7);
 
     // Stage 6 has three answers and only two of them end the walk. Rate-limiting is not a

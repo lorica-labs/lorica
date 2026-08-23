@@ -49,11 +49,12 @@ impl XdpAction {
 pub struct HelperCounts {
     pub map_lookups: u64,
     pub clock_reads: u64,
+    pub fib_lookups: u64,
 }
 
 impl HelperCounts {
     pub const fn total(&self) -> u64 {
-        self.map_lookups + self.clock_reads
+        self.map_lookups + self.clock_reads + self.fib_lookups
     }
 
     /// What the last packet added, for a case that had to run the program for another
@@ -63,6 +64,7 @@ impl HelperCounts {
         Self {
             map_lookups: self.map_lookups - before.map_lookups,
             clock_reads: self.clock_reads - before.clock_reads,
+            fib_lookups: self.fib_lookups - before.fib_lookups,
         }
     }
 }
@@ -152,6 +154,29 @@ impl TestProg {
                 ..Default::default()
             })
             .unwrap_or_else(|err| panic!("test_run on {} bytes failed: {err}", pkt.len()));
+        XdpAction::from_return_value(result.return_value)
+    }
+
+    /// The same run, with the frame presented as if it had arrived on `ifindex`.
+    ///
+    /// `BPF_PROG_TEST_RUN` otherwise hands the program the loopback receive queue of the
+    /// current namespace, so `ingress_ifindex` is 1 whatever the test does — which is
+    /// exactly the reading that makes a reverse-path lookup answer `FWD_DISABLED` on a
+    /// machine that does not route, and it is why the plain [`Self::run`] cannot exercise
+    /// stage 5 at all. The context is passed in instead: the six words of `struct xdp_md`,
+    /// of which the kernel insists `data_end` equal the frame length and the metadata
+    /// length be zero. The interface must exist in this namespace; its receive queue 0 is
+    /// registered for XDP by the generic device code, so no attach is needed.
+    pub fn run_from(&self, pkt: &[u8], ifindex: u32) -> XdpAction {
+        let ctx = xdp_md(pkt.len() as u32, ifindex);
+        let result = self
+            .program()
+            .test_run(TestRunOptions {
+                data_in: Some(pkt),
+                ctx_in: Some(&ctx),
+                ..Default::default()
+            })
+            .unwrap_or_else(|err| panic!("test_run on ifindex {ifindex} failed: {err}"));
         XdpAction::from_return_value(result.return_value)
     }
 
@@ -265,8 +290,21 @@ impl TestProg {
         HelperCounts {
             map_lookups: read(0),
             clock_reads: read(1),
+            fib_lookups: read(2),
         }
     }
+}
+
+/// `struct xdp_md` as the kernel reads it back out of `ctx_in`: data, data_end,
+/// data_meta, ingress_ifindex, rx_queue_index, egress_ifindex.
+///
+/// Queue zero, because a device created by a test has one and the kernel refuses an index
+/// at or past `real_num_rx_queues`. An egress index other than zero is refused outright.
+fn xdp_md(len: u32, ifindex: u32) -> [u8; 24] {
+    let mut ctx = [0u8; 24];
+    ctx[4..8].copy_from_slice(&len.to_ne_bytes());
+    ctx[12..16].copy_from_slice(&ifindex.to_ne_bytes());
+    ctx
 }
 
 /// Where the eBPF object comes from.
