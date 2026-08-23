@@ -5,6 +5,25 @@
 //! boundary. Correct behaviour, marginally more tolerant of micro-bursts, and it needs
 //! no workaround.
 //!
+//! **Two sources share a bucket, necessarily, and that is why the verdict below is a
+//! candidate.** The bank holds 1 024 buckets. Any realistic number of active sources is
+//! larger than that, so by the pigeonhole principle some pair of them collides, and no
+//! quality of hash function changes it — what keying buys is that an attacker cannot
+//! *choose* which legitimate source they land on, which is a different property and the
+//! only one `hash/multiply_shift.rs` claims. The consequence is that the level read here is
+//! not one source's history but the sum of every source in that bucket, so one hostile
+//! source exhausts the credit of a legitimate one and a drop taken on bucket state alone
+//! would refuse traffic that did nothing. That is the transverse constraint of the project,
+//! and the invariant in `stage/mod.rs` is how this stage stays inside it.
+//!
+//! **So no leaky-bucket accuracy result is claimed here, and one is worth naming to say
+//! why.** ALBUS gets its "never wrongly reports a conforming flow" property by *assigning*
+//! a bucket to a flow and evicting: an association, under which a conforming flow either
+//! owns a bucket or is not judged at all. Direct hashing into a shared bank has no such
+//! association — this one is implicit, permanent and colliding — so citing that accuracy
+//! claim while hashing directly would be claiming a property this code does not have.
+//! `ENFORCE_BUCKETS` is what confirms the candidate instead, and it is the operator's bit.
+//!
 //! **What it costs, measured, because it is not the figure the layout study assumed.** 100
 //! to 112 ns on the 901 against a whole-pipeline baseline of 81 ns, so this stage cost more
 //! than everything before it put together. Attributed by measuring the same path with the

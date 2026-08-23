@@ -106,6 +106,16 @@ const _: () = assert!(
 /// Lock-free measured 84 ns against 107 uncontended and leaks at most 2.62x in the worst
 /// concurrency case.
 ///
+/// **Which direction that leak goes, because it is the only reason tolerating one is
+/// defensible.** A lost update is an update that never reached the level, so the level runs
+/// *low*, the ceiling is reached *later*, and enforcement comes out more permissive. A
+/// factor of N is therefore N times the configured rate getting through — never N times a
+/// conformant flow wrongly refused. The error is always non-detection, which is the
+/// direction the zero-false-positive criterion of the phase can absorb; a leak that ran the
+/// other way would be refusing traffic nobody decided to refuse, and no factor of that
+/// would be acceptable. `lorica-dataplane/tests/stage_bucket.rs` measures the factor and
+/// reports it as a distribution.
+///
 /// **Why not per-CPU**, which needs no synchronisation at all: the enforcement diluted to
 /// exactly 1/N — four CPUs charged 0.2500 of what was offered — so a flood spread across
 /// source ports would collect 4.00x the configured budget for free.
