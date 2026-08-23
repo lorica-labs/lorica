@@ -27,6 +27,9 @@ E5-2683 v3, virtio-net, 4 pinned vCPU). The recipe to regenerate any of these is
 | Campaign-to-campaign spread, before the fixes | 236 to 288 ns (11 %) | `scripts/lab/measure-stage-cost.sh` | `stage-cost/sweep-*.txt` | `stage-cost/env-20260822T211828Z.txt` |
 | Campaign-to-campaign spread, after | 70, 70, 71 ns (1.4 %) | `scripts/lab/measure-stage-cost.sh` | `stage-cost/sweep-*.txt` | `stage-cost/env-20260823T001233Z.txt` |
 | Assertion 3 quantity, instructions per packet | 748.4 to 749.6 (0.16 %), ceiling 765 | `scripts/lab/measure-stage-cost.sh --max-instructions` | `stage-cost/stage-cost.csv` | `stage-cost/env-20260823T001233Z.txt` |
+| BPF ISA level, JITed size | 7063 bytes at v1, 6707 at v3 (-5.0 %) | `--test jited_size` | in the test output | `stage-cost/env-20260823T001233Z.txt` |
+| BPF ISA level, instructions per packet | 983 at v1, 944 at v3, 940 at v4 | `scripts/lab/measure-stage-cost.sh` | `stage-cost/stage-cost.csv` | `stage-cost/env-20260823T001233Z.txt` |
+| BPF ISA level, 32-bit compares | 0 of 203 at v1, 162 of 203 at v3 | `llvm-objdump -d` on the object | one command, not retained | - |
 | Bank layout, per-CPU, cost | 85 ns, scales 3.83x on 4 cores | `scripts/lab/measure-bucket-contention.sh` | `bucket-contention/bucket-contention.csv` | `bucket-contention/env-20260822T215728Z.txt` |
 | Bank layout, shared unlocked, cost | 84 ns, 250 ns under a concentrated attack | `scripts/lab/measure-bucket-contention.sh` | `bucket-contention/bucket-contention.csv` | `bucket-contention/env-20260822T215728Z.txt` |
 | Bank layout, shared locked, cost | 107 ns, 1988 ns and 0.24x under a concentrated attack | `scripts/lab/measure-bucket-contention.sh` | `bucket-contention/bucket-contention.csv` | `bucket-contention/env-20260822T215728Z.txt` |

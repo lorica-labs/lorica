@@ -11,4 +11,27 @@ target-dir = "target"
 build-std = ["core"]
 
 [target.bpfel-unknown-none]
-rustflags = ["-C", "link-arg=--btf"]
+# --btf carries CO-RE and is not negotiable. --cpu is added beside it, not instead of it.
+#
+# Without --cpu, bpf-linker applies its default of `generic`, which is the v1 model in
+# the LLVM BPF backend: the 2016 ISA, no ALU32 and no JMP32. Every comparison on a u16
+# header field then costs a 64-bit compare, and every arithmetic on a u8 or a u32 costs a
+# 64-bit operation plus an explicit truncation to keep the Rust semantics. v3 is the level
+# clang itself defaults to.
+#
+# It goes through `target-cpu` and not through a link argument: rustc already passes
+# `--cpu generic` to bpf-linker on its own, derived from the target, so a second `--cpu` on
+# the command line is refused outright with `cannot be used multiple times`. That is also
+# the real reason the object was v1 — not a linker default quietly applied, but a value
+# rustc states explicitly and that only `target-cpu` overrides.
+#
+# `probe` is deliberately not used: it asks the kernel of the build machine what it
+# supports, which makes the object a function of where it was built.
+#
+# v3 needs a 5.1 kernel for JMP32 and v4 a 6.6 for the store-immediate and the 32-bit
+# bswap. The floor of this project is 6.8, so both are legal, and v4 was measured: it buys
+# 12 JITed bytes and 5 instructions a packet over v3, and emits no store-immediate at all
+# because nothing here has a shape that wants one. That is 0.2 % for an ISA requirement
+# three kernel releases tighter, so v3 stands. The capability matrix records the
+# requirement so nobody has to rediscover which ISA level the object assumes.
+rustflags = ["-C", "link-arg=--btf", "-C", "target-cpu=v3"]

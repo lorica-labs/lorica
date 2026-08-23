@@ -33,18 +33,24 @@ use support::run::{load_raw, plain_object_path, xdp_program};
 /// kernels is under 1 %, so 10 % leaves room for a kernel this has not run on without
 /// leaving room for a stage to be added unnoticed.
 ///
-/// **Raised once since**, from 5 853 to 7 770. Two changes moved it and both were meant
-/// to: inlining the parsers in the object that ships took 5 321 to 5 622, buying a
-/// per-packet cost of 70 ns where it was 243, and the ten-vector signature cascade took it
-/// to **7 063 measured** on 7.0.0-30. The new ceiling is the same 10 % over that.
+/// **Moved twice since, and the second time downward.** Inlining the parsers in the object
+/// that ships took 5 321 to 5 622, buying a per-packet cost of 70 ns where it was 243; the
+/// ten-vector signature cascade took it to 7 063, which needed a raise from 5 853 to 7 770.
+/// Then compiling for BPF ISA v3 instead of the v1 the toolchain defaults to took it back
+/// down to **6 707 measured** on 7.0.0-30, so the ceiling comes down to 10 % over that.
 ///
-/// It will move again. Two stages of this phase are still stubs, and the raise that covers
-/// them is the last one: a ceiling that is raised without a measured reason each time is a
-/// rubber stamp, and one left below the truth for a whole phase hides every regression
-/// behind a failure everyone has learned to ignore. That second failure mode is why this
-/// was raised here rather than at the end — a red guard had begun to mask the kernel
-/// matrix.
-const JITED_CEILING: u32 = 7_770;
+/// v3 is worth a word here because the direction is counter-intuitive: it emits slightly
+/// *more* BPF instructions — 1 497 against 1 490 — and 356 fewer JITed bytes, because a
+/// 32-bit compare and a 32-bit ALU operation drop the REX.W prefix that every 64-bit
+/// operation carries on x86-64. Eighty percent of the program's comparisons became 32-bit.
+///
+/// It will move again when the last two stages land, and that raise is the last one. A
+/// ceiling raised without a measured reason each time is a rubber stamp; one left below the
+/// truth for a whole phase hides every regression behind a failure everyone has learned to
+/// ignore. The second failure mode is the one that actually happened here, and it is why
+/// the raise came mid-phase rather than at the end: a red guard had begun to mask the
+/// kernel matrix.
+const JITED_CEILING: u32 = 7_378;
 
 #[test]
 fn the_jited_program_stays_under_its_ceiling() {

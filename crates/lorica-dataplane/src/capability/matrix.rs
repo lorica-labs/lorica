@@ -4,6 +4,15 @@
 //! Releases and reference paths are transcribed from the capability table of the design
 //! spec. Nothing here is inferred from behaviour, because a floor guessed one release too
 //! low announces a capability the kernel does not have.
+//!
+//! **One requirement is not in the table below, because it has no fallback.** The object is
+//! compiled for BPF ISA v3 (`-C target-cpu=v3` in the eBPF crate's cargo config), so it
+//! needs a kernel with JMP32, which is **5.1**. Every row here is an optional capability:
+//! absent, the program takes another path to the same response tier. The ISA level is not
+//! optional — an older kernel does not fall back, it refuses the program at load. It is
+//! recorded here anyway because this is the file someone reads to find out which kernel
+//! release buys what, and 5.1 sits well under this project's 6.8 floor, which is exactly
+//! why the requirement is affordable and exactly why it would otherwise go unwritten.
 
 use super::Capability;
 
