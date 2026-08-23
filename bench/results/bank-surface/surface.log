@@ -1,0 +1,195 @@
+building the eBPF object that ships
+    Finished `release` profile [optimized + debuginfo] target(s) in 0.11s
+building the instrumented eBPF object with features: parse-probe,count-helpers
+    Finished `release` profile [optimized + debuginfo] target(s) in 0.09s
+make: Entering directory '/home/hookwood/lorica-main/bench/progs'
+python3 mkpkt.py ../data/udp64.bin 64
+make: Leaving directory '/home/hookwood/lorica-main/bench/progs'
+warning: use of deprecated type alias `libc::time_t`: This type is changed to 64-bit in musl 1.2.0, we'll follow that change in the future release. See #1848 for more info.
+   --> crates/lorica-dataplane/src/fib/netlink.rs:255:49
+    |
+255 |         tv_sec: DUMP_TIMEOUT.as_secs() as libc::time_t,
+    |                                                 ^^^^^^
+    |
+    = note: `#[warn(deprecated)]` on by default
+
+warning: `lorica-dataplane` (lib) generated 1 warning
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.10s
+packed 1 test binaries into /home/hookwood/lorica-main/target/target-tests.tar
+
+--- stage_bucket-133ac095a04ba646 on 6.8.0-138-generic
+
+running 1 test
+bank shape=concentrated cores=1 window=0 sample=0 buckets=1 leak=0.9831 single=0.9831 ns_per_pkt=198.0 cyc_per_pkt=781 offered=4000000 refused=3924812 elapsed_ms=810 hz=1000 jited=7957
+bank shape=concentrated cores=1 window=0 sample=1 buckets=1 leak=0.9394 single=0.9831 ns_per_pkt=190.0 cyc_per_pkt=749 offered=1000000 refused=981699 elapsed_ms=206 hz=1000 jited=7957
+bank shape=concentrated cores=1 window=0 sample=2 buckets=1 leak=0.9259 single=0.9831 ns_per_pkt=189.0 cyc_per_pkt=745 offered=1000000 refused=981793 elapsed_ms=208 hz=1000 jited=7957
+bank shape=concentrated cores=1 window=0 sample=3 buckets=1 leak=0.9254 single=0.9831 ns_per_pkt=197.0 cyc_per_pkt=777 offered=1000000 refused=981038 elapsed_ms=217 hz=1000 jited=7957
+bank shape=concentrated cores=1 window=0 sample=4 buckets=1 leak=0.9474 single=0.9831 ns_per_pkt=188.0 cyc_per_pkt=741 offered=1000000 refused=981887 elapsed_ms=202 hz=1000 jited=7957
+bank shape=concentrated cores=1 window=0 sample=5 buckets=1 leak=0.9479 single=0.9831 ns_per_pkt=184.0 cyc_per_pkt=725 offered=1000000 refused=982265 elapsed_ms=198 hz=1000 jited=7957
+bank shape=concentrated cores=1 window=0 sample=6 buckets=1 leak=0.8970 single=0.9831 ns_per_pkt=188.0 cyc_per_pkt=741 offered=1000000 refused=981887 elapsed_ms=214 hz=1000 jited=7957
+bank shape=concentrated cores=1 window=0 sample=7 buckets=1 leak=0.9421 single=0.9831 ns_per_pkt=194.0 cyc_per_pkt=765 offered=1000000 refused=981321 elapsed_ms=210 hz=1000 jited=7957
+bank shape=concentrated cores=1 window=0 sample=8 buckets=1 leak=0.9367 single=0.9831 ns_per_pkt=183.0 cyc_per_pkt=722 offered=1000000 refused=982359 elapsed_ms=199 hz=1000 jited=7957
+bank shape=concentrated cores=1 window=0 sample=9 buckets=1 leak=0.9387 single=0.9831 ns_per_pkt=187.0 cyc_per_pkt=737 offered=1000000 refused=981982 elapsed_ms=203 hz=1000 jited=7957
+bank shape=concentrated cores=2 window=0 sample=1 buckets=1 leak=1.4940 single=0.9831 ns_per_pkt=275.5 cyc_per_pkt=1086 offered=2000000 refused=1959178 elapsed_ms=289 hz=1000 jited=7957
+bank shape=concentrated cores=2 window=0 sample=2 buckets=1 leak=1.3329 single=0.9831 ns_per_pkt=256.0 cyc_per_pkt=1009 offered=2000000 refused=1965472 elapsed_ms=274 hz=1000 jited=7957
+bank shape=concentrated cores=2 window=0 sample=3 buckets=1 leak=1.1142 single=0.9831 ns_per_pkt=241.0 cyc_per_pkt=950 offered=2000000 refused=1972056 elapsed_ms=265 hz=1000 jited=7957
+bank shape=concentrated cores=2 window=0 sample=4 buckets=1 leak=1.3969 single=0.9831 ns_per_pkt=263.5 cyc_per_pkt=1039 offered=2000000 refused=1963294 elapsed_ms=278 hz=1000 jited=7957
+bank shape=concentrated cores=2 window=0 sample=5 buckets=1 leak=1.1594 single=0.9831 ns_per_pkt=263.5 cyc_per_pkt=1039 offered=2000000 refused=1968937 elapsed_ms=283 hz=1000 jited=7957
+bank shape=concentrated cores=2 window=0 sample=6 buckets=1 leak=1.6205 single=0.9831 ns_per_pkt=283.5 cyc_per_pkt=1118 offered=2000000 refused=1954462 elapsed_ms=297 hz=1000 jited=7957
+bank shape=concentrated cores=2 window=0 sample=7 buckets=1 leak=1.4662 single=0.9831 ns_per_pkt=271.5 cyc_per_pkt=1070 offered=2000000 refused=1959733 elapsed_ms=291 hz=1000 jited=7957
+bank shape=concentrated cores=2 window=0 sample=8 buckets=1 leak=1.4528 single=0.9831 ns_per_pkt=273.5 cyc_per_pkt=1078 offered=2000000 refused=1959962 elapsed_ms=292 hz=1000 jited=7957
+bank shape=concentrated cores=2 window=0 sample=9 buckets=1 leak=1.5268 single=0.9831 ns_per_pkt=264.5 cyc_per_pkt=1043 offered=2000000 refused=1959326 elapsed_ms=282 hz=1000 jited=7957
+bank shape=concentrated cores=4 window=0 sample=1 buckets=1 leak=1.4375 single=0.9831 ns_per_pkt=366.8 cyc_per_pkt=1446 offered=4000000 refused=3947523 elapsed_ms=386 hz=1000 jited=7957
+bank shape=concentrated cores=4 window=0 sample=2 buckets=1 leak=1.4579 single=0.9831 ns_per_pkt=279.8 cyc_per_pkt=1103 offered=4000000 refused=3959087 elapsed_ms=297 hz=1000 jited=7957
+bank shape=concentrated cores=4 window=0 sample=3 buckets=1 leak=1.4497 single=0.9831 ns_per_pkt=317.8 cyc_per_pkt=1253 offered=4000000 refused=3953793 elapsed_ms=337 hz=1000 jited=7957
+bank shape=concentrated cores=4 window=0 sample=4 buckets=1 leak=1.4070 single=0.9831 ns_per_pkt=276.5 cyc_per_pkt=1090 offered=4000000 refused=3959904 elapsed_ms=302 hz=1000 jited=7957
+bank shape=concentrated cores=4 window=0 sample=5 buckets=1 leak=1.3916 single=0.9831 ns_per_pkt=344.2 cyc_per_pkt=1357 offered=4000000 refused=3952151 elapsed_ms=364 hz=1000 jited=7957
+bank shape=concentrated cores=4 window=0 sample=6 buckets=1 leak=1.3646 single=0.9831 ns_per_pkt=319.5 cyc_per_pkt=1260 offered=4000000 refused=3955682 elapsed_ms=344 hz=1000 jited=7957
+bank shape=concentrated cores=4 window=0 sample=7 buckets=1 leak=1.2107 single=0.9831 ns_per_pkt=300.5 cyc_per_pkt=1185 offered=4000000 refused=3956494 elapsed_ms=380 hz=1000 jited=7957
+bank shape=concentrated cores=4 window=0 sample=8 buckets=1 leak=1.4239 single=0.9831 ns_per_pkt=317.8 cyc_per_pkt=1253 offered=4000000 refused=3954554 elapsed_ms=338 hz=1000 jited=7957
+bank shape=concentrated cores=4 window=0 sample=9 buckets=1 leak=1.4201 single=0.9831 ns_per_pkt=342.0 cyc_per_pkt=1348 offered=4000000 refused=3950891 elapsed_ms=366 hz=1000 jited=7957
+bank shape=concentrated cores=1 window=64 sample=0 buckets=1 leak=0.9903 single=0.9903 ns_per_pkt=242.0 cyc_per_pkt=954 offered=4000000 refused=3908020 elapsed_ms=984 hz=1000 jited=7976
+bank shape=concentrated cores=1 window=64 sample=1 buckets=1 leak=0.9519 single=0.9903 ns_per_pkt=237.0 cyc_per_pkt=934 offered=1000000 refused=977265 elapsed_ms=253 hz=1000 jited=7976
+bank shape=concentrated cores=1 window=64 sample=2 buckets=1 leak=0.9216 single=0.9903 ns_per_pkt=240.0 cyc_per_pkt=946 offered=1000000 refused=976982 elapsed_ms=264 hz=1000 jited=7976
+bank shape=concentrated cores=1 window=64 sample=3 buckets=1 leak=0.9700 single=0.9903 ns_per_pkt=266.0 cyc_per_pkt=1049 offered=1000000 refused=974529 elapsed_ms=278 hz=1000 jited=7976
+bank shape=concentrated cores=1 window=64 sample=4 buckets=1 leak=0.9541 single=0.9903 ns_per_pkt=236.0 cyc_per_pkt=931 offered=1000000 refused=977359 elapsed_ms=251 hz=1000 jited=7976
+bank shape=concentrated cores=1 window=64 sample=5 buckets=1 leak=0.9574 single=0.9903 ns_per_pkt=237.0 cyc_per_pkt=934 offered=1000000 refused=977265 elapsed_ms=251 hz=1000 jited=7976
+bank shape=concentrated cores=1 window=64 sample=6 buckets=1 leak=0.9655 single=0.9903 ns_per_pkt=248.0 cyc_per_pkt=978 offered=1000000 refused=976227 elapsed_ms=260 hz=1000 jited=7976
+bank shape=concentrated cores=1 window=64 sample=7 buckets=1 leak=0.9491 single=0.9903 ns_per_pkt=239.0 cyc_per_pkt=942 offered=1000000 refused=977076 elapsed_ms=256 hz=1000 jited=7976
+bank shape=concentrated cores=1 window=64 sample=8 buckets=1 leak=0.9626 single=0.9903 ns_per_pkt=238.0 cyc_per_pkt=938 offered=1000000 refused=977125 elapsed_ms=251 hz=1000 jited=7976
+bank shape=concentrated cores=1 window=64 sample=9 buckets=1 leak=0.9653 single=0.9903 ns_per_pkt=243.0 cyc_per_pkt=958 offered=1000000 refused=976699 elapsed_ms=255 hz=1000 jited=7976
+bank shape=concentrated cores=2 window=64 sample=1 buckets=1 leak=1.6340 single=0.9903 ns_per_pkt=298.0 cyc_per_pkt=1175 offered=2000000 refused=1950740 elapsed_ms=319 hz=1000 jited=7976
+bank shape=concentrated cores=2 window=64 sample=2 buckets=1 leak=1.8092 single=0.9903 ns_per_pkt=323.0 cyc_per_pkt=1274 offered=2000000 refused=1941537 elapsed_ms=342 hz=1000 jited=7976
+bank shape=concentrated cores=2 window=64 sample=3 buckets=1 leak=1.7945 single=0.9903 ns_per_pkt=313.5 cyc_per_pkt=1236 offered=2000000 refused=1944074 elapsed_ms=330 hz=1000 jited=7976
+bank shape=concentrated cores=2 window=64 sample=4 buckets=1 leak=1.7512 single=0.9903 ns_per_pkt=320.5 cyc_per_pkt=1264 offered=2000000 refused=1944458 elapsed_ms=336 hz=1000 jited=7976
+bank shape=concentrated cores=2 window=64 sample=5 buckets=1 leak=1.6087 single=0.9903 ns_per_pkt=276.5 cyc_per_pkt=1090 offered=2000000 refused=1955250 elapsed_ms=294 hz=1000 jited=7976
+bank shape=concentrated cores=2 window=64 sample=6 buckets=1 leak=1.6864 single=0.9903 ns_per_pkt=311.5 cyc_per_pkt=1228 offered=2000000 refused=1947708 elapsed_ms=328 hz=1000 jited=7976
+bank shape=concentrated cores=2 window=64 sample=7 buckets=1 leak=1.6904 single=0.9903 ns_per_pkt=325.5 cyc_per_pkt=1283 offered=2000000 refused=1944980 elapsed_ms=345 hz=1000 jited=7976
+bank shape=concentrated cores=2 window=64 sample=8 buckets=1 leak=1.6579 single=0.9903 ns_per_pkt=272.0 cyc_per_pkt=1072 offered=2000000 refused=1955081 elapsed_ms=287 hz=1000 jited=7976
+bank shape=concentrated cores=2 window=64 sample=9 buckets=1 leak=1.6125 single=0.9903 ns_per_pkt=325.5 cyc_per_pkt=1283 offered=2000000 refused=1947392 elapsed_ms=345 hz=1000 jited=7976
+bank shape=concentrated cores=4 window=64 sample=1 buckets=1 leak=1.7764 single=0.9903 ns_per_pkt=352.2 cyc_per_pkt=1389 offered=4000000 refused=3936811 elapsed_ms=377 hz=1000 jited=7976
+bank shape=concentrated cores=4 window=64 sample=2 buckets=1 leak=1.7705 single=0.9903 ns_per_pkt=320.2 cyc_per_pkt=1263 offered=4000000 refused=3943799 elapsed_ms=336 hz=1000 jited=7976
+bank shape=concentrated cores=4 window=64 sample=3 buckets=1 leak=1.9465 single=0.9903 ns_per_pkt=371.5 cyc_per_pkt=1465 offered=4000000 refused=3928462 elapsed_ms=389 hz=1000 jited=7976
+bank shape=concentrated cores=4 window=64 sample=4 buckets=1 leak=1.7025 single=0.9903 ns_per_pkt=356.5 cyc_per_pkt=1406 offered=4000000 refused=3939010 elapsed_ms=379 hz=1000 jited=7976
+bank shape=concentrated cores=4 window=64 sample=5 buckets=1 leak=2.0428 single=0.9903 ns_per_pkt=389.5 cyc_per_pkt=1536 offered=4000000 refused=3917056 elapsed_ms=430 hz=1000 jited=7976
+bank shape=concentrated cores=4 window=64 sample=6 buckets=1 leak=1.9369 single=0.9903 ns_per_pkt=373.8 cyc_per_pkt=1474 offered=4000000 refused=3927633 elapsed_ms=396 hz=1000 jited=7976
+bank shape=concentrated cores=4 window=64 sample=7 buckets=1 leak=2.0369 single=0.9903 ns_per_pkt=391.8 cyc_per_pkt=1545 offered=4000000 refused=3920888 elapsed_ms=411 hz=1000 jited=7976
+bank shape=concentrated cores=4 window=64 sample=8 buckets=1 leak=1.8802 single=0.9903 ns_per_pkt=393.0 cyc_per_pkt=1550 offered=4000000 refused=3923391 elapsed_ms=431 hz=1000 jited=7976
+bank shape=concentrated cores=4 window=64 sample=9 buckets=1 leak=1.9616 single=0.9903 ns_per_pkt=378.8 cyc_per_pkt=1493 offered=4000000 refused=3923819 elapsed_ms=411 hz=1000 jited=7976
+bank shape=concentrated cores=1 window=1024 sample=0 buckets=1 leak=0.9932 single=0.9932 ns_per_pkt=733.0 cyc_per_pkt=2890 offered=4000000 refused=3722926 elapsed_ms=2957 hz=1000 jited=7976
+bank shape=concentrated cores=1 window=1024 sample=1 buckets=1 leak=0.9840 single=0.9932 ns_per_pkt=739.0 cyc_per_pkt=2914 offered=1000000 refused=929906 elapsed_ms=755 hz=1000 jited=7976
+bank shape=concentrated cores=1 window=1024 sample=2 buckets=1 leak=0.9874 single=0.9932 ns_per_pkt=728.0 cyc_per_pkt=2870 offered=1000000 refused=930944 elapsed_ms=741 hz=1000 jited=7976
+bank shape=concentrated cores=1 window=1024 sample=3 buckets=1 leak=0.9880 single=0.9932 ns_per_pkt=727.0 cyc_per_pkt=2866 offered=1000000 refused=931038 elapsed_ms=739 hz=1000 jited=7976
+bank shape=concentrated cores=1 window=1024 sample=4 buckets=1 leak=0.9814 single=0.9932 ns_per_pkt=720.0 cyc_per_pkt=2839 offered=1000000 refused=931699 elapsed_ms=737 hz=1000 jited=7976
+bank shape=concentrated cores=1 window=1024 sample=5 buckets=1 leak=0.9888 single=0.9932 ns_per_pkt=722.0 cyc_per_pkt=2847 offered=1000000 refused=931500 elapsed_ms=734 hz=1000 jited=7976
+bank shape=concentrated cores=1 window=1024 sample=6 buckets=1 leak=0.9768 single=0.9932 ns_per_pkt=740.0 cyc_per_pkt=2918 offered=1000000 refused=929812 elapsed_ms=761 hz=1000 jited=7976
+bank shape=concentrated cores=1 window=1024 sample=7 buckets=1 leak=0.9868 single=0.9932 ns_per_pkt=737.0 cyc_per_pkt=2906 offered=1000000 refused=930095 elapsed_ms=750 hz=1000 jited=7976
+bank shape=concentrated cores=1 window=1024 sample=8 buckets=1 leak=0.9828 single=0.9932 ns_per_pkt=731.0 cyc_per_pkt=2882 offered=1000000 refused=930567 elapsed_ms=748 hz=1000 jited=7976
+bank shape=concentrated cores=1 window=1024 sample=9 buckets=1 leak=0.9869 single=0.9932 ns_per_pkt=733.0 cyc_per_pkt=2890 offered=1000000 refused=930472 elapsed_ms=746 hz=1000 jited=7976
+bank shape=concentrated cores=2 window=1024 sample=1 buckets=1 leak=1.9146 single=0.9932 ns_per_pkt=810.5 cyc_per_pkt=3196 offered=2000000 refused=1849923 elapsed_ms=830 hz=1000 jited=7976
+bank shape=concentrated cores=2 window=1024 sample=2 buckets=1 leak=1.9234 single=0.9932 ns_per_pkt=763.5 cyc_per_pkt=3010 offered=2000000 refused=1858828 elapsed_ms=778 hz=1000 jited=7976
+bank shape=concentrated cores=2 window=1024 sample=3 buckets=1 leak=1.9331 single=0.9932 ns_per_pkt=808.0 cyc_per_pkt=3186 offered=2000000 refused=1849072 elapsed_ms=827 hz=1000 jited=7976
+bank shape=concentrated cores=2 window=1024 sample=4 buckets=1 leak=1.9384 single=0.9932 ns_per_pkt=752.5 cyc_per_pkt=2967 offered=2000000 refused=1859083 elapsed_ms=770 hz=1000 jited=7976
+bank shape=concentrated cores=2 window=1024 sample=5 buckets=1 leak=1.9031 single=0.9932 ns_per_pkt=810.5 cyc_per_pkt=3196 offered=2000000 refused=1850840 elapsed_ms=830 hz=1000 jited=7976
+bank shape=concentrated cores=2 window=1024 sample=6 buckets=1 leak=1.9275 single=0.9932 ns_per_pkt=802.5 cyc_per_pkt=3164 offered=2000000 refused=1851334 elapsed_ms=817 hz=1000 jited=7976
+bank shape=concentrated cores=2 window=1024 sample=7 buckets=1 leak=1.8825 single=0.9932 ns_per_pkt=787.0 cyc_per_pkt=3103 offered=2000000 refused=1855209 elapsed_ms=815 hz=1000 jited=7976
+test the_bank_leak_is_a_surface_over_cores_and_window has been running for over 60 seconds
+bank shape=concentrated cores=2 window=1024 sample=8 buckets=1 leak=1.8708 single=0.9932 ns_per_pkt=798.0 cyc_per_pkt=3146 offered=2000000 refused=1853350 elapsed_ms=830 hz=1000 jited=7976
+bank shape=concentrated cores=2 window=1024 sample=9 buckets=1 leak=1.8646 single=0.9932 ns_per_pkt=810.0 cyc_per_pkt=3194 offered=2000000 refused=1852782 elapsed_ms=836 hz=1000 jited=7976
+bank shape=concentrated cores=4 window=1024 sample=1 buckets=1 leak=3.7452 single=0.9932 ns_per_pkt=806.2 cyc_per_pkt=3179 offered=4000000 refused=3706065 elapsed_ms=831 hz=1000 jited=7976
+bank shape=concentrated cores=4 window=1024 sample=2 buckets=1 leak=3.7259 single=0.9932 ns_per_pkt=821.5 cyc_per_pkt=3239 offered=4000000 refused=3703269 elapsed_ms=844 hz=1000 jited=7976
+bank shape=concentrated cores=4 window=1024 sample=3 buckets=1 leak=3.7548 single=0.9932 ns_per_pkt=823.2 cyc_per_pkt=3246 offered=4000000 refused=3699978 elapsed_ms=846 hz=1000 jited=7976
+bank shape=concentrated cores=4 window=1024 sample=4 buckets=1 leak=3.5071 single=0.9932 ns_per_pkt=802.5 cyc_per_pkt=3164 offered=4000000 refused=3712939 elapsed_ms=867 hz=1000 jited=7976
+bank shape=concentrated cores=4 window=1024 sample=5 buckets=1 leak=3.7034 single=0.9932 ns_per_pkt=829.5 cyc_per_pkt=3271 offered=4000000 refused=3699257 elapsed_ms=860 hz=1000 jited=7976
+bank shape=concentrated cores=4 window=1024 sample=6 buckets=1 leak=3.6266 single=0.9932 ns_per_pkt=826.5 cyc_per_pkt=3259 offered=4000000 refused=3699594 elapsed_ms=878 hz=1000 jited=7976
+bank shape=concentrated cores=4 window=1024 sample=7 buckets=1 leak=3.7249 single=0.9932 ns_per_pkt=790.2 cyc_per_pkt=3116 offered=4000000 refused=3710459 elapsed_ms=823 hz=1000 jited=7976
+bank shape=concentrated cores=4 window=1024 sample=8 buckets=1 leak=3.8188 single=0.9932 ns_per_pkt=793.8 cyc_per_pkt=3130 offered=4000000 refused=3706032 elapsed_ms=815 hz=1000 jited=7976
+bank shape=concentrated cores=4 window=1024 sample=9 buckets=1 leak=3.7483 single=0.9932 ns_per_pkt=819.8 cyc_per_pkt=3232 offered=4000000 refused=3699117 elapsed_ms=850 hz=1000 jited=7976
+bank shape=uniform cores=1 window=0 sample=0 buckets=1 leak=0.9879 single=0.9879 ns_per_pkt=192.0 cyc_per_pkt=757 offered=4000000 refused=3927170 elapsed_ms=781 hz=1000 jited=7957
+bank shape=uniform cores=1 window=0 sample=1 buckets=1 leak=0.9574 single=0.9879 ns_per_pkt=191.0 cyc_per_pkt=753 offered=1000000 refused=981604 elapsed_ms=203 hz=1000 jited=7957
+bank shape=uniform cores=1 window=0 sample=2 buckets=1 leak=0.9559 single=0.9879 ns_per_pkt=191.0 cyc_per_pkt=753 offered=1000000 refused=981604 elapsed_ms=204 hz=1000 jited=7957
+bank shape=uniform cores=1 window=0 sample=3 buckets=1 leak=0.9530 single=0.9879 ns_per_pkt=186.0 cyc_per_pkt=733 offered=1000000 refused=982076 elapsed_ms=199 hz=1000 jited=7957
+bank shape=uniform cores=1 window=0 sample=4 buckets=1 leak=0.9416 single=0.9879 ns_per_pkt=209.0 cyc_per_pkt=824 offered=1000000 refused=979906 elapsed_ms=226 hz=1000 jited=7957
+bank shape=uniform cores=1 window=0 sample=5 buckets=1 leak=0.9211 single=0.9879 ns_per_pkt=193.0 cyc_per_pkt=761 offered=1000000 refused=981416 elapsed_ms=213 hz=1000 jited=7957
+bank shape=uniform cores=1 window=0 sample=6 buckets=1 leak=0.9497 single=0.9879 ns_per_pkt=192.0 cyc_per_pkt=757 offered=1000000 refused=981510 elapsed_ms=206 hz=1000 jited=7957
+bank shape=uniform cores=1 window=0 sample=7 buckets=1 leak=0.9455 single=0.9879 ns_per_pkt=184.0 cyc_per_pkt=725 offered=1000000 refused=982265 elapsed_ms=198 hz=1000 jited=7957
+bank shape=uniform cores=1 window=0 sample=8 buckets=1 leak=0.9395 single=0.9879 ns_per_pkt=183.0 cyc_per_pkt=722 offered=1000000 refused=982359 elapsed_ms=199 hz=1000 jited=7957
+bank shape=uniform cores=1 window=0 sample=9 buckets=1 leak=0.9229 single=0.9879 ns_per_pkt=186.0 cyc_per_pkt=733 offered=1000000 refused=982076 elapsed_ms=205 hz=1000 jited=7957
+bank shape=uniform cores=2 window=0 sample=1 buckets=2 leak=0.9317 single=0.9879 ns_per_pkt=192.0 cyc_per_pkt=757 offered=2000000 refused=1963020 elapsed_ms=210 hz=1000 jited=7957
+bank shape=uniform cores=2 window=0 sample=2 buckets=2 leak=0.9405 single=0.9879 ns_per_pkt=186.5 cyc_per_pkt=735 offered=2000000 refused=1964058 elapsed_ms=202 hz=1000 jited=7957
+bank shape=uniform cores=2 window=0 sample=3 buckets=2 leak=0.9429 single=0.9879 ns_per_pkt=190.5 cyc_per_pkt=751 offered=2000000 refused=1963209 elapsed_ms=206 hz=1000 jited=7957
+bank shape=uniform cores=2 window=0 sample=4 buckets=2 leak=0.9416 single=0.9879 ns_per_pkt=188.0 cyc_per_pkt=741 offered=2000000 refused=1963775 elapsed_ms=203 hz=1000 jited=7957
+bank shape=uniform cores=2 window=0 sample=5 buckets=2 leak=0.9146 single=0.9879 ns_per_pkt=189.0 cyc_per_pkt=745 offered=2000000 refused=1963586 elapsed_ms=211 hz=1000 jited=7957
+bank shape=uniform cores=2 window=0 sample=6 buckets=2 leak=0.9375 single=0.9879 ns_per_pkt=191.0 cyc_per_pkt=753 offered=2000000 refused=1963209 elapsed_ms=207 hz=1000 jited=7957
+bank shape=uniform cores=2 window=0 sample=7 buckets=2 leak=0.9502 single=0.9879 ns_per_pkt=192.0 cyc_per_pkt=757 offered=2000000 refused=1963020 elapsed_ms=206 hz=1000 jited=7957
+bank shape=uniform cores=2 window=0 sample=8 buckets=2 leak=0.9562 single=0.9879 ns_per_pkt=189.5 cyc_per_pkt=747 offered=2000000 refused=1963492 elapsed_ms=202 hz=1000 jited=7957
+bank shape=uniform cores=2 window=0 sample=9 buckets=2 leak=0.9348 single=0.9879 ns_per_pkt=185.5 cyc_per_pkt=731 offered=2000000 refused=1964152 elapsed_ms=203 hz=1000 jited=7957
+bank shape=uniform cores=4 window=0 sample=1 buckets=4 leak=0.9462 single=0.9879 ns_per_pkt=188.8 cyc_per_pkt=744 offered=4000000 refused=3926984 elapsed_ms=204 hz=1000 jited=7957
+bank shape=uniform cores=4 window=0 sample=2 buckets=4 leak=0.9360 single=0.9879 ns_per_pkt=192.0 cyc_per_pkt=757 offered=4000000 refused=3925662 elapsed_ms=210 hz=1000 jited=7957
+bank shape=uniform cores=4 window=0 sample=3 buckets=4 leak=0.9450 single=0.9879 ns_per_pkt=190.0 cyc_per_pkt=749 offered=4000000 refused=3926511 elapsed_ms=206 hz=1000 jited=7957
+bank shape=uniform cores=4 window=0 sample=4 buckets=4 leak=0.9333 single=0.9879 ns_per_pkt=190.0 cyc_per_pkt=749 offered=4000000 refused=3926512 elapsed_ms=208 hz=1000 jited=7957
+bank shape=uniform cores=4 window=0 sample=5 buckets=4 leak=0.9280 single=0.9879 ns_per_pkt=187.0 cyc_per_pkt=737 offered=4000000 refused=3927739 elapsed_ms=206 hz=1000 jited=7957
+bank shape=uniform cores=4 window=0 sample=6 buckets=4 leak=0.9279 single=0.9879 ns_per_pkt=191.0 cyc_per_pkt=753 offered=4000000 refused=3926323 elapsed_ms=210 hz=1000 jited=7957
+bank shape=uniform cores=4 window=0 sample=7 buckets=4 leak=0.9436 single=0.9879 ns_per_pkt=189.0 cyc_per_pkt=745 offered=4000000 refused=3926700 elapsed_ms=205 hz=1000 jited=7957
+bank shape=uniform cores=4 window=0 sample=8 buckets=4 leak=0.9179 single=0.9879 ns_per_pkt=190.2 cyc_per_pkt=750 offered=4000000 refused=3926512 elapsed_ms=212 hz=1000 jited=7957
+bank shape=uniform cores=4 window=0 sample=9 buckets=4 leak=0.9278 single=0.9879 ns_per_pkt=186.5 cyc_per_pkt=735 offered=4000000 refused=3927832 elapsed_ms=206 hz=1000 jited=7957
+bank shape=uniform cores=1 window=64 sample=0 buckets=1 leak=0.9863 single=0.9863 ns_per_pkt=238.0 cyc_per_pkt=938 offered=4000000 refused=3909623 elapsed_ms=971 hz=1000 jited=7976
+bank shape=uniform cores=1 window=64 sample=1 buckets=1 leak=0.9621 single=0.9863 ns_per_pkt=239.0 cyc_per_pkt=942 offered=1000000 refused=977076 elapsed_ms=252 hz=1000 jited=7976
+bank shape=uniform cores=1 window=64 sample=2 buckets=1 leak=0.9573 single=0.9863 ns_per_pkt=236.0 cyc_per_pkt=931 offered=1000000 refused=977359 elapsed_ms=250 hz=1000 jited=7976
+bank shape=uniform cores=1 window=64 sample=3 buckets=1 leak=0.9503 single=0.9863 ns_per_pkt=238.0 cyc_per_pkt=938 offered=1000000 refused=977170 elapsed_ms=254 hz=1000 jited=7976
+bank shape=uniform cores=1 window=64 sample=4 buckets=1 leak=0.9663 single=0.9863 ns_per_pkt=235.0 cyc_per_pkt=927 offered=1000000 refused=977453 elapsed_ms=247 hz=1000 jited=7976
+bank shape=uniform cores=1 window=64 sample=5 buckets=1 leak=0.9668 single=0.9863 ns_per_pkt=242.0 cyc_per_pkt=954 offered=1000000 refused=976793 elapsed_ms=254 hz=1000 jited=7976
+bank shape=uniform cores=1 window=64 sample=6 buckets=1 leak=0.9617 single=0.9863 ns_per_pkt=244.0 cyc_per_pkt=962 offered=1000000 refused=976604 elapsed_ms=257 hz=1000 jited=7976
+bank shape=uniform cores=1 window=64 sample=7 buckets=1 leak=0.9552 single=0.9863 ns_per_pkt=243.0 cyc_per_pkt=958 offered=1000000 refused=976699 elapsed_ms=258 hz=1000 jited=7976
+bank shape=uniform cores=1 window=64 sample=8 buckets=1 leak=0.9514 single=0.9863 ns_per_pkt=238.0 cyc_per_pkt=938 offered=1000000 refused=977170 elapsed_ms=254 hz=1000 jited=7976
+bank shape=uniform cores=1 window=64 sample=9 buckets=1 leak=0.9550 single=0.9863 ns_per_pkt=228.0 cyc_per_pkt=899 offered=1000000 refused=978114 elapsed_ms=242 hz=1000 jited=7976
+bank shape=uniform cores=2 window=64 sample=1 buckets=2 leak=0.9558 single=0.9863 ns_per_pkt=231.0 cyc_per_pkt=911 offered=2000000 refused=1955662 elapsed_ms=245 hz=1000 jited=7976
+bank shape=uniform cores=2 window=64 sample=2 buckets=2 leak=0.9417 single=0.9863 ns_per_pkt=240.5 cyc_per_pkt=948 offered=2000000 refused=1953869 elapsed_ms=259 hz=1000 jited=7976
+bank shape=uniform cores=2 window=64 sample=3 buckets=2 leak=0.9540 single=0.9863 ns_per_pkt=243.5 cyc_per_pkt=960 offered=2000000 refused=1953303 elapsed_ms=259 hz=1000 jited=7976
+bank shape=uniform cores=2 window=64 sample=4 buckets=2 leak=0.9481 single=0.9863 ns_per_pkt=242.0 cyc_per_pkt=954 offered=2000000 refused=1953586 elapsed_ms=259 hz=1000 jited=7976
+bank shape=uniform cores=2 window=64 sample=5 buckets=2 leak=0.9567 single=0.9863 ns_per_pkt=233.5 cyc_per_pkt=921 offered=2000000 refused=1955124 elapsed_ms=248 hz=1000 jited=7976
+bank shape=uniform cores=2 window=64 sample=6 buckets=2 leak=0.9556 single=0.9863 ns_per_pkt=242.0 cyc_per_pkt=954 offered=2000000 refused=1953586 elapsed_ms=257 hz=1000 jited=7976
+bank shape=uniform cores=2 window=64 sample=7 buckets=2 leak=0.9459 single=0.9863 ns_per_pkt=235.0 cyc_per_pkt=927 offered=2000000 refused=1954906 elapsed_ms=252 hz=1000 jited=7976
+bank shape=uniform cores=2 window=64 sample=8 buckets=2 leak=0.9626 single=0.9863 ns_per_pkt=244.0 cyc_per_pkt=962 offered=2000000 refused=1953209 elapsed_ms=257 hz=1000 jited=7976
+bank shape=uniform cores=2 window=64 sample=9 buckets=2 leak=0.9542 single=0.9863 ns_per_pkt=240.5 cyc_per_pkt=948 offered=2000000 refused=1953869 elapsed_ms=256 hz=1000 jited=7976
+bank shape=uniform cores=4 window=64 sample=1 buckets=4 leak=0.9364 single=0.9863 ns_per_pkt=234.8 cyc_per_pkt=926 offered=4000000 refused=3909720 elapsed_ms=255 hz=1000 jited=7976
+bank shape=uniform cores=4 window=64 sample=2 buckets=4 leak=0.9240 single=0.9863 ns_per_pkt=235.5 cyc_per_pkt=929 offered=4000000 refused=3909437 elapsed_ms=259 hz=1000 jited=7976
+bank shape=uniform cores=4 window=64 sample=3 buckets=4 leak=0.9107 single=0.9863 ns_per_pkt=238.0 cyc_per_pkt=938 offered=4000000 refused=3908209 elapsed_ms=267 hz=1000 jited=7976
+bank shape=uniform cores=4 window=64 sample=4 buckets=4 leak=0.9362 single=0.9863 ns_per_pkt=241.8 cyc_per_pkt=953 offered=4000000 refused=3906700 elapsed_ms=264 hz=1000 jited=7976
+bank shape=uniform cores=4 window=64 sample=5 buckets=4 leak=0.9480 single=0.9863 ns_per_pkt=242.8 cyc_per_pkt=957 offered=4000000 refused=3906323 elapsed_ms=261 hz=1000 jited=7976
+bank shape=uniform cores=4 window=64 sample=6 buckets=4 leak=0.9104 single=0.9863 ns_per_pkt=243.0 cyc_per_pkt=958 offered=4000000 refused=3906229 elapsed_ms=272 hz=1000 jited=7976
+bank shape=uniform cores=4 window=64 sample=7 buckets=4 leak=0.9121 single=0.9863 ns_per_pkt=239.8 cyc_per_pkt=945 offered=4000000 refused=3907560 elapsed_ms=268 hz=1000 jited=7976
+bank shape=uniform cores=4 window=64 sample=8 buckets=4 leak=0.9354 single=0.9863 ns_per_pkt=240.2 cyc_per_pkt=947 offered=4000000 refused=3907266 elapsed_ms=262 hz=1000 jited=7976
+bank shape=uniform cores=4 window=64 sample=9 buckets=4 leak=0.9356 single=0.9863 ns_per_pkt=248.0 cyc_per_pkt=978 offered=4000000 refused=3904341 elapsed_ms=270 hz=1000 jited=7976
+bank shape=uniform cores=1 window=1024 sample=0 buckets=1 leak=0.9962 single=0.9962 ns_per_pkt=720.0 cyc_per_pkt=2839 offered=4000000 refused=3727926 elapsed_ms=2894 hz=1000 jited=7976
+bank shape=uniform cores=1 window=1024 sample=1 buckets=1 leak=0.9785 single=0.9962 ns_per_pkt=730.0 cyc_per_pkt=2878 offered=1000000 refused=930755 elapsed_ms=750 hz=1000 jited=7976
+bank shape=uniform cores=1 window=1024 sample=2 buckets=1 leak=0.9855 single=0.9962 ns_per_pkt=729.0 cyc_per_pkt=2874 offered=1000000 refused=930850 elapsed_ms=743 hz=1000 jited=7976
+bank shape=uniform cores=1 window=1024 sample=3 buckets=1 leak=0.9861 single=0.9962 ns_per_pkt=724.0 cyc_per_pkt=2855 offered=1000000 refused=931321 elapsed_ms=738 hz=1000 jited=7976
+bank shape=uniform cores=1 window=1024 sample=4 buckets=1 leak=0.9884 single=0.9962 ns_per_pkt=725.0 cyc_per_pkt=2859 offered=1000000 refused=931227 elapsed_ms=737 hz=1000 jited=7976
+bank shape=uniform cores=1 window=1024 sample=5 buckets=1 leak=0.9820 single=0.9962 ns_per_pkt=725.0 cyc_per_pkt=2859 offered=1000000 refused=931227 elapsed_ms=742 hz=1000 jited=7976
+bank shape=uniform cores=1 window=1024 sample=6 buckets=1 leak=0.9872 single=0.9962 ns_per_pkt=721.0 cyc_per_pkt=2843 offered=1000000 refused=931604 elapsed_ms=734 hz=1000 jited=7976
+bank shape=uniform cores=1 window=1024 sample=7 buckets=1 leak=0.9835 single=0.9962 ns_per_pkt=729.0 cyc_per_pkt=2874 offered=1000000 refused=930850 elapsed_ms=745 hz=1000 jited=7976
+bank shape=uniform cores=1 window=1024 sample=8 buckets=1 leak=0.9815 single=0.9962 ns_per_pkt=724.0 cyc_per_pkt=2855 offered=1000000 refused=931321 elapsed_ms=741 hz=1000 jited=7976
+bank shape=uniform cores=1 window=1024 sample=9 buckets=1 leak=0.9887 single=0.9962 ns_per_pkt=723.0 cyc_per_pkt=2851 offered=1000000 refused=931416 elapsed_ms=735 hz=1000 jited=7976
+bank shape=uniform cores=2 window=1024 sample=1 buckets=2 leak=0.9740 single=0.9962 ns_per_pkt=722.5 cyc_per_pkt=2849 offered=2000000 refused=1862926 elapsed_ms=745 hz=1000 jited=7976
+bank shape=uniform cores=2 window=1024 sample=2 buckets=2 leak=0.9741 single=0.9962 ns_per_pkt=718.5 cyc_per_pkt=2833 offered=2000000 refused=1863681 elapsed_ms=741 hz=1000 jited=7976
+bank shape=uniform cores=2 window=1024 sample=3 buckets=2 leak=0.9854 single=0.9962 ns_per_pkt=728.0 cyc_per_pkt=2870 offered=2000000 refused=1861888 elapsed_ms=742 hz=1000 jited=7976
+bank shape=uniform cores=2 window=1024 sample=4 buckets=2 leak=0.9818 single=0.9962 ns_per_pkt=733.5 cyc_per_pkt=2892 offered=2000000 refused=1860756 elapsed_ms=751 hz=1000 jited=7976
+bank shape=uniform cores=2 window=1024 sample=5 buckets=2 leak=0.9849 single=0.9962 ns_per_pkt=717.0 cyc_per_pkt=2827 offered=2000000 refused=1863963 elapsed_ms=732 hz=1000 jited=7976
+bank shape=uniform cores=2 window=1024 sample=6 buckets=2 leak=0.9803 single=0.9962 ns_per_pkt=729.0 cyc_per_pkt=2874 offered=2000000 refused=1861700 elapsed_ms=747 hz=1000 jited=7976
+bank shape=uniform cores=2 window=1024 sample=7 buckets=2 leak=0.9681 single=0.9962 ns_per_pkt=728.5 cyc_per_pkt=2872 offered=2000000 refused=1861794 elapsed_ms=756 hz=1000 jited=7976
+bank shape=uniform cores=2 window=1024 sample=8 buckets=2 leak=0.9686 single=0.9962 ns_per_pkt=730.0 cyc_per_pkt=2878 offered=2000000 refused=1861511 elapsed_ms=757 hz=1000 jited=7976
+bank shape=uniform cores=2 window=1024 sample=9 buckets=2 leak=0.9848 single=0.9962 ns_per_pkt=720.0 cyc_per_pkt=2839 offered=2000000 refused=1863397 elapsed_ms=735 hz=1000 jited=7976
+bank shape=uniform cores=4 window=1024 sample=1 buckets=4 leak=0.9719 single=0.9962 ns_per_pkt=726.5 cyc_per_pkt=2864 offered=4000000 refused=3722739 elapsed_ms=755 hz=1000 jited=7976
+bank shape=uniform cores=4 window=1024 sample=2 buckets=4 leak=0.9640 single=0.9962 ns_per_pkt=734.5 cyc_per_pkt=2896 offered=4000000 refused=3720010 elapsed_ms=769 hz=1000 jited=7976
+bank shape=uniform cores=4 window=1024 sample=3 buckets=4 leak=0.9648 single=0.9962 ns_per_pkt=724.2 cyc_per_pkt=2856 offered=4000000 refused=3724153 elapsed_ms=757 hz=1000 jited=7976
+bank shape=uniform cores=4 window=1024 sample=4 buckets=4 leak=0.9678 single=0.9962 ns_per_pkt=733.0 cyc_per_pkt=2890 offered=4000000 refused=3721040 elapsed_ms=763 hz=1000 jited=7976
+bank shape=uniform cores=4 window=1024 sample=5 buckets=4 leak=0.9671 single=0.9962 ns_per_pkt=735.0 cyc_per_pkt=2898 offered=4000000 refused=3720191 elapsed_ms=766 hz=1000 jited=7976
+bank shape=uniform cores=4 window=1024 sample=6 buckets=4 leak=0.9689 single=0.9962 ns_per_pkt=728.0 cyc_per_pkt=2870 offered=4000000 refused=3722833 elapsed_ms=758 hz=1000 jited=7976
+bank shape=uniform cores=4 window=1024 sample=7 buckets=4 leak=0.9619 single=0.9962 ns_per_pkt=723.8 cyc_per_pkt=2854 offered=4000000 refused=3724059 elapsed_ms=760 hz=1000 jited=7976
+bank shape=uniform cores=4 window=1024 sample=8 buckets=4 leak=0.9746 single=0.9962 ns_per_pkt=737.8 cyc_per_pkt=2909 offered=4000000 refused=3718870 elapsed_ms=764 hz=1000 jited=7976
+bank shape=uniform cores=4 window=1024 sample=9 buckets=4 leak=0.9642 single=0.9962 ns_per_pkt=734.2 cyc_per_pkt=2895 offered=4000000 refused=3719249 elapsed_ms=771 hz=1000 jited=7976
+test the_bank_leak_is_a_surface_over_cores_and_window ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 8 filtered out; finished in 138.41s
+

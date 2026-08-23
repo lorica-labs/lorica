@@ -274,21 +274,31 @@ fn the_excess_is_counted_and_passed_when_the_stage_is_not_armed() {
 /// reads back as less contention than there is. Run it alone with
 /// `--exact the_lock_free_bank_leaks_less_than_the_layout_it_was_retained_over`.
 ///
-/// **And then do not read one run as the number.** Nine isolated runs per arm, interleaved
-/// so drift could not pick a side, put this figure between **1.6 and 4.0 and bimodal** — a
-/// cluster near 1.7 and another near 3.1 — on a four-vCPU guest. Single readings of 1.53,
-/// 1.79, 2.98, 3.07 and 3.27 have all been taken from that same distribution and each one
-/// looked like a result at the time. What reproduces is the gate, not the value: every
-/// observation stays under the thread count.
+/// **And do not read one run as the number.** Single readings of 1.53, 1.79, 2.98, 3.07 and
+/// 3.27 have all been taken here and each looked like a result at the time. Two of them were
+/// an artefact: when two contention cases run at once the one-thread control reads **0.1997**
+/// instead of 0.994, because a leaky bucket credits a preempted offerer nothing beyond its
+/// burst, so a thread descheduled for four fifths of the wall clock reports the bank five
+/// times stricter than it is. That is why the two cases hold a mutex.
 ///
-/// One hypothesis died here and it is worth keeping. Removing the division from `charge` was
-/// expected to shorten the read-modify-write window and so to *reduce* the leak — accuracy
-/// and speed moving together. Measured, it went the other way: median 1.79x before the
-/// change, 2.98x after. The mechanism runs backwards from the guess, because a shorter update
-/// fits more updates per CPU inside one jiffy, so more CPUs land in the same window per tick
-/// and one tick's drain is spent more times. **Speed buys contention here, not accuracy**,
-/// and an optimisation that degrades enforcement precision is worth knowing about even when
-/// the gate still holds. That mechanism is still a conjecture, and the case below is what
+/// **What the surface says, and it is the measurement that matters.**
+/// `the_bank_leak_is_a_surface_over_cores_and_window` sweeps the leak over the core count and
+/// over the width of the read-modify-write window. Nine samples a point on the measurement
+/// VM: under a **uniform** distribution the leak is 0.93 to 0.99 at every core count and every
+/// width — enforcement is exact, and slightly strict. Under a **concentrated** one it is 1.42
+/// at four cores with the window as the program has it, and climbs to 3.73 when the window is
+/// artificially widened to 1024 dead reads.
+///
+/// So the leak is **purely intra-bucket**: two cores writing two different buckets do not
+/// collide, not even when the buckets share a cache line. And under collision it is monotone
+/// in the window width, which settles a mechanism that had been a conjecture.
+///
+/// **One conjecture died and it is worth keeping.** Removing the division from `charge` was
+/// read as having *raised* the leak, from a median of 1.79 to 2.98, which looked like speed
+/// buying contention. Since shortening the window demonstrably *lowers* the leak, that
+/// increase did not come from the window: it came from the other thing that changed in the
+/// same commit — the arithmetic of the drain — or from the dispersion above. Two changes in
+/// one campaign give a result nobody can attribute, and that was one. That mechanism is still a conjecture, and the case below is what
 /// turns it into a measurement: the same leak swept over the window width it blames.
 #[test]
 fn the_lock_free_bank_leaks_less_than_the_layout_it_was_retained_over() {
