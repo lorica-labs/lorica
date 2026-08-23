@@ -12,7 +12,7 @@
 //! uses: what is under test is that reading the map allocates nothing, and that is a
 //! property of the reader, not of the process that owns it.
 
-#![cfg(target_os = "linux")]
+#![cfg(all(target_os = "linux", feature = "kernel-tests"))]
 
 use std::{
     alloc::{GlobalAlloc, Layout, System},

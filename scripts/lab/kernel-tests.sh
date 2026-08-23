@@ -44,10 +44,17 @@ export LORICA_EBPF_OBJ=$EBPF_OBJ
 
 # The userspace feature has to match the object: a test that reads the helper counts
 # would otherwise look for a map the program was not built with.
-# Each feature names its crate, because the crate under test is not always the one
-# that declares them: the agent has the tick assertion and the dataplane has the
-# features that assertion needs.
-features=lorica-dataplane/kernel-tests
+#
+# Every crate that owns a test needing a kernel gates it behind a `kernel-tests` feature of
+# its own, so the bare name is the one that matters here — under `-p CRATE` it names that
+# crate's feature. The dataplane's is added on top when it is not the crate under test,
+# because the agent's tick assertion reads a map through the dataplane's batch reader.
+#
+# The gate is not tidiness. Ungated, the agent's assertion joined an unprivileged
+# `cargo test --workspace` in CI and died with `EPERM` on its first map, which reads as a
+# broken build rather than as a test nobody meant to run there.
+features=kernel-tests
+[ "$CRATE" = lorica-dataplane ] || features=$features,lorica-dataplane/kernel-tests
 case $EBPF_FEATURES in
     *count-helpers*) features=$features,lorica-dataplane/count-helpers ;;
 esac

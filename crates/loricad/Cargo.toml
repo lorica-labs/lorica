@@ -6,6 +6,14 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 
+# Gates the assertion that the tick allocates nothing. That test loads the eBPF object and
+# creates maps, which needs CAP_BPF, so it must not be part of an unprivileged
+# `cargo test --workspace` — it fails there with EPERM on the first map and reads as a
+# broken build rather than as a test that was never meant to run. Same discipline as
+# lorica-dataplane, which gates every test that touches a kernel behind a feature of its own.
+[features]
+kernel-tests = []
+
 [dependencies]
 lorica-common.workspace = true
 lorica-dataplane.workspace = true
