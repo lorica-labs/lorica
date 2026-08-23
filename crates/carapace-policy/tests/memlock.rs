@@ -12,7 +12,9 @@
 //! under the estimate in the meantime.
 
 use carapace_common::Clock;
-use carapace_policy::{CompileError, Config, MemlockModel, ProfileKind, compile};
+use carapace_policy::{
+    CompileError, Config, MemlockModel, ProfileKind, compile, compile::bogon_table::BOGONS,
+};
 
 /// No rule here carries a TTL, so the reading is arbitrary and the rate is only there
 /// to be a rate.
@@ -116,7 +118,14 @@ fn the_rules_themselves_count_against_the_budget() {
     }
     let config = Config::from_toml(&text).expect("the configuration did not parse");
     let out = compile(&config, CLOCK, MemlockModel::MEASURED).expect("it should fit");
-    assert_eq!(out.sizes.unified_list_entries, 16);
+    // Sixteen rules plus the built-in bogon table, which really is in the map and really
+    // does cost budget. Written as a sum rather than as the total, so that a bogon added
+    // to the table moves this test by construction instead of breaking it.
+    assert_eq!(
+        out.sizes.unified_list_entries as usize,
+        16 + BOGONS.len(),
+        "the rules and the bogons both occupy the list"
+    );
 }
 
 /// The counter map holds the named counters and one slot per entry the list can hold,

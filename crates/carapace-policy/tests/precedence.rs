@@ -58,6 +58,10 @@ fn a_host_allow_inside_a_network_deny_is_the_more_specific_entry() {
 /// The property that matters: reordering the file changes nothing. A configuration
 /// language where it did would make a policy impossible to review by reading it.
 #[test]
+/// The IPv6 prefix here is global unicast and not the documentation range, which would be
+/// the obvious choice for a test: the documentation range is a bogon, and a rule on a bogon
+/// prefix is refused at compile time. What this test is about is declaration order, so it
+/// uses a prefix the compiler has no opinion about.
 fn the_order_of_declaration_changes_no_entry() {
     let one = compiled(
         r#"
@@ -70,7 +74,7 @@ fn the_order_of_declaration_changes_no_entry() {
         action = "allow"
         scopes = ["udp:30120"]
         [[rules]]
-        prefix = "2001:db8::/32"
+        prefix = "2a01:4f8::/32"
         action = "deny"
         "#,
     );
@@ -78,7 +82,7 @@ fn the_order_of_declaration_changes_no_entry() {
         r#"
         profile = "host"
         [[rules]]
-        prefix = "2001:db8::/32"
+        prefix = "2a01:4f8::/32"
         action = "deny"
         [[rules]]
         prefix = "10.90.1.7/32"
