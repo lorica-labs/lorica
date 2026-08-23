@@ -62,7 +62,20 @@ args=(test -p "$CRATE" --features "$features" --no-run
 # The executables are read out of the cargo metadata rather than guessed from a
 # target path: the hash in the file name changes on every rebuild, and a stale binary
 # would report a pass for code that is no longer there.
-mapfile -t binaries < <(cargo "${args[@]}" | python3 -c '
+#
+# The metadata goes to a file first, and the reason is a green run that had not run. A
+# process substitution discards the exit status of what is inside it, so a build that
+# linked some binaries and failed on others left a non-empty list and this script ran it
+# and exited 0. It happened twice on a full disk — `No space left on device`, then
+# `collect2: fatal error: ld terminated with signal 7`, which is a failing mmap and not a
+# linker bug — and the suite reported the tests it did manage to link as the whole suite.
+# A harness that can exit 0 without having run invalidates every green result it ever
+# gave, so the status is checked before the list is used.
+manifest=$(mktemp)
+trap 'rm -f "$manifest"' EXIT
+cargo "${args[@]}" > "$manifest" || die "the test build failed"
+
+mapfile -t binaries < <(python3 -c '
 import json, sys
 for line in sys.stdin:
     try:
@@ -72,7 +85,7 @@ for line in sys.stdin:
     if msg.get("reason") == "compiler-artifact" and msg.get("profile", {}).get("test"):
         if msg.get("executable"):
             print(msg["executable"])
-')
+' < "$manifest")
 [ "${#binaries[@]}" -gt 0 ] || die "cargo produced no test executable"
 
 status=0
