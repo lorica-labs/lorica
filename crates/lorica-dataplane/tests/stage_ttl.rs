@@ -209,8 +209,10 @@ fn the_expiry_check_reuses_the_one_clock_reading() {
         counts.clock_reads, 1,
         "the expiry check read the clock again, got {counts:?}"
     );
+    // The third is stage 7's: an expired entry stops applying, so the packet walks the rest
+    // of the pipeline and is charged against its bucket like any other.
     assert_eq!(
-        counts.map_lookups, 2,
-        "expected the list lookup and the expiry counter, got {counts:?}"
+        counts.map_lookups, 3,
+        "expected the list lookup, the expiry counter and the bucket bank, got {counts:?}"
     );
 }
