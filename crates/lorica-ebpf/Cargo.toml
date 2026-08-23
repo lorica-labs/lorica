@@ -3,7 +3,7 @@ name = "lorica-ebpf"
 version = "0.1.0"
 edition = "2024"
 license = "Apache-2.0 OR MIT"
-repository = "https://github.com/hookwood/lorica"
+repository = "https://github.com/lorica-labs/lorica"
 
 # Its own workspace: this crate builds for bpfel-unknown-none on nightly with
 # -Z build-std=core, and cargo cannot select a toolchain per member of the root
