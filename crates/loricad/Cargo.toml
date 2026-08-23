@@ -1,0 +1,21 @@
+[package]
+name = "loricad"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+lorica-common.workspace = true
+lorica-dataplane.workspace = true
+lorica-detect.workspace = true
+lorica-escalate.workspace = true
+lorica-policy.workspace = true
+anyhow.workspace = true
+aya.workspace = true
+# current_thread only. #[tokio::main] would spawn one worker per logical CPU and
+# steal cache lines from the application this is supposed to protect.
+tokio = { workspace = true, features = ["rt", "macros", "time", "net", "io-util", "signal"] }
+tracing.workspace = true
+tracing-subscriber.workspace = true

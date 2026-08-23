@@ -20,11 +20,11 @@ cd "$(dirname "$0")/../.." || exit 1
 
 OUT=bench/results/fib-vs-lpm
 REPEAT=1000000
-IFACE=${CARAPACE_IFACE:-enp6s19}
-BUILD_HOST=${CARAPACE_BUILD_HOST:-lab-dev}
-TARGET_HOST=${CARAPACE_TARGET_HOST:-lab-target}
-REMOTE_DIR=${CARAPACE_REMOTE_DIR:-src}
-BENCH_DIR=${CARAPACE_BENCH_DIR:-fib-bench}
+IFACE=${LORICA_IFACE:-enp6s19}
+BUILD_HOST=${LORICA_BUILD_HOST:-lab-dev}
+TARGET_HOST=${LORICA_TARGET_HOST:-lab-target}
+REMOTE_DIR=${LORICA_REMOTE_DIR:-src}
+BENCH_DIR=${LORICA_BENCH_DIR:-fib-bench}
 PIN=/sys/fs/bpf/fib-bench
 
 while [ $# -gt 0 ]; do

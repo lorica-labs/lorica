@@ -1,5 +1,5 @@
 /target/
-/crates/carapace-ebpf/target/
+/crates/lorica-ebpf/target/
 /bench/latency-probe/target/
 /bench/store-probe/target/
 /bench/progs/*.o

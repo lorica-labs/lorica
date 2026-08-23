@@ -32,11 +32,11 @@ cd "$(dirname "$0")/../.." || exit 1
 OUT=bench/results/bucket-contention
 REPEAT=5000000
 CPUS=0
-IFACE=${CARAPACE_IFACE:-enp6s19}
-BUILD_HOST=${CARAPACE_BUILD_HOST:-lab-dev}
-TARGET_HOST=${CARAPACE_TARGET_HOST:-lab-target}
-REMOTE_DIR=${CARAPACE_REMOTE_DIR:-src}
-BENCH_DIR=${CARAPACE_BENCH_DIR:-bucket-bench}
+IFACE=${LORICA_IFACE:-enp6s19}
+BUILD_HOST=${LORICA_BUILD_HOST:-lab-dev}
+TARGET_HOST=${LORICA_TARGET_HOST:-lab-target}
+REMOTE_DIR=${LORICA_REMOTE_DIR:-src}
+BENCH_DIR=${LORICA_BENCH_DIR:-bucket-bench}
 
 while [ $# -gt 0 ]; do
     case $1 in

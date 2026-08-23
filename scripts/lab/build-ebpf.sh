@@ -15,8 +15,8 @@ build_ebpf() {
     local root=$PWD
 
     echo 'building the eBPF object that ships' >&2
-    (cd crates/carapace-ebpf && cargo +nightly build --release) || return 1
-    EBPF_PLAIN_OBJ=$root/crates/carapace-ebpf/target/bpfel-unknown-none/release/carapace-ebpf
+    (cd crates/lorica-ebpf && cargo +nightly build --release) || return 1
+    EBPF_PLAIN_OBJ=$root/crates/lorica-ebpf/target/bpfel-unknown-none/release/lorica-ebpf
     if [ ! -f "$EBPF_PLAIN_OBJ" ]; then
         echo "no object at $EBPF_PLAIN_OBJ after a successful build" >&2
         return 1
@@ -28,11 +28,11 @@ build_ebpf() {
     fi
 
     printf 'building the instrumented eBPF object with features: %s\n' "$features" >&2
-    local dir=$root/crates/carapace-ebpf/target/instrumented
-    (cd crates/carapace-ebpf \
+    local dir=$root/crates/lorica-ebpf/target/instrumented
+    (cd crates/lorica-ebpf \
         && CARGO_TARGET_DIR=$dir cargo +nightly build --release --features "$features") \
         || return 1
-    EBPF_OBJ=$dir/bpfel-unknown-none/release/carapace-ebpf
+    EBPF_OBJ=$dir/bpfel-unknown-none/release/lorica-ebpf
     if [ ! -f "$EBPF_OBJ" ]; then
         echo "no object at $EBPF_OBJ after a successful build" >&2
         return 1

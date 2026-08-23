@@ -14,14 +14,14 @@
 set -uo pipefail
 
 OUT=bench/results/p99
-DEV=${CARAPACE_IFACE:-enp6s19}
+DEV=${LORICA_IFACE:-enp6s19}
 GEN_HOST=lab-gen
 SELF_IP=
 CEILING=
 SWEEP="0 100kpps 250kpps 500kpps"
 REPEAT=3
 SECONDS_PER=20
-PROBE=${CARAPACE_PROBE:-/tmp/latency-probe}
+PROBE=${LORICA_PROBE:-/tmp/latency-probe}
 PORTDROP=bench/progs/xdp_portdrop.o
 NFT=bench/nftables/compare.nft
 
@@ -67,7 +67,7 @@ self_mac=$(cat "/sys/class/net/$DEV/address")
 nft_loaded=0
 xdp_loaded=0
 cleanup() {
-    [ "$nft_loaded" = 1 ] && sudo -n nft delete table ip carapace_cmp 2>/dev/null
+    [ "$nft_loaded" = 1 ] && sudo -n nft delete table ip lorica_cmp 2>/dev/null
     [ "$xdp_loaded" = 1 ] && sudo -n ip link set dev "$DEV" xdpdrv off 2>/dev/null
     ssh -o BatchMode=yes "$GEN_HOST" 'pkill -x latency-probe 2>/dev/null; pkill -x trafgen 2>/dev/null' 2>/dev/null
     pkill -x latency-probe 2>/dev/null
@@ -79,7 +79,7 @@ arm_nft()   { sudo -n nft -f "$NFT"; nft_loaded=1; }
 arm_xdp()   { sudo -n ip link set dev "$DEV" xdpdrv obj "$PORTDROP" sec xdp; xdp_loaded=1
               [ "$(ip -d link show "$DEV" | grep -o 'xdp[a-z]*' | head -1)" = xdp ] \
                   || { echo "measure-p99: xdp attach not native" >&2; exit 1; } }
-disarm()    { [ "$nft_loaded" = 1 ] && { sudo -n nft delete table ip carapace_cmp 2>/dev/null; nft_loaded=0; }
+disarm()    { [ "$nft_loaded" = 1 ] && { sudo -n nft delete table ip lorica_cmp 2>/dev/null; nft_loaded=0; }
               [ "$xdp_loaded" = 1 ] && { sudo -n ip link set dev "$DEV" xdpdrv off 2>/dev/null; xdp_loaded=0; } }
 
 # One (arm, offered rate, rep): start the legitimate probe servers, start the
@@ -98,7 +98,7 @@ one_point() {
     # the whole legit window. Delivered rate is capped by the T4 ceiling regardless.
     if [ "$offered" != 0 ]; then
         ssh -o BatchMode=yes "$GEN_HOST" \
-            "~/carapace/scripts/lab/gen-udp-flood.sh --dst-ip $SELF_IP --dst-mac $self_mac --rate ${offered}pps --duration $((SECONDS_PER + 3))s --cpus 2" \
+            "~/lorica/scripts/lab/gen-udp-flood.sh --dst-ip $SELF_IP --dst-mac $self_mac --rate ${offered}pps --duration $((SECONDS_PER + 3))s --cpus 2" \
             >/dev/null 2>&1 &
     fi
 

@@ -81,7 +81,7 @@ POSSIBLE=$(cat /sys/devices/system/cpu/possible)
 [ -n "$(command -v sudo)" ] && sudo -n true 2>/dev/null \
     || die "loading a BPF program needs CAP_BPF, and sudo asks for a password"
 
-SOCKET=/run/carapace/measure-$$.sock
+SOCKET=/run/lorica/measure-$$.sock
 LOG=$OUT/agent-$STAMP.log
 
 sudo -n "$AGENT" --object "$OBJECT" --socket "$SOCKET" \
@@ -95,7 +95,7 @@ launcher=$!
 # first sample is taken after the map is loaded and sized, never during it.
 pid=""
 for _ in $(seq 1 100); do
-    pid=$(pgrep -x -P "$launcher" carapaced 2>/dev/null | head -1)
+    pid=$(pgrep -x -P "$launcher" loricad 2>/dev/null | head -1)
     [ -n "$pid" ] && [ -S "$SOCKET" ] && break
     sleep 0.2
 done

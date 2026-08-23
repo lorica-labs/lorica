@@ -28,17 +28,17 @@ jobs:
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - name: build the eBPF program
         run: cargo +nightly build --release
-        working-directory: crates/carapace-ebpf
+        working-directory: crates/lorica-ebpf
       - name: lint the eBPF program
         run: |
           cargo +nightly fmt --check
           cargo +nightly clippy --release -- -D warnings
-        working-directory: crates/carapace-ebpf
+        working-directory: crates/lorica-ebpf
       - run: cargo test --workspace
       # Assertions 1 and 6 need the crate that cannot be built here, so they live in
       # the integration job. The table in mesure-et-outillage.md marks both as
       # runnable on Windows; that rests on a premise the code disproved. aya uses
-      # std::os::fd, so carapace-dataplane and carapaced do not build on Windows at
+      # std::os::fd, so lorica-dataplane and loricad do not build on Windows at
       # all, and both assertions need one of them.
       #
       # Assertion 7, the Prometheus series ceiling, arrives with /metrics in a later
@@ -59,7 +59,7 @@ jobs:
       # clang builds the bench objects the attach test takes the hook with, perf
       # counts the xdp_exception tracepoint.
       - run: sudo apt-get update && sudo apt-get install -y clang linux-tools-common linux-tools-generic
-      - run: cargo clippy --workspace --all-targets --features carapace-dataplane/kernel-tests -- -D warnings
+      - run: cargo clippy --workspace --all-targets --features lorica-dataplane/kernel-tests -- -D warnings
       # Loading an XDP program needs CAP_BPF and CAP_NET_ADMIN, so the test
       # binaries run under sudo while the build stays unprivileged. This is the
       # same script the lab runs, and it builds both eBPF objects: the one that
@@ -80,7 +80,7 @@ jobs:
       # Assertion 6: no allocation inside the tick. A separate step because the run
       # above tests the dataplane crate and this assertion lives in the agent.
       - name: no allocation in the tick
-        run: bash scripts/lab/kernel-tests.sh --crate carapaced --test no_alloc_in_tick
+        run: bash scripts/lab/kernel-tests.sh --crate loricad --test no_alloc_in_tick
       # Assertion 5: the agent's RSS, and its CPU while it is at it. Both come from
       # the same run, because measuring them separately would measure two agents.
       #
@@ -95,8 +95,8 @@ jobs:
       # the one from the target.
       - name: agent RSS and CPU
         run: |
-          cargo build --release -p carapaced
-          scripts/lab/measure-agent-cpu.sh             --agent target/release/carapaced             --object crates/carapace-ebpf/target/bpfel-unknown-none/release/carapace-ebpf             --counters 50000 --hz 10 --sweep-every 20             --duration 70 --settle 30 --cpu-budget 3.0 --rss-max 51200             --out bench/results/agent-cpu
+          cargo build --release -p loricad
+          scripts/lab/measure-agent-cpu.sh             --agent target/release/loricad             --object crates/lorica-ebpf/target/bpfel-unknown-none/release/lorica-ebpf             --counters 50000 --hz 10 --sweep-every 20             --duration 70 --settle 30 --cpu-budget 3.0 --rss-max 51200             --out bench/results/agent-cpu
 
   # Assertion 3, the per-packet cost, is deliberately not a step here.
   #

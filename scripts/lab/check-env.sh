@@ -4,17 +4,17 @@
 #
 #   check-env.sh [--iface NAME] [--steal-seconds N] [--steal-max PCT]
 #
-# Role is derived from the hostname (carapace-dev / carapace-target / carapace-gen)
-# and can be forced with CARAPACE_ROLE. Two controls are target-only: the kernel
+# Role is derived from the hostname (lorica-dev / lorica-target / lorica-gen)
+# and can be forced with LORICA_ROLE. Two controls are target-only: the kernel
 # version and the apt hold that keeps it there.
 
 set -uo pipefail
 
-IFACE=${CARAPACE_IFACE:-enp6s19}
-STEAL_SECONDS=${CARAPACE_STEAL_SECONDS:-60}
+IFACE=${LORICA_IFACE:-enp6s19}
+STEAL_SECONDS=${LORICA_STEAL_SECONDS:-60}
 # Policy threshold, not a measurement: above this the guest is not getting the CPU
 # it thinks it has and every per-packet number is inflated by an unknown amount.
-STEAL_MAX=${CARAPACE_STEAL_MAX:-1.0}
+STEAL_MAX=${LORICA_STEAL_MAX:-1.0}
 
 while [ $# -gt 0 ]; do
     case $1 in
@@ -26,13 +26,13 @@ while [ $# -gt 0 ]; do
     esac
 done
 
-ROLE=${CARAPACE_ROLE:-}
+ROLE=${LORICA_ROLE:-}
 if [ -z "$ROLE" ]; then
     case $(hostname) in
-        carapace-dev)    ROLE=dev ;;
-        carapace-target) ROLE=target ;;
-        carapace-gen)    ROLE=gen ;;
-        *) echo "unknown host $(hostname): set CARAPACE_ROLE to dev, target or gen" >&2; exit 2 ;;
+        lorica-dev)    ROLE=dev ;;
+        lorica-target) ROLE=target ;;
+        lorica-gen)    ROLE=gen ;;
+        *) echo "unknown host $(hostname): set LORICA_ROLE to dev, target or gen" >&2; exit 2 ;;
     esac
 fi
 
@@ -44,7 +44,7 @@ printf 'check-env: role=%s host=%s iface=%s\n' "$ROLE" "$(hostname)" "$IFACE"
 
 sudo -n true 2>/dev/null \
     || fail "sudo requires a password" \
-            "install /etc/sudoers.d/carapace with 'hookwood ALL=(ALL) NOPASSWD:ALL', mode 0440"
+            "install /etc/sudoers.d/lorica with 'hookwood ALL=(ALL) NOPASSWD:ALL', mode 0440"
 
 # --- kernel, target only ------------------------------------------------------
 if [ "$ROLE" = target ]; then
@@ -106,7 +106,7 @@ clocksource=$(cat /sys/devices/system/clocksource/clocksource0/current_clocksour
 # missing.
 grep -q '^ptp_kvm ' /proc/modules \
     && ok "ptp_kvm loaded" \
-    || fail "ptp_kvm is not loaded" "modprobe ptp_kvm and add it to /etc/modules-load.d/carapace.conf"
+    || fail "ptp_kvm is not loaded" "modprobe ptp_kvm and add it to /etc/modules-load.d/lorica.conf"
 
 ls /dev/ptp* >/dev/null 2>&1 \
     && ok "PTP device: $(ls -d /dev/ptp* | tr '\n' ' ')" \

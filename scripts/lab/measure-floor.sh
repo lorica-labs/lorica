@@ -13,7 +13,7 @@ set -uo pipefail
 OUT=bench/results
 REPEAT=3
 ITERATIONS=1000000
-IFACE=${CARAPACE_IFACE:-enp6s19}
+IFACE=${LORICA_IFACE:-enp6s19}
 OBJ=bench/progs/xdp_pass.o
 DATA=bench/data/udp64.bin
 
@@ -42,7 +42,7 @@ env_file=$("$here/capture-env.sh" "$OUT" "$IFACE")
 [ -n "$env_file" ] || die "capture-env.sh produced no path: a result without its environment is not reproducible"
 result="$OUT/floor-$stamp.json"
 
-pin=/sys/fs/bpf/carapace-floor
+pin=/sys/fs/bpf/lorica-floor
 sudo -n rm -f "$pin"
 sudo -n bpftool prog load "$OBJ" "$pin" type xdp || die "load failed"
 trap 'sudo -n rm -f "$pin"; sudo -n sysctl -qw kernel.bpf_stats_enabled=0' EXIT

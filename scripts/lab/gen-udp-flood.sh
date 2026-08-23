@@ -11,7 +11,7 @@
 
 set -uo pipefail
 
-DEV=${CARAPACE_IFACE:-enp6s19}
+DEV=${LORICA_IFACE:-enp6s19}
 DST_IP=
 DST_MAC=
 RATE=

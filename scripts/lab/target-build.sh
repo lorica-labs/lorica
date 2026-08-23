@@ -18,10 +18,10 @@ set -uo pipefail
 
 cd "$(dirname "$0")/../.." || exit 1
 
-TRIPLE=${CARAPACE_TARGET_TRIPLE:-x86_64-unknown-linux-musl}
-CRATE=carapace-dataplane
+TRIPLE=${LORICA_TARGET_TRIPLE:-x86_64-unknown-linux-musl}
+CRATE=lorica-dataplane
 FEATURES=kernel-tests
-EBPF_FEATURES=${CARAPACE_EBPF_FEATURES:-parse-probe,count-helpers}
+EBPF_FEATURES=${LORICA_EBPF_FEATURES:-parse-probe,count-helpers}
 WANT_EBPF=1
 TEST=""
 

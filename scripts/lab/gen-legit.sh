@@ -10,7 +10,7 @@
 
 set -uo pipefail
 
-PROBE=${CARAPACE_PROBE:-/tmp/latency-probe}
+PROBE=${LORICA_PROBE:-/tmp/latency-probe}
 PROFILE=
 TARGET=
 OUT=

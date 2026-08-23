@@ -19,8 +19,8 @@ HOST=${1:-}
 [ -n "$HOST" ] || { echo "usage: deploy.sh <host> [command...]" >&2; exit 2; }
 shift
 
-REMOTE_DIR=${CARAPACE_REMOTE_DIR:-src}
-ATTEMPTS=${CARAPACE_SSH_ATTEMPTS:-4}
+REMOTE_DIR=${LORICA_REMOTE_DIR:-src}
+ATTEMPTS=${LORICA_SSH_ATTEMPTS:-4}
 
 # target/ is excluded so the remote build cache survives, and .git so the remote
 # checkout is not rewritten under a running build.

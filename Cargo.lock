@@ -111,70 +111,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc652a48c352aef3ea3aed32080501cf3ef6ed5da78602a020c991775b0aff04"
 
 [[package]]
-name = "carapace-common"
-version = "0.1.0"
-dependencies = [
- "criterion",
- "proptest",
-]
-
-[[package]]
-name = "carapace-ctl"
-version = "0.1.0"
-
-[[package]]
-name = "carapace-dataplane"
-version = "0.1.0"
-dependencies = [
- "aya",
- "carapace-common",
- "carapace-policy",
- "libc",
- "object",
- "thiserror",
-]
-
-[[package]]
-name = "carapace-detect"
-version = "0.1.0"
-dependencies = [
- "carapace-common",
-]
-
-[[package]]
-name = "carapace-escalate"
-version = "0.1.0"
-dependencies = [
- "carapace-common",
-]
-
-[[package]]
-name = "carapace-policy"
-version = "0.1.0"
-dependencies = [
- "carapace-common",
- "serde",
- "thiserror",
- "toml",
-]
-
-[[package]]
-name = "carapaced"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "aya",
- "carapace-common",
- "carapace-dataplane",
- "carapace-detect",
- "carapace-escalate",
- "carapace-policy",
- "tokio",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
 name = "cast"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -488,6 +424,70 @@ name = "log"
 version = "0.4.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6"
+
+[[package]]
+name = "lorica-common"
+version = "0.1.0"
+dependencies = [
+ "criterion",
+ "proptest",
+]
+
+[[package]]
+name = "lorica-ctl"
+version = "0.1.0"
+
+[[package]]
+name = "lorica-dataplane"
+version = "0.1.0"
+dependencies = [
+ "aya",
+ "libc",
+ "lorica-common",
+ "lorica-policy",
+ "object",
+ "thiserror",
+]
+
+[[package]]
+name = "lorica-detect"
+version = "0.1.0"
+dependencies = [
+ "lorica-common",
+]
+
+[[package]]
+name = "lorica-escalate"
+version = "0.1.0"
+dependencies = [
+ "lorica-common",
+]
+
+[[package]]
+name = "lorica-policy"
+version = "0.1.0"
+dependencies = [
+ "lorica-common",
+ "serde",
+ "thiserror",
+ "toml",
+]
+
+[[package]]
+name = "loricad"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "aya",
+ "lorica-common",
+ "lorica-dataplane",
+ "lorica-detect",
+ "lorica-escalate",
+ "lorica-policy",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
 
 [[package]]
 name = "memchr"

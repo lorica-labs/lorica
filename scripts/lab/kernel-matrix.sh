@@ -24,8 +24,8 @@ set -uo pipefail
 
 cd "$(dirname "$0")/../.." || exit 1
 
-EBPF_FEATURES=${CARAPACE_EBPF_FEATURES:-parse-probe,count-helpers}
-FLOOR=${CARAPACE_KERNEL_FLOOR:-6.8}
+EBPF_FEATURES=${LORICA_EBPF_FEATURES:-parse-probe,count-helpers}
+FLOOR=${LORICA_KERNEL_FLOOR:-6.8}
 STAGE=$PWD/target/target-tests
 EXERCISE=""
 VERSIONS=()
@@ -94,9 +94,9 @@ exercise() {
     # that nothing aborted a packet, not that the program survived a real hook. The
     # plan puts that attach in tests/attach.rs, which target-build.sh stages as soon as
     # it exists; until then the kernel is reported incomplete rather than green.
-    if [ ! -r crates/carapace-dataplane/tests/attach.rs ]; then
+    if [ ! -r crates/lorica-dataplane/tests/attach.rs ]; then
         printf 'INCOMPLETE  %s: no attach on a veth, %s\n' "$want" \
-            "crates/carapace-dataplane/tests/attach.rs does not exist yet, so xdp:xdp_exception was counted over a run where nothing was attached" >&2
+            "crates/lorica-dataplane/tests/attach.rs does not exist yet, so xdp:xdp_exception was counted over a run where nothing was attached" >&2
         [ $status -eq 0 ] && status=4
     fi
     return $status

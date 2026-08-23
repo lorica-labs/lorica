@@ -28,7 +28,7 @@ set -uo pipefail
 
 cd "$(dirname "$0")/../.." || exit 1
 
-DEV=${CARAPACE_IFACE:-enp6s19}
+DEV=${LORICA_IFACE:-enp6s19}
 OUT=bench/results/legit-replay
 TRACES=bench/traces
 PCAP=
@@ -68,7 +68,7 @@ command -v python3 >/dev/null || die "no python3: the trace scan that derives th
 # it leaks onto a real network. So the interface is not warned about, it is verified:
 # only a device addressed inside the lab test subnet is accepted, which leaves the LAN
 # NIC no way to be passed here by mistake.
-subnet=${CARAPACE_TEST_SUBNET:-10.90.1.}
+subnet=${LORICA_TEST_SUBNET:-10.90.1.}
 addr=$(ip -4 -o addr show dev "$DEV" 2>/dev/null | awk 'NR==1 {print $4}')
 [ -n "$addr" ] || die "$DEV has no IPv4 address, so it cannot be checked against the test subnet $subnet"
 case $addr in

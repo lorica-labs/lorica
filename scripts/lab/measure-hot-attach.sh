@@ -14,13 +14,13 @@
 set -uo pipefail
 
 OUT=bench/results/hot-attach
-DEV=${CARAPACE_IFACE:-enp6s19}
+DEV=${LORICA_IFACE:-enp6s19}
 GEN_HOST=lab-gen
 SELF_IP=
 PEER_IP=
 REPEAT=10
 OBJ=bench/progs/xdp_pass.o
-PROBE=${CARAPACE_PROBE:-/tmp/latency-probe}
+PROBE=${LORICA_PROBE:-/tmp/latency-probe}
 SETTLE=2
 
 while [ $# -gt 0 ]; do

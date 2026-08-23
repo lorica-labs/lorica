@@ -11,7 +11,7 @@
 set -euo pipefail
 
 repo=$(cd "$(dirname "$0")/.." && pwd)
-out=$repo/crates/carapace-policy/src/compile/bogon_table.rs
+out=$repo/crates/lorica-policy/src/compile/bogon_table.rs
 
 v4_url=https://www.iana.org/assignments/iana-ipv4-special-registry/iana-ipv4-special-registry-1.csv
 v6_url=https://www.iana.org/assignments/iana-ipv6-special-registry/iana-ipv6-special-registry-1.csv
@@ -105,7 +105,7 @@ lines = [
     "//! dropping them by default is the false positive every bogon list has shipped at",
     "//! least once. The reasoning for each omission is in the script.",
     "",
-    "use carapace_common::LpmKey;",
+    "use lorica_common::LpmKey;",
     "",
     f"pub const BOGONS: [LpmKey; {len(v4) + len(v6)}] = [",
 ]

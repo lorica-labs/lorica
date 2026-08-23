@@ -18,9 +18,9 @@ sudo -n true 2>/dev/null \
 status=0
 for binary in bin/*; do
     printf '\n--- %s on %s\n' "$(basename "$binary")" "$(uname -r)"
-    sudo -n env "CARAPACE_EBPF_OBJ=$root/ebpf/instrumented" \
-                "CARAPACE_EBPF_PLAIN_OBJ=$root/ebpf/plain" \
-                "CARAPACE_BENCH_PROGS=$root/progs" \
+    sudo -n env "LORICA_EBPF_OBJ=$root/ebpf/instrumented" \
+                "LORICA_EBPF_PLAIN_OBJ=$root/ebpf/plain" \
+                "LORICA_BENCH_PROGS=$root/progs" \
         "$binary" "$@" || status=1
 done
 exit $status

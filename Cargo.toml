@@ -1,32 +1,32 @@
 [workspace]
 resolver = "3"
 members = [
-    "crates/carapace-common",
-    "crates/carapace-dataplane",
-    "crates/carapace-detect",
-    "crates/carapace-policy",
-    "crates/carapace-escalate",
-    "crates/carapaced",
-    "crates/carapace-ctl",
+    "crates/lorica-common",
+    "crates/lorica-dataplane",
+    "crates/lorica-detect",
+    "crates/lorica-policy",
+    "crates/lorica-escalate",
+    "crates/loricad",
+    "crates/lorica-ctl",
 ]
-# carapace-ebpf is a workspace of its own, not a member. bpfel-unknown-none is a
+# lorica-ebpf is a workspace of its own, not a member. bpfel-unknown-none is a
 # tier 3 target: it needs nightly and -Z build-std=core, and a toolchain cannot be
 # selected per workspace member. Building it is an explicit step, not a side effect
 # of `cargo check --workspace`.
-exclude = ["bench", "crates/carapace-ebpf"]
+exclude = ["bench", "crates/lorica-ebpf"]
 
 [workspace.package]
 edition = "2024"
 license = "Apache-2.0 OR MIT"
-repository = "https://github.com/hookwood/carapace"
+repository = "https://github.com/hookwood/lorica"
 rust-version = "1.85"
 
 [workspace.dependencies]
-carapace-common = { path = "crates/carapace-common" }
-carapace-dataplane = { path = "crates/carapace-dataplane" }
-carapace-detect = { path = "crates/carapace-detect" }
-carapace-escalate = { path = "crates/carapace-escalate" }
-carapace-policy = { path = "crates/carapace-policy" }
+lorica-common = { path = "crates/lorica-common" }
+lorica-dataplane = { path = "crates/lorica-dataplane" }
+lorica-detect = { path = "crates/lorica-detect" }
+lorica-escalate = { path = "crates/lorica-escalate" }
+lorica-policy = { path = "crates/lorica-policy" }
 
 anyhow = "1.0.104"
 aya = "0.14.0"

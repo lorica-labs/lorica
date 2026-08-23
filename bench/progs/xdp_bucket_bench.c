@@ -26,7 +26,7 @@
  *     _bank below, and it is here to be measured rather than assumed.
  *
  * Disposable measurement fixture. It prefigures nothing of the dataplane: the real
- * arithmetic lives in carapace-common and is compiled into the program under test. What
+ * arithmetic lives in lorica-common and is compiled into the program under test. What
  * is reproduced here is the shape of the memory access and the cost of the guard, which
  * is what the layout decision turns on.
  */

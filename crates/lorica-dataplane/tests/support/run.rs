@@ -1,0 +1,323 @@
+//! Loading the program and running one packet through it.
+//!
+//! `BPF_PROG_TEST_RUN` gives a verdict without a NIC, a generator or an attach. It
+//! also runs the same packet against the same map entry every time, so it proves
+//! correctness and never proves a cache behaviour: a map that grows from four
+//! kilobytes to four megabytes is invisible here and expensive in production.
+
+use std::{env, fs, path::PathBuf};
+
+use aya::{
+    Ebpf, EbpfLoader,
+    maps::{
+        MapData, PerCpuArray,
+        lpm_trie::{Key, LpmTrie},
+    },
+    programs::{TestRun, TestRunOptions, Xdp},
+};
+use lorica_common::{
+    Clock, CounterId, DEFAULT_SETTINGS, LpmKey, LpmValue, PacketView, SETTINGS_SYMBOL,
+};
+use lorica_dataplane::clock;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum XdpAction {
+    Aborted,
+    Drop,
+    Pass,
+    Tx,
+    Redirect,
+}
+
+impl XdpAction {
+    fn from_return_value(value: u32) -> Self {
+        match value {
+            0 => Self::Aborted,
+            1 => Self::Drop,
+            2 => Self::Pass,
+            3 => Self::Tx,
+            4 => Self::Redirect,
+            other => panic!("the program returned {other}, which is not an XDP action"),
+        }
+    }
+}
+
+/// Helper calls actually executed for one packet, as opposed to the calls present in
+/// the program. This is the budget the design is written against, and it only exists
+/// in a build with the `count-helpers` feature.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct HelperCounts {
+    pub map_lookups: u64,
+    pub clock_reads: u64,
+}
+
+impl HelperCounts {
+    pub const fn total(&self) -> u64 {
+        self.map_lookups + self.clock_reads
+    }
+
+    /// What the last packet added, for a case that had to run the program for another
+    /// reason first — calibrating the clock, which goes through the same counted wrapper.
+    /// The counters only ever grow, so a difference is the whole of the arithmetic.
+    pub const fn since(self, before: Self) -> Self {
+        Self {
+            map_lookups: self.map_lookups - before.map_lookups,
+            clock_reads: self.clock_reads - before.clock_reads,
+        }
+    }
+}
+
+/// A local wrapper so `Pod` can be implemented for a foreign type. Sound because
+/// every byte pattern of `PacketView` is a valid value, which is the property the
+/// trait requires and the reason the family and fragment fields are stored raw.
+#[repr(transparent)]
+#[derive(Clone, Copy)]
+struct ProbeView(PacketView);
+
+// SAFETY: PacketView is Copy, 'static, and has no invalid byte pattern.
+unsafe impl aya::Pod for ProbeView {}
+
+/// The same wrapper for the list value. `Action` has invalid discriminants, so the
+/// soundness here rests on the value only ever being read back after this crate wrote
+/// it, which is true of a test map.
+#[repr(transparent)]
+#[derive(Clone, Copy)]
+struct PodLpmValue(LpmValue);
+
+// SAFETY: LpmValue is Copy and 'static, and every value read out of this map was
+// written into it through this type.
+unsafe impl aya::Pod for PodLpmValue {}
+
+pub struct TestProg {
+    ebpf: Ebpf,
+    name: String,
+}
+
+impl TestProg {
+    pub fn load(name: &str) -> Self {
+        Self::load_with(name, DEFAULT_SETTINGS)
+    }
+
+    /// Loads with a policy word. The settings are a load-time global rather than a
+    /// map, so a different policy is a different load, which is also what a test
+    /// wants: nothing carries over between cases.
+    pub fn load_with(name: &str, settings: u32) -> Self {
+        Self::load_object(&object_path(), name, settings)
+    }
+
+    /// Loads a named object rather than the one the environment points at, for the one
+    /// measurement that has to compare two builds of the same program in one process.
+    pub fn load_object(path: &std::path::Path, name: &str, settings: u32) -> Self {
+        let object = fs::read(path).unwrap_or_else(|err| {
+            panic!(
+                "cannot read the eBPF object at {}: {err}\n\
+                 build it with: cd crates/lorica-ebpf && cargo +nightly build --release\n\
+                 or point LORICA_EBPF_OBJ at another one",
+                path.display()
+            )
+        });
+
+        let mut ebpf = EbpfLoader::new()
+            .override_global(SETTINGS_SYMBOL, &settings, true)
+            .load(&object)
+            .unwrap_or_else(|err| panic!("loading {} failed: {err}", path.display()));
+        let program: &mut Xdp = ebpf
+            .program_mut(name)
+            .unwrap_or_else(|| panic!("no program named {name} in {}", path.display()))
+            .try_into()
+            .expect("the program is not an XDP program");
+        program
+            .load()
+            .unwrap_or_else(|err| panic!("the verifier rejected {name}: {err}"));
+
+        Self {
+            ebpf,
+            name: name.to_owned(),
+        }
+    }
+
+    fn program(&self) -> &Xdp {
+        self.ebpf
+            .program(&self.name)
+            .expect("the program disappeared")
+            .try_into()
+            .expect("the program is not an XDP program")
+    }
+
+    pub fn run(&self, pkt: &[u8]) -> XdpAction {
+        let result = self
+            .program()
+            .test_run(TestRunOptions {
+                data_in: Some(pkt),
+                ..Default::default()
+            })
+            .unwrap_or_else(|err| panic!("test_run on {} bytes failed: {err}", pkt.len()));
+        XdpAction::from_return_value(result.return_value)
+    }
+
+    /// Average nanoseconds per invocation, chronometered by the kernel around the
+    /// loop. It excludes the syscall, the driver, the NAPI poll and the DMA, and it
+    /// does not need `bpf_stats_enabled`, whose instrumentation on this hardware
+    /// costs more than the budget being measured.
+    pub fn ns_per_run(&self, pkt: &[u8], repeat: u32) -> u128 {
+        let result = self
+            .program()
+            .test_run(TestRunOptions {
+                data_in: Some(pkt),
+                repeat,
+                ..Default::default()
+            })
+            .expect("test_run failed");
+        result.duration.as_nanos()
+    }
+
+    pub fn counter(&self, name: &str) -> u64 {
+        let id = CounterId::from_name(name)
+            .unwrap_or_else(|| panic!("no counter named {name} in CounterId"));
+        self.counter_at(id.index())
+    }
+
+    /// A raw slot. The ones above `CounterId::COUNT` belong to individual entries of
+    /// the unified list.
+    pub fn counter_at(&self, index: u32) -> u64 {
+        let map = self.ebpf.map("COUNTERS").expect("no COUNTERS map");
+        let counters: PerCpuArray<&MapData, u64> =
+            PerCpuArray::try_from(map).expect("COUNTERS is not a per-CPU array");
+        counters
+            .get(&index, 0)
+            .expect("reading a counter failed")
+            .iter()
+            .sum()
+    }
+
+    /// Writes one entry of the unified list, the way the loader will.
+    pub fn insert(&mut self, key: LpmKey, value: LpmValue) {
+        let map = self
+            .ebpf
+            .map_mut("UNIFIED_LIST")
+            .expect("no UNIFIED_LIST map");
+        let mut list: LpmTrie<&mut MapData, [u8; 16], PodLpmValue> =
+            LpmTrie::try_from(map).expect("UNIFIED_LIST is not an LPM trie");
+        list.insert(&Key::new(key.prefix_len, key.addr), PodLpmValue(value), 0)
+            .expect("inserting into the unified list failed");
+    }
+
+    /// Reads an entry back out of the unified list.
+    ///
+    /// Half of the TTL criterion is that an expired entry is *still in the map* and
+    /// merely stops being applied. A verdict alone cannot tell that apart from an
+    /// entry the test failed to insert, so the read exists.
+    pub fn list_get(&self, key: LpmKey) -> Option<LpmValue> {
+        let map = self.ebpf.map("UNIFIED_LIST").expect("no UNIFIED_LIST map");
+        let list: LpmTrie<&MapData, [u8; 16], PodLpmValue> =
+            LpmTrie::try_from(map).expect("UNIFIED_LIST is not an LPM trie");
+        list.get(&Key::new(key.prefix_len, key.addr), 0)
+            .ok()
+            .map(|value| value.0)
+    }
+
+    /// The parsed view of the last packet run. Only present in a build with the
+    /// `parse-probe` feature of lorica-ebpf.
+    pub fn parsed(&self) -> PacketView {
+        let map = self.ebpf.map("PARSE_PROBE").unwrap_or_else(|| {
+            panic!(
+                "no PARSE_PROBE map: the object was built without the parse-probe                  feature of lorica-ebpf"
+            )
+        });
+        let probe: PerCpuArray<&MapData, ProbeView> =
+            PerCpuArray::try_from(map).expect("PARSE_PROBE is not a per-CPU array");
+        let values = probe.get(&0, 0).expect("reading the parse probe failed");
+        // test_run runs on one CPU, so one slot is written. Pick it by its non-zero
+        // packet length rather than assuming which CPU ran.
+        values
+            .iter()
+            .map(|probe| probe.0)
+            .find(|view| view.packet_len != 0)
+            .expect("no CPU slot of the parse probe was written")
+    }
+
+    /// The clock the program compares deadlines against: the rate it ticks at, measured,
+    /// and one reading of it.
+    ///
+    /// It goes through the probe of the object under test, so a deadline a test builds
+    /// sits on exactly the counter the packet path will read. Nothing in userspace reports
+    /// either number, which is why this is a program run and not a file read.
+    pub fn clock(&mut self) -> Clock {
+        clock::calibrate(&mut self.ebpf).expect("calibrating the kernel clock failed")
+    }
+
+    pub fn helper_counts(&self) -> HelperCounts {
+        let map = self.ebpf.map("HELPER_COUNTS").unwrap_or_else(|| {
+            panic!(
+                "no HELPER_COUNTS map: the object was built without the count-helpers \
+                 feature of lorica-ebpf"
+            )
+        });
+        let counts: PerCpuArray<&MapData, u64> =
+            PerCpuArray::try_from(map).expect("HELPER_COUNTS is not a per-CPU array");
+        let read = |index: u32| -> u64 {
+            counts
+                .get(&index, 0)
+                .expect("reading a helper count failed")
+                .iter()
+                .sum()
+        };
+        HelperCounts {
+            map_lookups: read(0),
+            clock_reads: read(1),
+        }
+    }
+}
+
+/// Where the eBPF object comes from.
+///
+/// Named here rather than in each test: the object is a different target built by a
+/// different toolchain, so cargo cannot produce it as a dependency and the path has
+/// to be agreed on once.
+pub fn object_path() -> PathBuf {
+    if let Ok(path) = env::var("LORICA_EBPF_OBJ") {
+        return PathBuf::from(path);
+    }
+    default_object_path()
+}
+
+/// The object without instrumentation, which is the one that ships.
+///
+/// Anything measured as a property of the program — its call budget, its JITed size —
+/// comes from this one: the instrumented build adds a map write per counted call, so
+/// measuring that build would be measuring the instrumentation.
+pub fn plain_object_path() -> PathBuf {
+    if let Ok(path) = env::var("LORICA_EBPF_PLAIN_OBJ") {
+        return PathBuf::from(path);
+    }
+    default_object_path()
+}
+
+fn default_object_path() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../lorica-ebpf/target/bpfel-unknown-none/release/lorica-ebpf")
+}
+
+/// Loads an object into the kernel without the test-run wrapper, for the tests that
+/// attach it to a real interface rather than feeding it packets.
+pub fn load_raw(path: &std::path::Path, settings: u32) -> Ebpf {
+    let object = fs::read(path)
+        .unwrap_or_else(|err| panic!("cannot read the eBPF object at {}: {err}", path.display()));
+    EbpfLoader::new()
+        .override_global(SETTINGS_SYMBOL, &settings, true)
+        .load(&object)
+        .unwrap_or_else(|err| panic!("loading {} failed: {err}", path.display()))
+}
+
+/// Verifies one program of a loaded object and hands it back ready to attach.
+pub fn xdp_program<'a>(ebpf: &'a mut Ebpf, name: &str) -> &'a mut Xdp {
+    let program: &mut Xdp = ebpf
+        .program_mut(name)
+        .unwrap_or_else(|| panic!("no program named {name}"))
+        .try_into()
+        .expect("the program is not an XDP program");
+    program
+        .load()
+        .unwrap_or_else(|err| panic!("the verifier rejected {name}: {err}"));
+    program
+}

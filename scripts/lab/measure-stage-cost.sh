@@ -44,11 +44,11 @@ LEVELS=
 # script fails on excess: that is assertion 3, armed on instructions and not on nanoseconds
 # because instructions reproduce to about one per packet where the nanoseconds drift.
 MAX_INSTRUCTIONS=
-IFACE=${CARAPACE_IFACE:-enp6s19}
-BUILD_HOST=${CARAPACE_BUILD_HOST:-lab-dev}
-TARGET_HOST=${CARAPACE_TARGET_HOST:-lab-target}
-REMOTE_DIR=${CARAPACE_REMOTE_DIR:-src}
-RUN_DIR=${CARAPACE_RUN_DIR:-run}
+IFACE=${LORICA_IFACE:-enp6s19}
+BUILD_HOST=${LORICA_BUILD_HOST:-lab-dev}
+TARGET_HOST=${LORICA_TARGET_HOST:-lab-target}
+REMOTE_DIR=${LORICA_REMOTE_DIR:-src}
+RUN_DIR=${LORICA_RUN_DIR:-run}
 
 # The floor and the repeat count are properties of the measurement, not knobs: the floor
 # is the previous phase's XDP_PASS figure on this machine and the repeat count is the one
@@ -102,9 +102,9 @@ remote "$TARGET_HOST" "bash ~/$RUN_DIR/target-tests/target-run.sh --nocapture" 2
 [ "${PIPESTATUS[0]}" -eq 0 ] || die "the sweep on $TARGET_HOST failed, see $sweep"
 
 runner="cd ~/$RUN_DIR/target-tests && b=\$(ls bin/* | head -1) && sudo -n perf stat -x, \
--e cycles,instructions,cache-misses -- env CARAPACE_EBPF_OBJ=\$PWD/ebpf/instrumented \
-CARAPACE_EBPF_PLAIN_OBJ=\$PWD/ebpf/plain \
-CARAPACE_STAGE_CUTOFF=LEVEL \$b \
+-e cycles,instructions,cache-misses -- env LORICA_EBPF_OBJ=\$PWD/ebpf/instrumented \
+LORICA_EBPF_PLAIN_OBJ=\$PWD/ebpf/plain \
+LORICA_STAGE_CUTOFF=LEVEL \$b \
 one_level_of_the_pipeline_under_a_profiler --exact --nocapture"
 
 echo 'stages,label,ns_raw,ns_above_floor,ns_this_level,cycles,instructions,ipc,llc_misses,llc_misses_per_packet' > "$csv"

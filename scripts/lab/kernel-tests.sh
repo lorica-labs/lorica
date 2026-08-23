@@ -15,9 +15,9 @@ set -uo pipefail
 
 cd "$(dirname "$0")/../.." || exit 1
 
-CRATE=carapace-dataplane
+CRATE=lorica-dataplane
 TEST=""
-EBPF_FEATURES=${CARAPACE_EBPF_FEATURES:-parse-probe,count-helpers}
+EBPF_FEATURES=${LORICA_EBPF_FEATURES:-parse-probe,count-helpers}
 PASS_THROUGH=()
 
 while [ $# -gt 0 ]; do
@@ -39,20 +39,20 @@ sudo -n true 2>/dev/null \
 # shellcheck source=scripts/lab/build-ebpf.sh
 . scripts/lab/build-ebpf.sh
 build_ebpf "$EBPF_FEATURES" || die "the eBPF build failed"
-export CARAPACE_EBPF_PLAIN_OBJ=$EBPF_PLAIN_OBJ
-export CARAPACE_EBPF_OBJ=$EBPF_OBJ
+export LORICA_EBPF_PLAIN_OBJ=$EBPF_PLAIN_OBJ
+export LORICA_EBPF_OBJ=$EBPF_OBJ
 
 # The userspace feature has to match the object: a test that reads the helper counts
 # would otherwise look for a map the program was not built with.
 # Each feature names its crate, because the crate under test is not always the one
 # that declares them: the agent has the tick assertion and the dataplane has the
 # features that assertion needs.
-features=carapace-dataplane/kernel-tests
+features=lorica-dataplane/kernel-tests
 case $EBPF_FEATURES in
-    *count-helpers*) features=$features,carapace-dataplane/count-helpers ;;
+    *count-helpers*) features=$features,lorica-dataplane/count-helpers ;;
 esac
 case $EBPF_FEATURES in
-    *stage-cutoff*) features=$features,carapace-dataplane/stage-cutoff ;;
+    *stage-cutoff*) features=$features,lorica-dataplane/stage-cutoff ;;
 esac
 
 args=(test -p "$CRATE" --features "$features" --no-run
@@ -78,7 +78,7 @@ for line in sys.stdin:
 status=0
 for binary in "${binaries[@]}"; do
     printf '\n--- %s\n' "$(basename "$binary")"
-    sudo -n --preserve-env=CARAPACE_EBPF_OBJ,CARAPACE_EBPF_PLAIN_OBJ \
+    sudo -n --preserve-env=LORICA_EBPF_OBJ,LORICA_EBPF_PLAIN_OBJ \
         "$binary" "${PASS_THROUGH[@]}" || status=1
 done
 

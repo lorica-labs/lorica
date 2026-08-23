@@ -10,7 +10,7 @@ Two halves read it.
 
 | Half | Where | What it asserts |
 |---|---|---|
-| `crates/carapace-dataplane/tests/legit_trace.rs` | build VM, CI | Every packet through `BPF_PROG_TEST_RUN` returns `XDP_PASS`, and every counter of `CounterId::ALL` that is not one of five pass-counters is zero afterwards |
+| `crates/lorica-dataplane/tests/legit_trace.rs` | build VM, CI | Every packet through `BPF_PROG_TEST_RUN` returns `XDP_PASS`, and every counter of `CounterId::ALL` that is not one of five pass-counters is zero afterwards |
 | `scripts/lab/replay-legit.sh` | generator VM 902 | The trace actually left the wire whole, at a rate it prints with every result |
 
 The wire half's receiving end — the drop counters at zero and `xdp:xdp_exception` at zero — is read
@@ -68,7 +68,7 @@ host asked for it. It is the packet most likely to make this test go red the day
 A **fragmented UDP datagram** is not in this fixture, and the reason is not that it is hard to
 write: the sanity stage drops it. The first fragment of a fragmented UDP datagram carries the UDP
 header, whose length field states the length of the whole reassembled datagram, which is by
-definition larger than the fragment carrying it. `crates/carapace-ebpf/src/stage/sanity.rs` compares
+definition larger than the fragment carrying it. `crates/lorica-ebpf/src/stage/sanity.rs` compares
 `l4_len` against the bytes present in *this* packet and refuses the excess, so the first fragment of
 every fragmented UDP datagram — IKE over UDP 500 without RFC 7383, a fragmented DNS response over
 UDP, a fragmented QUIC datagram — is dropped with `sanity_l4_length`, before stage 4 ever gets to
@@ -86,7 +86,7 @@ regression test for the fix.
 The fixture is a fixture: tens of packets per case, enough for a per-packet verdict. The reference
 corpus is a capture, it is large, and it does not live in this repository. **Size budget: nothing in
 `bench/traces/` over 500 kB.** A corpus goes on the measurement machine's disk and is pointed at
-with `CARAPACE_LEGIT_TRACE`, which the offline test reads instead of the fixture.
+with `LORICA_LEGIT_TRACE`, which the offline test reads instead of the fixture.
 
 On the target, `enp6s19` only, never the LAN NIC:
 

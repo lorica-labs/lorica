@@ -15,8 +15,8 @@
 set -uo pipefail
 
 OUT=bench/results/bridge-ceiling
-DEV=${CARAPACE_IFACE:-enp6s19}
-GEN_DEV=${CARAPACE_GEN_IFACE:-enp6s19}
+DEV=${LORICA_IFACE:-enp6s19}
+GEN_DEV=${LORICA_GEN_IFACE:-enp6s19}
 GEN_HOST=lab-target       # placeholder, must be overridden with the gen host
 DST_IP=
 RATES="100kpps 250kpps 500kpps 750kpps 1Mpps 1500kpps 2Mpps 3Mpps"
@@ -64,8 +64,8 @@ rx_packets() { cat "/sys/class/net/$DEV/statistics/rx_packets"; }
 # vhost-net runs on the hypervisor and its cost is not in any guest counter.
 # Measured on the host if reachable, left blank and flagged in the report if not.
 vhost_cpu() {
-    if command -v ssh >/dev/null && [ -n "${CARAPACE_PVE_HOST:-}" ]; then
-        ssh -o BatchMode=yes "$CARAPACE_PVE_HOST" \
+    if command -v ssh >/dev/null && [ -n "${LORICA_PVE_HOST:-}" ]; then
+        ssh -o BatchMode=yes "$LORICA_PVE_HOST" \
             "top -bn1 | awk '/vhost/ {s+=\$9} END {print s+0}'" 2>/dev/null || echo ""
     else
         echo ""
@@ -93,9 +93,9 @@ for rate in $RATES; do
     for _ in $(seq "$REPEAT"); do
         before=$(rx_packets)
         # gen-udp-flood.sh builds its own trafgen config on the sender from the
-        # target address; it is deployed on the gen host under ~/carapace.
+        # target address; it is deployed on the gen host under ~/lorica.
         ssh -o BatchMode=yes "$GEN_HOST" \
-            "~/carapace/scripts/lab/gen-udp-flood.sh --dev '$GEN_DEV' --dst-ip '$DST_IP' --dst-mac '$dst_mac' --rate ${offered}pps --duration ${SECONDS_PER}s --cpus 2" \
+            "~/lorica/scripts/lab/gen-udp-flood.sh --dev '$GEN_DEV' --dst-ip '$DST_IP' --dst-mac '$dst_mac' --rate ${offered}pps --duration ${SECONDS_PER}s --cpus 2" \
             >/dev/null 2>&1 &
         gen_pid=$!
         sleep "$SECONDS_PER"
