@@ -28,7 +28,7 @@ jobs:
         with:
           components: rust-src
       - uses: Swatinem/rust-cache@v2
-      - run: cargo install bpf-linker --locked
+      - uses: ./.github/actions/bpf-linker
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - name: build the eBPF program
@@ -60,7 +60,7 @@ jobs:
         with:
           components: rust-src
       - uses: Swatinem/rust-cache@v2
-      - run: cargo install bpf-linker --locked
+      - uses: ./.github/actions/bpf-linker
       # clang builds the bench objects the attach test takes the hook with, perf
       # counts the xdp_exception tracepoint.
       - run: sudo apt-get update && sudo apt-get install -y clang linux-tools-common linux-tools-generic
@@ -99,17 +99,30 @@ jobs:
       # catches a regression of an order of magnitude, and the number that stands is
       # the one from the target.
       - name: agent RSS and CPU
-        run: |
-          cargo build --release -p loricad
-          scripts/lab/measure-agent-cpu.sh             --agent target/release/loricad             --object crates/lorica-ebpf/target/bpfel-unknown-none/release/lorica-ebpf             --counters 50000 --hz 10 --sweep-every 20             --duration 70 --settle 30 --cpu-budget 3.0 --rss-max 51200             --out bench/results/agent-cpu
+        run: cargo build --release -p loricad
+      - name: measure the agent RSS and CPU
+        run: >
+          scripts/lab/measure-agent-cpu.sh
+          --agent target/release/loricad
+          --object crates/lorica-ebpf/target/bpfel-unknown-none/release/lorica-ebpf
+          --counters 50000
+          --hz 10
+          --sweep-every 20
+          --duration 70
+          --settle 30
+          --cpu-budget 3.0
+          --rss-max 51200
+          --out bench/results/agent-cpu
 
   # Assertion 3, the per-packet cost, is deliberately not a step here.
   #
-  # It is armed, and it is armed on the measurement VM:
-  # `measure-stage-cost.sh --max-instructions 1325 --max-ns 144`. Both halves, because the
-  # instruction count is what reproduces and the nanoseconds are what the promise is about;
-  # the script says out loud when either flag is missing, since a ceiling of 765 stood
-  # against a program of 1317 for a whole phase and the silence was the whole problem.
+  # It is armed, and it is armed on the measurement VM: `measure-stage-cost.sh
+  # --max-instructions 1325 --max-cycles 545 --max-ns 144`. Three ceilings, because they fail
+  # for different reasons: the instruction count is deterministic to 0.09 %, the cycle count
+  # to 0.4 % and needs no clock the guest cannot read, and the nanoseconds are what the
+  # promise is about even though they come from a field measured at half the CPU time. The
+  # script says out loud when any of the three is missing, since a ceiling of 765 stood
+  # against a program of 1317 and the silence was the whole problem.
   # Two reasons it cannot be a runner step. The script drives
   # two lab machines over SSH, one to build a static musl binary and one to run it,
   # because the machine with the target kernel has no toolchain. And the quantity is
@@ -147,7 +160,7 @@ jobs:
         with:
           components: rust-src
       - uses: Swatinem/rust-cache@v2
-      - run: cargo install bpf-linker --locked
+      - uses: ./.github/actions/bpf-linker
       # The test binaries are static musl: a virtme-ng guest has the host filesystem
       # read-only and no toolchain, so nothing can be built on the kernel under test.
       - run: rustup target add x86_64-unknown-linux-musl
