@@ -266,8 +266,24 @@ fn the_excess_is_counted_and_passed_when_the_stage_is_not_armed() {
 ///
 /// The printed figure is only the measurement when this case runs alone — libtest runs the
 /// rest of this file on the other CPUs, which competes with the four pinned threads and
-/// reads back as less contention than there is. Alone it reproduces inside a tenth:
+/// reads back as less contention than there is. Run it alone with
 /// `--exact the_lock_free_bank_leaks_less_than_the_layout_it_was_retained_over`.
+///
+/// **And then do not read one run as the number.** Nine isolated runs per arm, interleaved
+/// so drift could not pick a side, put this figure between **1.6 and 4.0 and bimodal** — a
+/// cluster near 1.7 and another near 3.1 — on a four-vCPU guest. Single readings of 1.53,
+/// 1.79, 2.98, 3.07 and 3.27 have all been taken from that same distribution and each one
+/// looked like a result at the time. What reproduces is the gate, not the value: every
+/// observation stays under the thread count.
+///
+/// One hypothesis died here and it is worth keeping. Removing the division from `charge` was
+/// expected to shorten the read-modify-write window and so to *reduce* the leak — accuracy
+/// and speed moving together. Measured, it went the other way: median 1.79x before the
+/// change, 2.98x after. The mechanism runs backwards from the guess, because a shorter update
+/// fits more updates per CPU inside one jiffy, so more CPUs land in the same window per tick
+/// and one tick's drain is spent more times. **Speed buys contention here, not accuracy**,
+/// and an optimisation that degrades enforcement precision is worth knowing about even when
+/// the gate still holds.
 #[test]
 fn the_lock_free_bank_leaks_less_than_the_layout_it_was_retained_over() {
     /// What four cores doing nothing but the update measured. Reported against, not
