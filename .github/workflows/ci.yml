@@ -125,10 +125,15 @@ jobs:
   # archive. A runner without /dev/kvm makes those versions declared unobtained
   # rather than silently skipped, which is why this job is allowed to report amber.
   kernel-matrix:
-    # The default branch, whatever it is called this phase, rather than a name spelled out
-    # here. The two jobs above are blocking on every branch; this one costs minutes and
-    # only has to hold on the branch a phase integrates into.
-    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    # On the default branch and on every pull request, and no branch name spelled out here.
+    #
+    # The default branch carries only closed phases, so a phase in progress lives on its own
+    # integration branch and this job would never see it. A pull request is how that work
+    # reaches the default branch, which makes the merge the moment the three-kernel guarantee
+    # actually has to hold. During a phase the matrix is run by hand — it is a line of the
+    # phase verification sequence — and that is where it has caught things: twice in phase 1,
+    # once a JITed ceiling and once a test that assumed the machine had a routing table.
+    if: github.event_name == 'pull_request' || github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
     runs-on: ubuntu-24.04
     continue-on-error: true
     steps:
