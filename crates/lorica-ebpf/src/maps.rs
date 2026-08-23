@@ -8,7 +8,7 @@ use aya_ebpf::{
     macros::map,
     maps::{Array, LpmTrie, PerCpuArray, lpm_trie::Key},
 };
-use lorica_common::{CounterId, LpmKey, LpmValue};
+use lorica_common::{Bucket, CounterId, LpmKey, LpmValue};
 
 /// Entries of the unified list, and the per-entry counter slots that go with them.
 const DEFAULT_LIST_ENTRIES: u32 = 1024;
@@ -62,3 +62,49 @@ pub static PARSE_PROBE: PerCpuArray<lorica_common::PacketView> =
 #[map]
 pub static HELPER_COUNTS: PerCpuArray<u64> =
     PerCpuArray::with_max_entries(crate::helpers::HelperKind::COUNT, 0);
+
+/// Buckets in the bank.
+///
+/// A compile-time constant and not a load-time global, unlike the sizes above, because
+/// the program computes an index modulo this number: resizing the bank would mean
+/// patching the modulo and the map size together, and nothing in this phase resizes it.
+pub const BANK_BUCKETS: u32 = 1024;
+
+/// One bucket, on a cache line of its own.
+///
+/// The alignment is a measurement and not hygiene. A [`Bucket`] is 16 bytes, so four of
+/// them share a 64-byte line, and four cores updating four *different* buckets inside one
+/// line measured 1.99 of scaling where four cores on four lines measured 3.88 — half the
+/// benefit of the cores lost to false sharing. `lorica_common::Bucket` stays the two words
+/// the arithmetic needs; the padding belongs on this side, in the same envelope that would
+/// have carried a `bpf_spin_lock` had the lock been retained. 1024 buckets go from 16 KiB
+/// to 64 KiB, which is nothing against the memlock budget of any of the three profiles.
+#[repr(C, align(64))]
+#[derive(Clone, Copy)]
+pub struct BankSlot {
+    pub bucket: Bucket,
+}
+
+/// The leaky-bucket bank: shared, lock-free, one entry per bucket.
+///
+/// **Why no lock.** Measured on four pinned vCPU against a concentrated distribution, a
+/// `bpf_spin_lock` around this update cost 1 988 ns per packet and 0.24 of the aggregate
+/// throughput of a single core: the second, third and fourth CPU do not fail to help, they
+/// slow the first one down. It collapses under exactly the attack shape it exists to
+/// handle, and it would have put the path at three lookups and three helpers, over budget.
+/// Lock-free measured 84 ns against 107 uncontended and leaks at most 2.62x in the worst
+/// concurrency case.
+///
+/// **Why not per-CPU**, which needs no synchronisation at all: the enforcement diluted to
+/// exactly 1/N — four CPUs charged 0.2500 of what was offered — so a flood spread across
+/// source ports would collect 4.00x the configured budget for free.
+///
+/// **Why one entry per bucket and not one entry holding the bank.** The saved lookup saves
+/// nothing, 85 ns against 87, because the verifier inlines an `ARRAY` lookup instead of
+/// emitting a call. And the index comes from a hash of the source address, so it is
+/// attacker-influenced: an index into one large value has to be masked, and a mask is
+/// exactly what LLVM moves or drops when it believes it knows the bound — the refusal
+/// elsewhere in this program reads `var_off=(0x0; 0xff)`. One entry per bucket makes the
+/// lookup itself the bound check, which the verifier proves and no optimiser can remove.
+#[map]
+pub static BUCKET_BANK: Array<BankSlot> = Array::with_max_entries(BANK_BUCKETS, 0);

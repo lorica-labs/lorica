@@ -5,7 +5,7 @@
 //! it is a single call site rather than one per caller: inlining the counter bump
 //! would multiply its map lookup by the number of stages that count.
 //!
-//! These four keep `#[inline(never)]` unconditionally, unlike the parsers and the
+//! These keep `#[inline(never)]` unconditionally, unlike the parsers and the
 //! stages, which carry it only under the `profiling` feature. Here it is not
 //! instrumentation: the static call budget is a count of the calls present in the
 //! object, and inlining a wrapper would multiply its call by the number of callers.
@@ -14,9 +14,9 @@ use aya_ebpf::{
     helpers::{bpf_jiffies64, bpf_ktime_get_ns},
     maps::lpm_trie::Key,
 };
-use lorica_common::{CounterId, LpmValue};
+use lorica_common::{Charge, CounterId, LpmValue, Rate};
 
-use crate::maps::{COUNTERS, UNIFIED_LIST};
+use crate::maps::{BUCKET_BANK, COUNTERS, UNIFIED_LIST};
 
 /// A packet is one host, so the lookup asks for the full width of the key and the trie
 /// answers with the longest entry that covers it. Precedence is the specificity of the
@@ -120,6 +120,29 @@ pub fn list_lookup(src: &[u8; 16]) -> Option<LpmValue> {
     #[cfg(feature = "count-helpers")]
     observe(HelperKind::MapLookup);
     UNIFIED_LIST.get(Key::new(HOST_PREFIX_BITS, *src)).copied()
+}
+
+/// The one lookup of the bucket bank, drain and charge included.
+///
+/// It lives here for the same reason as the list lookup: a map lookup issued straight from
+/// a stage is invisible to the instrumented counter and to the static audit, which is a
+/// mistake this program has already paid for once. A bank lookup is counted as a
+/// [`HelperKind::MapLookup`] and not as a kind of its own.
+///
+/// The update happens here rather than being handed back as a pointer because a
+/// `PTR_TO_MAP_VALUE` returned from a bpf-to-bpf subprogram is not something to bet the
+/// floor kernel on, and the arithmetic itself is `lorica_common::Bucket::charge` either
+/// way. A missing slot answers `Within`: no bank is not a reason to refuse a packet.
+#[inline(never)]
+pub fn bank_charge(index: u32, rate: Rate, now: u64, size: u32) -> Charge {
+    #[cfg(feature = "count-helpers")]
+    observe(HelperKind::MapLookup);
+    match BUCKET_BANK.get_ptr_mut(index) {
+        // SAFETY: the pointer comes from a successful lookup, and `BankSlot` is `repr(C)`
+        // with the bucket as its only field, so the value starts where the slot does.
+        Some(slot) => unsafe { (*slot).bucket.charge(rate, now, size) },
+        None => Charge::Within,
+    }
 }
 
 /// Publishes the parsed view for the encapsulation tests. Deliberately outside the

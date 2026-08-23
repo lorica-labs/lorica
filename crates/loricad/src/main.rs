@@ -18,8 +18,10 @@ use std::{
 
 use anyhow::{Context, Result, bail};
 use aya::{Ebpf, EbpfLoader};
-use lorica_common::{Clock, CounterId, DEFAULT_SETTINGS, SETTINGS_SYMBOL};
-use lorica_dataplane::{clock, maps};
+use lorica_common::{
+    BUCKET_KEY_SYMBOLS, Clock, CounterId, DEFAULT_SETTINGS, SETTINGS_SYMBOL, SipHasher24,
+};
+use lorica_dataplane::{clock, loader, maps};
 use tokio::{runtime::Builder, time::MissedTickBehavior};
 
 #[global_allocator]
@@ -218,8 +220,17 @@ async fn serve(options: Options) -> Result<()> {
 fn load(object: &Path, slots: u32) -> Result<(&'static Ebpf, Clock)> {
     let bytes = std::fs::read(object)
         .with_context(|| format!("cannot read the eBPF object at {}", object.display()))?;
+    // Drawn here and never written down. The bucket index is chosen by whoever sends the
+    // packet, so an unkeyed one would have the same collisions on every host and at every
+    // boot. The two budgets keep the unconfigured initialisers of the program: reading them
+    // from a configuration file is not this phase.
+    let key = SipHasher24::key_words(
+        loader::draw_index_key().context("cannot draw the key of the bucket index")?,
+    );
     let mut ebpf = EbpfLoader::new()
         .override_global(SETTINGS_SYMBOL, &DEFAULT_SETTINGS, true)
+        .override_global(BUCKET_KEY_SYMBOLS[0], &key[0], true)
+        .override_global(BUCKET_KEY_SYMBOLS[1], &key[1], true)
         .map_max_entries("COUNTERS", slots)
         .load(&bytes)
         .with_context(|| format!("loading {} failed", object.display()))?;
