@@ -45,4 +45,14 @@ remote "$BUILD_HOST" "cat ~/$REMOTE_DIR/target/target-tests.tar" \
     | remote "$TARGET_HOST" "rm -rf ~/$RUN_DIR && mkdir -p ~/$RUN_DIR && tar xf - -C ~/$RUN_DIR" \
     || die "could not ship the test binaries to $TARGET_HOST"
 
-remote "$TARGET_HOST" "bash ~/$RUN_DIR/target-tests/target-run.sh ${PASS_THROUGH[*]}"
+# The knobs travel with the command, because an environment does not cross an ssh session.
+# Values are interface names, window lengths and level counts, so none of them carries a
+# space or an apostrophe — an apostrophe here would break the quoting envelope of the remote
+# command rather than anything inside it, and the error would point at the last line of the
+# script it was wrapped in.
+knobs=
+for name in $(env | cut -d= -f1 | grep '^LORICA_'); do
+    knobs="$knobs $name=${!name}"
+done
+
+remote "$TARGET_HOST" "$knobs bash ~/$RUN_DIR/target-tests/target-run.sh ${PASS_THROUGH[*]}"

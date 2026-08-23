@@ -88,11 +88,16 @@ for line in sys.stdin:
 ' < "$manifest")
 [ "${#binaries[@]}" -gt 0 ] || die "cargo produced no test executable"
 
-# sudo resets the environment, so a variable a test reads has to be named here or the
-# test sees its default and reports on something else entirely. The wire trace is driven
-# through these three: which interface it holds, how long it holds it, and which subnet a
-# device has to be addressed inside to be accepted at all.
-KEEP=LORICA_EBPF_OBJ,LORICA_EBPF_PLAIN_OBJ,LORICA_IFACE,LORICA_TEST_SUBNET,LORICA_WIRE_WINDOW_MS
+# sudo resets the environment, so a variable a test reads has to be named here or the test
+# silently sees its default and reports on something else entirely — which is the worst
+# failure mode available, since the run still goes green.
+#
+# The list is derived from the environment rather than written down. A written list was
+# wrong within a day: it named the three knobs of the wire trace and missed the trace path,
+# the convergence window, the cutoff level and the pass count, all of which the tests read.
+# Deriving it means the next knob works without anyone remembering this line exists.
+KEEP=$(env | cut -d= -f1 | grep '^LORICA_' | paste -sd, -)
+[ -n "$KEEP" ] || die "no LORICA_* variable is exported, so the object path cannot reach the test"
 
 status=0
 for binary in "${binaries[@]}"; do
