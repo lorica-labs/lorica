@@ -68,8 +68,11 @@ pub static HELPER_COUNTS: PerCpuArray<u64> =
 /// A compile-time constant and not a load-time global, unlike the sizes above, because the
 /// index is the top `log2` of this number bits of the hash: resizing the bank would mean
 /// patching a shift width and the map size together, and nothing in this phase resizes it.
-/// A power of two, so the reduction is that shift and no division is emitted.
-pub const BANK_BUCKETS: u32 = 1024;
+/// A power of two, so the reduction is that shift and no division is emitted. The value
+/// itself lives in `lorica_common` because the memlock budget is computed in a crate that
+/// cannot see this one, and a bank the budget does not know about is kernel memory nobody
+/// counted.
+pub const BANK_BUCKETS: u32 = lorica_common::DEFAULT_BANK_BUCKETS;
 
 /// One bucket, on a cache line of its own.
 ///
@@ -85,6 +88,13 @@ pub const BANK_BUCKETS: u32 = 1024;
 pub struct BankSlot {
     pub bucket: Bucket,
 }
+
+// The budget charges a cache line an entry. If the alignment ever stopped producing one,
+// the budget would be charging for padding the kernel does not allocate.
+const _: () = assert!(
+    core::mem::size_of::<BankSlot>() as u64 == lorica_common::BANK_SLOT_BYTES,
+    "the bank slot is no longer the size the memlock budget charges for it"
+);
 
 /// The leaky-bucket bank: shared, lock-free, one entry per bucket.
 ///

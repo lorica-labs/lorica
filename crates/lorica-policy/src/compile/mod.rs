@@ -196,6 +196,7 @@ pub fn compile(
         unified_list_entries,
         // The named counters, then one slot per entry the list can hold.
         counter_entries: CounterId::COUNT.saturating_add(unified_list_entries),
+        bank_buckets: lorica_common::DEFAULT_BANK_BUCKETS,
     };
 
     let needed = sizes.memlock_bytes(model);

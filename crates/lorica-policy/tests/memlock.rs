@@ -139,3 +139,35 @@ fn the_counter_map_holds_a_slot_per_entry() {
         lorica_common::CounterId::COUNT + out.sizes.unified_list_entries
     );
 }
+
+/// The bank is charged, and charged as a shared map.
+///
+/// It was not, for as long as it existed: `MapSizes` knew the list and the counters, so the
+/// budget passed its own audit without ever being told about a map the program creates. The
+/// number is small — 64 KiB against budgets in megabytes — which is exactly why nothing
+/// would have noticed. So the assertion is on the arithmetic and not on a limit: one more
+/// bucket costs one cache line, no processor count multiplies it, and the day the bank is
+/// sized from configuration this is the test that already knew.
+#[test]
+fn the_bucket_bank_costs_a_cache_line_a_bucket() {
+    let out = compile(&config("host", 0), CLOCK, MemlockModel::MEASURED).unwrap();
+    assert_eq!(out.sizes.bank_buckets, lorica_common::DEFAULT_BANK_BUCKETS);
+
+    let mut one_more = out.sizes;
+    one_more.bank_buckets += 1;
+    assert_eq!(
+        one_more.memlock_bytes(MemlockModel::MEASURED),
+        out.sizes.memlock_bytes(MemlockModel::MEASURED) + lorica_common::BANK_SLOT_BYTES,
+        "a bucket has to cost the slot the kernel allocates for it"
+    );
+
+    // Shared and not per-CPU, so the processor count is not in it. The counters are the
+    // other way round, which is what makes this worth asserting rather than assuming.
+    let mut bank_only = out.sizes;
+    bank_only.unified_list_entries = 0;
+    bank_only.counter_entries = 0;
+    assert_eq!(
+        bank_only.memlock_bytes(MemlockModel::for_cpus(1)),
+        bank_only.memlock_bytes(MemlockModel::for_cpus(64))
+    );
+}

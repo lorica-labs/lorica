@@ -11,7 +11,10 @@ pub mod hash;
 pub mod ttl;
 pub mod wire;
 
-pub use bucket::{BURST_MAX, BankLayout, Bucket, Charge, Drain, Rate, SHARE_SCALE, UNITS_PER_BYTE};
+pub use bucket::{
+    BANK_SLOT_BYTES, BURST_MAX, BankLayout, Bucket, Charge, DEFAULT_BANK_BUCKETS, Drain, Rate,
+    SHARE_SCALE, UNITS_PER_BYTE,
+};
 pub use hash::{MultiplyShift, SipHasher24, fast_hash, key_words};
 pub use ttl::{Clock, Deadline};
 pub use wire::{

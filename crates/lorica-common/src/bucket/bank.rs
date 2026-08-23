@@ -7,6 +7,26 @@ use super::leaky::{Drain, Rate};
 /// traffic would be measuring the sampling noise.
 pub const SHARE_SCALE: u32 = 1 << 16;
 
+/// Buckets the bank holds, and the one number the kernel side and the memlock budget both
+/// have to agree on.
+///
+/// Here rather than beside the map, because the map is declared in the eBPF crate and the
+/// memlock budget is computed in the policy crate, and neither can see the other. A bank
+/// that the budget does not know about is a map whose kernel memory nobody counted, which
+/// is how a profile passes its own audit while overrunning its limit.
+///
+/// A power of two, so the index is the top `log2` of this many bits of the keyed hash and
+/// no division is emitted.
+pub const DEFAULT_BANK_BUCKETS: u32 = 1024;
+
+/// Bytes one bucket occupies in the map, which is a cache line and not the sixteen bytes
+/// [`Bucket`](super::Bucket) needs.
+///
+/// The padding is a measurement: four cores updating four *different* buckets inside one
+/// 64-byte line scaled 1.99 where four cores on four lines scaled 3.88. It is the value
+/// size the kernel allocates, so it is the value size the budget charges.
+pub const BANK_SLOT_BYTES: u64 = 64;
+
 /// Shape of a bucket bank: how many buckets it holds, and across how many per-CPU
 /// shards the global rate is split.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

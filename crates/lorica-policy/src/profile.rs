@@ -112,11 +112,23 @@ impl MemlockModel {
 pub struct MapSizes {
     pub unified_list_entries: u32,
     pub counter_entries: u32,
+    /// Buckets in the leaky-bucket bank.
+    ///
+    /// Fixed by the program rather than by the configuration, so every profile carries the
+    /// same number and it is the same on all of them. It is in the model anyway, because a
+    /// map the budget does not know about is kernel memory nobody counted, and a profile
+    /// then passes its own audit while overrunning its limit. At the default it is 64 KiB
+    /// against budgets in megabytes — the point is that the number is charged and not that
+    /// it is large.
+    pub bank_buckets: u32,
 }
 
 impl MapSizes {
     pub const fn memlock_bytes(&self, model: MemlockModel) -> u64 {
         self.unified_list_entries as u64 * model.list_bytes_per_entry
             + self.counter_entries as u64 * model.counter_bytes_per_entry
+            // Not per-CPU, unlike the counters: the bank is shared, which is what lets the
+            // enforcement see the aggregate. So no processor count multiplies it.
+            + self.bank_buckets as u64 * lorica_common::BANK_SLOT_BYTES
     }
 }

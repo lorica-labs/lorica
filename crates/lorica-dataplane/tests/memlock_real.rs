@@ -114,6 +114,7 @@ fn every_profile_budget_is_stated_in_the_units_the_kernel_uses() {
         let sizes = lorica_policy::MapSizes {
             unified_list_entries: reserve,
             counter_entries: CounterId::COUNT + reserve,
+            bank_buckets: lorica_common::DEFAULT_BANK_BUCKETS,
         };
         let needed = sizes.memlock_bytes(model);
         println!(
