@@ -43,3 +43,47 @@ E5-2683 v3, virtio-net, 4 pinned vCPU). The recipe to regenerate any of these is
 
 The `xdp:xdp_exception` counter is zero on every retained run; any run with a nonzero value was
 discarded, not annotated.
+
+## Phase 1, measured 23 August 2026 on the same VM 901
+
+**Read this before any row above or below.** Every nanosecond in this file comes from the `duration`
+field of `BPF_PROG_TEST_RUN`, and that field was measured against the CPU time of the same work:
+**128 ns of `duration` for 262 ns of task-clock**, a stable factor of **2.06** over three levels and
+three campaigns. Ratios and stage-to-stage differences are sound; absolutes are about half the CPU
+time. Cycles, x86 instructions and task-clock agree with each other and put this host at
+**1.875–1.953 GHz with no turbo** — there is no `cpufreq` in the guest and `/proc/cpuinfo` reports the
+nominal TSC rate. **Cycles per packet is the figure to quote**, at 0.4 % reproducibility against 2.4 %
+for the nanoseconds.
+
+| Number | Value | Script | Raw data | Environment |
+|---|---|---|---|---|
+| Effective frequency, no turbo | 1.875–1.953 GHz, from `cycles / task-clock` | `perf stat -e cycles,instructions,task-clock` | one command, not retained | `stage-cost/env-20260823T170211Z.txt` |
+| `duration` against CPU time | 128 ns reported for 262 ns of task-clock, factor 2.06 | idem | idem | idem |
+| Per-packet cost, whole pipeline | **533 cycles**, 1298 x86 instructions, 131 ns of `duration` | `scripts/lab/measure-stage-cost.sh` | `stage-cost/stage-cost.csv` | `stage-cost/env-20260823T170211Z.txt` |
+| Assertion 3, three ceilings armed | 1325 instructions, 545 cycles, 144 ns | `measure-stage-cost.sh --max-instructions --max-cycles --max-ns` | `stage-cost/stage-cost.csv` | idem |
+| Stage 5 uRPF, armed | **+140 ns**, not the 48 ns a C fixture predicted | `--test per_packet_cost` | in the test output | idem |
+| Stage 6 signatures, whole catalogue vs none | 123 ns vs 99 ns; 7556 vs 6136 JITed | `--test per_packet_cost`, `--test signature_pruning` | in the test output | idem |
+| Stage 7 bank, division removed | −11 ns interleaved; IPC at that level stops falling, 1.986 → 2.077 | `--test per_packet_cost` | `stage-cost/stage-cost.csv` | idem |
+| Bucket index, SipHash-2-4 → multiply-shift | **−89 ns**, −1290 JITed bytes | `--test per_packet_cost`, `--test jited_size` | in the test output | idem |
+| JITed size, whole catalogue armed | 7577 bytes, ceiling 8330 | `--test jited_size` | in the test output | idem |
+| **Unified list, realistic absent key** | **414 ns at 1M entries** (p99 440), 27 bits shared | `--test measure_lpm_depth` | in the test output | idem |
+| Unified list, absent key outside the dense region | 109–117 ns, flat from 1 to 1M — **the old probe** | `--test measure_lpm_depth` | in the test output | idem |
+| Unified list, hit | 89 ns at 1 entry to 384 ns at 1M | `--test measure_lpm_depth` | in the test output | idem |
+| Bank leak, uniform distribution | **0.93–0.99 at every core count and window** — no leak | `--test stage_bucket --exact` | `bank-surface/surface.log` | idem |
+| Bank leak, concentrated, window as shipped | 1.42 at 4 cores (1.21–1.46 over 9 samples) | idem | `bank-surface/surface.log` | idem |
+| Bank leak, concentrated, window widened | 1.94 at 64 dead reads, 3.73 at 1024 | idem | `bank-surface/surface.log` | idem |
+| Enforcement at one thread, every arm | 0.93–0.99 of the configured rate | idem | `bank-surface/surface.log` | idem |
+| Zero false positives on the wire | 44 sent, 45 arrived, 0 drops, 0 `xdp_exception` | `scripts/lab/wire-trace.sh` | `wire-trace/wire-trace.txt` | `wire-trace/env-20260823T164106Z.txt` |
+| Keyed index, chosen collisions | chi-square 76.8 against a null-derived threshold of 1294.4 | `--test keyed_index` | in the test output | - |
+
+### Rows above this section that phase 1 superseded
+
+| Row | Was | Now |
+|---|---|---|
+| Per-packet cost, whole pipeline, after | 70 ns, three stages still stubs | 131 ns of `duration` with seven stages, **533 cycles** |
+| Per-packet cost, unified list lookup | 22 ns, "the dominant item now" | still dominant, and **414 ns** with a realistic key at 1M entries |
+| Assertion 3 quantity | 748.4–749.6, ceiling 765 | 1298.3, ceiling 1325, plus a cycle and a nanosecond ceiling |
+| BPF ISA level, instructions per packet | 944 at v3 | 1298 with seven stages |
+| Shared unlocked bank, lost updates | "charges 0.3819, so 2.62x offered" | that fixture had four cores doing nothing else; the real stage leaks **nothing** under a uniform distribution |
+| bpf_fib_lookup vs LPM lookup | 48 ns, ratio 5.3 | the fixture was low by about three: **+140 ns** on the real stage |
+| Unified list, shallow miss / deep miss / hit | 251–581 ns, whole pipelines at a ~250 ns base | re-measured on the seven-stage pipeline; the shallow-miss flatness was **the probe key** |
