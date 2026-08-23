@@ -63,6 +63,37 @@ pub enum Charge {
     Over,
 }
 
+/// `a * b`, saturating, computed in halves so nothing ever asks for a 128-bit product.
+///
+/// `u64::saturating_mul` is the same function and does not compile for this program. It
+/// becomes `umul.with.overflow.i64`, BPF has no 64-by-64-to-128 multiply, and LLVM answers
+/// with a call to `__multi3` that compiler-builtins does not provide for the target: the
+/// object comes out carrying an undefined symbol and aya refuses to relocate the caller.
+/// Writing the check as `dt != 0 && per_sec > u64::MAX / dt` does not help either —
+/// InstCombine recognises that idiom and folds it straight back into the same intrinsic.
+/// Splitting the operands keeps every partial product inside 64 bits, and costs no
+/// division and no call on the packet path.
+const fn saturating_mul(a: u64, b: u64) -> u64 {
+    const HALF: u64 = u32::MAX as u64;
+    let (a_hi, a_lo) = (a >> 32, a & HALF);
+    let (b_hi, b_lo) = (b >> 32, b & HALF);
+
+    // `a_hi * b_hi` weighs 2^64, so one bit in each high half is already too much.
+    if a_hi != 0 && b_hi != 0 {
+        return u64::MAX;
+    }
+    // One of the two terms is therefore zero, so the sum fits; it weighs 2^32, so it has
+    // to fit in a half for the shift below not to lose the top of it.
+    let mid = a_hi * b_lo + a_lo * b_hi;
+    if mid > HALF {
+        return u64::MAX;
+    }
+    match (a_lo * b_lo).checked_add(mid << 32) {
+        Some(product) => product,
+        None => u64::MAX,
+    }
+}
+
 impl Bucket {
     /// Drains for the time elapsed since the last packet, then charges this one if
     /// the result stays under the burst.
@@ -83,7 +114,7 @@ impl Bucket {
         // Saturating rather than wrapping: the eBPF crate builds with
         // overflow-checks off, so a wrap there would be silent, and a saturated
         // product means a gap long enough to empty any level `BURST_MAX` allows.
-        let drained = rate.per_sec.saturating_mul(dt) / NS_PER_UNIT;
+        let drained = saturating_mul(rate.per_sec, dt) / NS_PER_UNIT;
         self.level = self.level.saturating_sub(drained);
 
         let ceiling = rate.burst.min(BURST_MAX) * UNITS_PER_BYTE;

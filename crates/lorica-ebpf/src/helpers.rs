@@ -17,9 +17,9 @@ use aya_ebpf::{
     maps::lpm_trie::Key,
     programs::XdpContext,
 };
-use lorica_common::{CounterId, Family, LpmValue, PacketView};
+use lorica_common::{Charge, CounterId, Family, LpmValue, PacketView, Rate};
 
-use crate::maps::{COUNTERS, UNIFIED_LIST};
+use crate::maps::{BUCKET_BANK, COUNTERS, UNIFIED_LIST};
 
 /// A packet is one host, so the lookup asks for the full width of the key and the trie
 /// answers with the longest entry that covers it. Precedence is the specificity of the
@@ -220,6 +220,29 @@ pub fn fib_reverse_path(ctx: &XdpContext, view: &PacketView, ingress: u32) -> Fi
     FibAnswer {
         code: code as u32,
         ifindex: params.ifindex,
+    }
+}
+
+/// The one lookup of the bucket bank, drain and charge included.
+///
+/// It lives here for the same reason as the list lookup: a map lookup issued straight from
+/// a stage is invisible to the instrumented counter and to the static audit, which is a
+/// mistake this program has already paid for once. A bank lookup is counted as a
+/// [`HelperKind::MapLookup`] and not as a kind of its own.
+///
+/// The update happens here rather than being handed back as a pointer because a
+/// `PTR_TO_MAP_VALUE` returned from a bpf-to-bpf subprogram is not something to bet the
+/// floor kernel on, and the arithmetic itself is `lorica_common::Bucket::charge` either
+/// way. A missing slot answers `Within`: no bank is not a reason to refuse a packet.
+#[inline(never)]
+pub fn bank_charge(index: u32, rate: Rate, now: u64, size: u32) -> Charge {
+    #[cfg(feature = "count-helpers")]
+    observe(HelperKind::MapLookup);
+    match BUCKET_BANK.get_ptr_mut(index) {
+        // SAFETY: the pointer comes from a successful lookup, and `BankSlot` is `repr(C)`
+        // with the bucket as its only field, so the value starts where the slot does.
+        Some(slot) => unsafe { (*slot).bucket.charge(rate, now, size) },
+        None => Charge::Within,
     }
 }
 

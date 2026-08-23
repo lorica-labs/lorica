@@ -7,6 +7,8 @@
 
 pub mod attach;
 pub mod hook_probe;
+pub mod secret;
 
 pub use attach::{AttachError, attach_native, detach};
 pub use hook_probe::{AttachMode, HookState, Occupant};
+pub use secret::draw_index_key;

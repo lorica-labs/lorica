@@ -45,7 +45,6 @@ pub enum Outcome {
     /// the project that capability answers no, so the stage answers `Drop` and the verdict
     /// stays in the data plane — which is the reference path the capability matrix names,
     /// and the same response tier either way.
-    #[expect(dead_code)]
     Mark,
 }
 

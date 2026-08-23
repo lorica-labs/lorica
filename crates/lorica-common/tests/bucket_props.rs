@@ -155,6 +155,28 @@ proptest! {
         let layout = BankLayout { buckets, shards: 4 };
         prop_assert!(layout.index(hash) < buckets.max(1));
     }
+
+    /// `per_sec * dt` is the one product here that can leave 64 bits, and it is written out
+    /// in halves rather than as `u64::saturating_mul` because the intrinsic behind that
+    /// method lowers to a `__multi3` call the BPF target has no implementation of. This
+    /// pins the halves against the wide product: exact where it fits, `u64::MAX` where it
+    /// does not, and nowhere a wrap. The ranges straddle 2^64 so both answers are reached.
+    #[test]
+    fn the_drain_is_the_wide_product_or_saturated(
+        per_sec in 1u64..(1 << 34),
+        dt in 1u64..(1 << 34),
+    ) {
+        const NS_PER_UNIT: u128 = 1_953_125;
+        let start = u64::MAX / 2;
+        let expected = (u128::from(per_sec) * u128::from(dt)).min(u128::from(u64::MAX))
+            / NS_PER_UNIT;
+
+        // A burst of zero refuses the packet, so the level the drain left is the only
+        // thing the call changed and the drain is readable as a difference.
+        let mut bucket = Bucket { level: start, last_ns: 0 };
+        prop_assert_eq!(bucket.charge(Rate { per_sec, burst: 0 }, dt, 64), Charge::Over);
+        prop_assert_eq!(u128::from(start - bucket.level), expected.min(u128::from(start)));
+    }
 }
 
 /// The floor stated on its own, because it is the reason the function is not a

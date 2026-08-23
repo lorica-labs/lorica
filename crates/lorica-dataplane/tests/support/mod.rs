@@ -10,7 +10,7 @@ pub mod pkt;
 pub mod run;
 
 pub use pkt::PktBuilder;
-pub use run::{TestProg, XdpAction};
+pub use run::{BucketGlobals, TestProg, XdpAction};
 
 /// The name of the program under test, as it appears in the ELF.
 pub const PROGRAM: &str = "lorica_xdp";
@@ -21,4 +21,8 @@ pub fn program() -> TestProg {
 
 pub fn program_with(settings: u32) -> TestProg {
     TestProg::load_with(PROGRAM, settings)
+}
+
+pub fn program_with_buckets(settings: u32, buckets: BucketGlobals) -> TestProg {
+    TestProg::load_buckets(PROGRAM, settings, buckets)
 }

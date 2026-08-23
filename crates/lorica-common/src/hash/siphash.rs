@@ -41,6 +41,13 @@ impl SipHasher24 {
     /// use, so a key read from `/dev/urandom` needs no byte-order decision at the
     /// call site.
     pub const fn from_bytes(key: [u8; 16]) -> Self {
+        Self::new(Self::key_words(key))
+    }
+
+    /// The same two words, for a caller that has to hand them to something other than
+    /// this type — the loader patches them into the program's `.rodata` one `u64` at a
+    /// time, and the byte order has to be decided in exactly one place.
+    pub const fn key_words(key: [u8; 16]) -> [u64; 2] {
         let mut k0 = 0u64;
         let mut k1 = 0u64;
         let mut i = 0;
@@ -49,7 +56,7 @@ impl SipHasher24 {
             k1 |= (key[i + 8] as u64) << (8 * i);
             i += 1;
         }
-        Self { k0, k1 }
+        [k0, k1]
     }
 
     pub fn hash(&self, bytes: &[u8]) -> u64 {

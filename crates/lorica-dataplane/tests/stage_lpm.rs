@@ -235,6 +235,10 @@ fn an_allow_exit_costs_one_lookup_for_the_list_and_one_for_its_counter() {
 
 /// A packet that matches nothing costs the list lookup and nothing else, which is the
 /// steady-state cost of the whole stage.
+///
+/// The second lookup is not this stage's. Stage 7 charges every packet against a bucket, so
+/// a packet that reaches the end of the pipeline reaches the bank; the figure is counted on
+/// a whole-pipeline run because that is the only way to see this stage's lookup at all.
 #[cfg(feature = "count-helpers")]
 #[test]
 fn a_packet_matching_nothing_costs_one_lookup() {
@@ -246,5 +250,8 @@ fn a_packet_matching_nothing_costs_one_lookup() {
 
     let counts = prog.helper_counts();
     assert_eq!(counts.clock_reads, 1);
-    assert_eq!(counts.map_lookups, 1, "got {counts:?}");
+    assert_eq!(
+        counts.map_lookups, 2,
+        "expected the list lookup and the bucket bank, got {counts:?}"
+    );
 }

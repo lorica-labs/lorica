@@ -10,13 +10,14 @@ use std::{env, fs, path::PathBuf};
 use aya::{
     Ebpf, EbpfLoader,
     maps::{
-        MapData, PerCpuArray,
+        Array, MapData, PerCpuArray,
         lpm_trie::{Key, LpmTrie},
     },
     programs::{TestRun, TestRunOptions, Xdp},
 };
 use lorica_common::{
-    Clock, CounterId, DEFAULT_SETTINGS, LpmKey, LpmValue, PacketView, SETTINGS_SYMBOL,
+    BUCKET_KEY_SYMBOLS, BUCKET_RATE_SYMBOLS, Bucket, Clock, CounterId, DEFAULT_SETTINGS, LpmKey,
+    LpmValue, PacketView, Rate, SETTINGS_SYMBOL, SipHasher24,
 };
 use lorica_dataplane::clock;
 
@@ -69,6 +70,43 @@ impl HelperCounts {
     }
 }
 
+/// The load-time globals of stage 7: the key its index is hashed with and the two
+/// budgets it charges against.
+///
+/// A load and not a map write, like the policy word, so a case that wants another budget
+/// is another load and nothing carries over.
+#[derive(Clone, Copy)]
+pub struct BucketGlobals {
+    pub key: [u8; 16],
+    pub normal: Rate,
+    pub suspect: Rate,
+}
+
+impl BucketGlobals {
+    /// A fixed key and the same budget on both sides, which is what most cases want: the
+    /// budget a signature match routes to is stage 6's decision and not stage 7's, and a
+    /// case that is not about that distinction should not have to state it.
+    ///
+    /// Fixed rather than drawn because a test whose bucket assignment changes per run is a
+    /// test that fails one morning and passes the next. The cases that are about the draw
+    /// ask for it explicitly.
+    pub const fn fixed(rate: Rate) -> Self {
+        Self {
+            key: *b"lorica bucket ix",
+            normal: rate,
+            suspect: rate,
+        }
+    }
+
+    /// Bucket a source address lands in under this key, computed the way the program
+    /// computes it. This is what makes a steering case possible: the test has to be able to
+    /// pick addresses that share a bucket.
+    pub fn index_of(&self, src: &[u8; 16], buckets: u32) -> u32 {
+        lorica_common::BankLayout { buckets, shards: 1 }
+            .index(SipHasher24::from_bytes(self.key).hash(src))
+    }
+}
+
 /// A local wrapper so `Pod` can be implemented for a foreign type. Sound because
 /// every byte pattern of `PacketView` is a valid value, which is the property the
 /// trait requires and the reason the family and fragment fields are stored raw.
@@ -90,6 +128,20 @@ struct PodLpmValue(LpmValue);
 // written into it through this type.
 unsafe impl aya::Pod for PodLpmValue {}
 
+/// The kernel-side envelope of a bucket, declared again here because the eBPF crate builds
+/// for another target and cannot be depended on. The alignment is the whole point of the
+/// layout, so it is asserted rather than assumed: a value size that drifted would make
+/// every read of the bank silently return the wrong slot.
+#[repr(C, align(64))]
+#[derive(Clone, Copy)]
+struct PodBankSlot(Bucket);
+
+// SAFETY: Bucket is Copy, 'static, two u64 and no invalid byte pattern; the padding is
+// never read as anything.
+unsafe impl aya::Pod for PodBankSlot {}
+
+const _: () = assert!(std::mem::size_of::<PodBankSlot>() == 64);
+
 pub struct TestProg {
     ebpf: Ebpf,
     name: String,
@@ -107,9 +159,25 @@ impl TestProg {
         Self::load_object(&object_path(), name, settings)
     }
 
+    /// Loads with a policy word and with the stage 7 globals stated, for the cases that
+    /// are about the buckets. Everything else keeps the unconfigured budget the program
+    /// carries in its own `.rodata`, which enforces nothing.
+    pub fn load_buckets(name: &str, settings: u32, buckets: BucketGlobals) -> Self {
+        Self::load_full(&object_path(), name, settings, Some(buckets))
+    }
+
     /// Loads a named object rather than the one the environment points at, for the one
     /// measurement that has to compare two builds of the same program in one process.
     pub fn load_object(path: &std::path::Path, name: &str, settings: u32) -> Self {
+        Self::load_full(path, name, settings, None)
+    }
+
+    fn load_full(
+        path: &std::path::Path,
+        name: &str,
+        settings: u32,
+        buckets: Option<BucketGlobals>,
+    ) -> Self {
         let object = fs::read(path).unwrap_or_else(|err| {
             panic!(
                 "cannot read the eBPF object at {}: {err}\n\
@@ -119,10 +187,34 @@ impl TestProg {
             )
         });
 
-        let mut ebpf = EbpfLoader::new()
-            .override_global(SETTINGS_SYMBOL, &settings, true)
+        let mut loader = EbpfLoader::new();
+        loader.override_global(SETTINGS_SYMBOL, &settings, true);
+        // Kept alive past the borrow: `override_global` records a reference, and the
+        // patching happens in `load`.
+        let words = buckets.map(|b| {
+            let key = SipHasher24::key_words(b.key);
+            [
+                key[0],
+                key[1],
+                b.normal.per_sec,
+                b.normal.burst,
+                b.suspect.per_sec,
+                b.suspect.burst,
+            ]
+        });
+        if let Some(words) = words.as_ref() {
+            loader.override_global(BUCKET_KEY_SYMBOLS[0], &words[0], true);
+            loader.override_global(BUCKET_KEY_SYMBOLS[1], &words[1], true);
+            loader.override_global(BUCKET_RATE_SYMBOLS[0][0], &words[2], true);
+            loader.override_global(BUCKET_RATE_SYMBOLS[0][1], &words[3], true);
+            loader.override_global(BUCKET_RATE_SYMBOLS[1][0], &words[4], true);
+            loader.override_global(BUCKET_RATE_SYMBOLS[1][1], &words[5], true);
+        }
+        let mut ebpf = loader
             .load(&object)
-            .unwrap_or_else(|err| panic!("loading {} failed: {err}", path.display()));
+            // Debug and not Display: aya wraps the cause, and the outer message alone says
+            // only that a relocation failed and not which symbol it failed on.
+            .unwrap_or_else(|err| panic!("loading {} failed: {err:?}", path.display()));
         let program: &mut Xdp = ebpf
             .program_mut(name)
             .unwrap_or_else(|| panic!("no program named {name} in {}", path.display()))
@@ -269,6 +361,36 @@ impl TestProg {
     /// either number, which is why this is a program run and not a file read.
     pub fn clock(&mut self) -> Clock {
         clock::calibrate(&mut self.ebpf).expect("calibrating the kernel clock failed")
+    }
+
+    fn bank(&self) -> Array<&MapData, PodBankSlot> {
+        let map = self.ebpf.map("BUCKET_BANK").expect("no BUCKET_BANK map");
+        Array::try_from(map).expect("BUCKET_BANK is not an array")
+    }
+
+    /// How many buckets the bank holds, read from the map rather than from a constant.
+    ///
+    /// The program computes its index modulo a compile-time count in the eBPF crate, which
+    /// this crate cannot see. Reading the map length is the only way for a test to agree
+    /// with it, and a disagreement shows up as a steering case that steers nowhere.
+    pub fn bank_len(&self) -> u32 {
+        self.bank().len()
+    }
+
+    /// The level of every bucket, in the sub-byte units the arithmetic counts in.
+    ///
+    /// The one observable that says *which* bucket a packet landed in. A verdict cannot:
+    /// two different indices both answer pass.
+    pub fn bank_levels(&self) -> Vec<u64> {
+        let bank = self.bank();
+        (0..bank.len())
+            .map(|index| {
+                bank.get(&index, 0)
+                    .expect("reading a bucket failed")
+                    .0
+                    .level
+            })
+            .collect()
     }
 
     pub fn helper_counts(&self) -> HelperCounts {
