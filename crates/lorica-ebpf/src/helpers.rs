@@ -5,16 +5,19 @@
 //! it is a single call site rather than one per caller: inlining the counter bump
 //! would multiply its map lookup by the number of stages that count.
 //!
-//! These four keep `#[inline(never)]` unconditionally, unlike the parsers and the
+//! These wrappers keep `#[inline(never)]` unconditionally, unlike the parsers and the
 //! stages, which carry it only under the `profiling` feature. Here it is not
 //! instrumentation: the static call budget is a count of the calls present in the
 //! object, and inlining a wrapper would multiply its call by the number of callers.
 
 use aya_ebpf::{
-    helpers::{bpf_jiffies64, bpf_ktime_get_ns},
+    EbpfContext,
+    bindings::{BPF_FIB_LOOKUP_SKIP_NEIGH, bpf_fib_lookup as FibParams},
+    helpers::{bpf_fib_lookup, bpf_jiffies64, bpf_ktime_get_ns},
     maps::lpm_trie::Key,
+    programs::XdpContext,
 };
-use lorica_common::{CounterId, LpmValue};
+use lorica_common::{CounterId, Family, LpmValue, PacketView};
 
 use crate::maps::{COUNTERS, UNIFIED_LIST};
 
@@ -33,11 +36,15 @@ pub enum HelperKind {
     /// budget is about is how many times a packet reads the clock, which is the number a
     /// stage can get wrong.
     ClockRead = 1,
+    /// Neither of the two above, and the reason it needs a kind of its own: it is the most
+    /// expensive call in the program by a factor of five, so a budget that folded it into
+    /// the map lookups would hide the one number worth watching.
+    FibLookup = 2,
 }
 
 #[cfg(feature = "count-helpers")]
 impl HelperKind {
-    pub const COUNT: u32 = 2;
+    pub const COUNT: u32 = 3;
 }
 
 /// Counting is itself a map lookup, so it must not count itself, and the probe write
@@ -120,6 +127,95 @@ pub fn list_lookup(src: &[u8; 16]) -> Option<LpmValue> {
     #[cfg(feature = "count-helpers")]
     observe(HelperKind::MapLookup);
     UNIFIED_LIST.get(Key::new(HOST_PREFIX_BITS, *src)).copied()
+}
+
+/// The address family as the kernel socket API numbers it, which is what
+/// `bpf_fib_lookup` reads out of the first byte of its parameter block.
+const AF_INET: u8 = 2;
+const AF_INET6: u8 = 10;
+
+/// What the reverse-path lookup answered.
+///
+/// Two values because the classification of stage 5 needs both, and because the helper
+/// writes the interface it resolved over the one it was given: reading `ifindex` after the
+/// call is the only way to learn where the route back leaves from.
+#[derive(Clone, Copy)]
+pub struct FibAnswer {
+    /// A `BPF_FIB_LKUP_RET_*` code, or a negative errno widened, which is the helper
+    /// refusing the call rather than answering it.
+    pub code: u32,
+    pub ifindex: u32,
+}
+
+/// The reverse-path lookup: the source of the packet asked as if it were a destination.
+///
+/// Here rather than in the stage for the same reason as the list lookup, and with more at
+/// stake. It is the most expensive call in the program — 48 ns on the measurement host
+/// against 9 ns for a lookup in a near-empty LPM trie — so both the static audit and the
+/// instrumented count have to see it, and a call issued straight from the stage would be
+/// invisible to both.
+///
+/// `SKIP_NEIGH` because the only thing wanted here is the egress interface: without it the
+/// helper goes on to walk the neighbour table to fill in two MAC addresses this stage
+/// throws away, and on a host that really routes that is work on top of the 48 ns. The
+/// flag arrived in 6.7 and the floor of the lab is 6.8; below 6.7 the kernel rejects the
+/// flag word outright and the stage reads the negative return as an answer it cannot use,
+/// which passes the packet — the same direction the criterion takes when it disarms.
+///
+/// Not `DIRECT`: that flag skips the routing rules, and on a host whose reverse path is
+/// defined by a rule the rules are precisely the question being asked.
+#[inline(never)]
+pub fn fib_reverse_path(ctx: &XdpContext, view: &PacketView, ingress: u32) -> FibAnswer {
+    #[cfg(feature = "count-helpers")]
+    observe(HelperKind::FibLookup);
+
+    // Sixty-four bytes of stack, and they live in this frame rather than in the caller's:
+    // `#[inline(never)]` is what keeps the pipeline frame from swelling by the size of a
+    // parameter block only one stage ever fills in.
+    // SAFETY: every field is an integer or an array of integers, so the all-zero pattern
+    // is a valid value, and zeroing is required — the helper reads the fields the family
+    // selects and would otherwise read whatever the frame held.
+    let mut params: FibParams = unsafe { core::mem::zeroed() };
+    params.ifindex = ingress;
+    match view.family() {
+        Family::V4 => {
+            params.family = AF_INET;
+            // The parser stores v4 in the v4-mapped form, so the address is the last four
+            // bytes. `from_ne_bytes` keeps them in the order they arrived in, which is the
+            // network order the field is declared in.
+            params.__bindgen_anon_4.ipv4_dst =
+                u32::from_ne_bytes([view.src[12], view.src[13], view.src[14], view.src[15]]);
+        }
+        Family::V6 => {
+            params.family = AF_INET6;
+            params.__bindgen_anon_4.ipv6_dst = [
+                u32::from_ne_bytes([view.src[0], view.src[1], view.src[2], view.src[3]]),
+                u32::from_ne_bytes([view.src[4], view.src[5], view.src[6], view.src[7]]),
+                u32::from_ne_bytes([view.src[8], view.src[9], view.src[10], view.src[11]]),
+                u32::from_ne_bytes([view.src[12], view.src[13], view.src[14], view.src[15]]),
+            ];
+        }
+    }
+
+    // `tot_len` is left at zero on purpose: a non-zero one turns the lookup into an MTU
+    // check too, which is a second question and a longer path.
+    //
+    // SAFETY: `params` is a live object of exactly the type the helper reads, the length
+    // is its own size rather than a constant that could drift from it, and `ctx` is the
+    // context this program was entered with.
+    let code = unsafe {
+        bpf_fib_lookup(
+            ctx.as_ptr(),
+            &mut params,
+            core::mem::size_of::<FibParams>() as i32,
+            BPF_FIB_LOOKUP_SKIP_NEIGH,
+        )
+    };
+
+    FibAnswer {
+        code: code as u32,
+        ifindex: params.ifindex,
+    }
 }
 
 /// Publishes the parsed view for the encapsulation tests. Deliberately outside the
