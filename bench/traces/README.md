@@ -127,20 +127,22 @@ Per case:
 scripts/lab/replay-legit.sh --all --assert-zero-drop --out bench/results/legit-replay
 ```
 
-Two things about the rate, both of them consequences of the tooling actually installed on the 902.
+Two things about the rate, and the first one changed when stage 7 landed.
 
-`tcpreplay` is **not installed**, so a replay goes through the netsniff-ng suite:
-`netsniff-ng --in t.pcap --out t.cfg` then `trafgen --in t.cfg`. **The `.cfg` conversion keeps the
-packet bytes and discards the original inter-packet timing.** trafgen therefore paces at a constant
-rate, and `replay-legit.sh` defaults that rate to the trace's own packets-divided-by-span — 2 pps
-for the fixture — rather than to a round number, and prints it with every result. Four of the seven
-stages are stateless and indifferent to pacing; the leaky buckets are a rate limiter, and a
-legitimate capture replayed fast enough will trip them. A drop under a rate the trace never had is
-not a false positive.
+**`tcpreplay` 4.4.4 was installed on the 902 on 23 August 2026 and is now the default engine.** It
+replays a capture with the capture's own inter-packet timing. That was a prerequisite and not a
+refinement: the leaky buckets are a rate limiter, so a legitimate capture replayed at a constant high
+rate trips them and produces drops that are not false positives of the signatures. An instrument that
+manufactures the drops it is measuring measures nothing. The install is a deliberate lab modification
+and it is recorded in `agent:docs/setup-labo.md` §7.
 
-A timing-faithful replay needs `apt install tcpreplay` on the 902, after which
-`sudo tcpreplay -i enp6s19 --pps=N t.pcap` preserves the capture's own pacing. That is a
-prerequisite, stated here rather than installed silently.
+`--engine trafgen` still works and is the older path: `netsniff-ng --in t.pcap --out t.cfg` then
+`trafgen --in t.cfg`. **That conversion keeps the packet bytes and discards the original inter-packet
+timing**, so trafgen paces at a constant rate, defaulting to the trace's own packets-divided-by-span
+— 2 pps for the fixture — rather than to a round number. It is kept because four of the seven stages
+are stateless and indifferent to pacing, so it remains a legitimate way to ask about those four
+under a rate the trace never had. The engine is printed and written into the CSV with every result,
+because the two numbers are not comparable.
 
 The script also refuses any interface whose address is outside the lab test subnet. The 902 has a
 live LAN NIC, `enp6s18` on `192.168.1.83`, and generated traffic on it leaks onto a real network, so

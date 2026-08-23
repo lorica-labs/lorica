@@ -3,7 +3,7 @@
 # target can be asked whether its XDP program dropped any of it.
 #
 #   replay-legit.sh --pcap FILE | --all [--rate PPS] [--out DIR] [--dev NAME]
-#                   [--assert-zero-drop]
+#                   [--engine tcpreplay|trafgen] [--assert-zero-drop]
 #
 # Runs on VM 902 (generator). It attaches nothing. bpftool cannot load this
 # repository's object — aya emits legacy map definitions libbpf dropped in 1.0 — and
@@ -14,15 +14,20 @@
 # that never left. A trace the generator failed to send would make the target's zero
 # mean nothing at all.
 #
-# The rate is always printed with the result, because it is not the trace's own. The
-# .cfg that trafgen needs keeps the packet bytes and discards the inter-packet timing,
-# so the replay is paced at a constant rate; four of the seven stages are stateless
-# and indifferent to it, but the leaky buckets are a rate limiter and a legitimate
-# capture replayed fast enough will trip them. A drop under a rate the trace never had
-# is not a false positive of the signatures. Without --rate the default comes from the
-# trace itself, packets divided by its own span, and never from a round number.
-# tcpreplay would preserve the original timing (tcpreplay -i DEV --pps=N file.pcap)
-# and is not installed on the 902; bench/traces/README.md says so.
+# The rate is always printed with the result, and which engine paced it, because the two
+# engines here do not pace the same way at all.
+#
+# tcpreplay replays a capture with its own inter-packet timing and is the default. That
+# matters for one reason and it is not fidelity for its own sake: the leaky buckets are a
+# rate limiter, so a legitimate capture replayed at a constant high rate trips them and
+# produces drops that are not false positives of the signatures. An instrument that
+# manufactures the drops it is measuring measures nothing.
+#
+# trafgen stays reachable behind --engine trafgen. It needs the .cfg that netsniff-ng
+# writes, and that conversion keeps the packet bytes and discards the inter-packet
+# timing, so the replay is paced at a constant rate. Four of the seven stages are
+# stateless and indifferent to pacing; stage 7 is not. Without --rate the constant rate
+# defaults to the trace's own packets-divided-by-span, never to a round number.
 
 set -uo pipefail
 
@@ -35,6 +40,7 @@ PCAP=
 ALL=0
 RATE=
 ASSERT=0
+ENGINE=tcpreplay
 
 # One CPU, not a flag. trafgen splits its packet list across the CPUs it is given and
 # sends the parts in parallel, which reorders the trace; a capture whose order is
@@ -50,8 +56,9 @@ while [ $# -gt 0 ]; do
         --out)              OUT=$2; shift 2 ;;
         --dev)              DEV=$2; shift 2 ;;
         --traces)           TRACES=$2; shift 2 ;;
+        --engine)           ENGINE=$2; shift 2 ;;
         --assert-zero-drop) ASSERT=1; shift ;;
-        -h|--help)          sed -n '2,25p' "$0"; exit 0 ;;
+        -h|--help)          sed -n '2,30p' "$0"; exit 0 ;;
         *) echo "unknown argument: $1" >&2; exit 2 ;;
     esac
 done
@@ -60,9 +67,17 @@ die() { printf 'replay-legit: %s\n' "$1" >&2; exit 2; }
 
 [ -n "$PCAP" ] || [ "$ALL" = 1 ] || die "one of --pcap FILE or --all is required"
 [ -z "$PCAP" ] || [ "$ALL" = 0 ] || die "--pcap and --all are mutually exclusive"
-command -v netsniff-ng >/dev/null || die "no netsniff-ng: the pcap to trafgen conversion needs it"
-command -v trafgen >/dev/null || die "no trafgen"
 command -v python3 >/dev/null || die "no python3: the trace scan that derives the default rate needs it"
+
+case $ENGINE in
+    tcpreplay)
+        command -v tcpreplay >/dev/null \
+            || die "no tcpreplay: it is what preserves the capture inter-packet timing. Pass --engine trafgen to pace at a constant rate instead, and read what that costs in the header of this script" ;;
+    trafgen)
+        command -v netsniff-ng >/dev/null || die "no netsniff-ng: the pcap to trafgen conversion needs it"
+        command -v trafgen >/dev/null || die "no trafgen" ;;
+    *) die "unknown engine $ENGINE: expected tcpreplay or trafgen" ;;
+esac
 
 # The 902 has a second, live NIC — enp6s18 on the house LAN — and generated traffic on
 # it leaks onto a real network. So the interface is not warned about, it is verified:
@@ -126,7 +141,7 @@ mkdir -p "$OUT"
 env_file=$(scripts/lab/capture-env.sh "$OUT" "$DEV")
 [ -n "$env_file" ] || die "capture-env produced no path"
 csv="$OUT/legit-replay.csv"
-echo "trace,packets,span_s,rate_pps,sent,tx_dropped,tx_errors,verdict" > "$csv"
+echo "trace,engine,packets,span_s,rate_pps,sent,tx_dropped,tx_errors,verdict" > "$csv"
 
 cfg=$(mktemp --suffix=.trafgen)
 log=$(mktemp)
@@ -156,20 +171,35 @@ EOF
         rate=$derived
     fi
 
-    netsniff-ng --in "$pcap" --out "$cfg" --silent \
-        || die "netsniff-ng could not convert $pcap"
+    if [ "$ENGINE" = trafgen ]; then
+        netsniff-ng --in "$pcap" --out "$cfg" --silent \
+            || die "netsniff-ng could not convert $pcap"
+    fi
 
     before_dropped=$(stat_of tx_dropped)
     before_errors=$(stat_of tx_errors)
-    sudo -n trafgen --in "$cfg" --out "$DEV" --rate "${rate}pps" --cpus "$CPUS" \
-        --num "$packets" --no-sock-mem > "$log" 2>&1
+    if [ "$ENGINE" = tcpreplay ]; then
+        # No --pps unless one was asked for: the point of this engine is that the pacing
+        # comes from the capture. --pps overrides it, so passing --rate here means asking
+        # for a rate the trace never had, deliberately.
+        pace=()
+        [ -z "$RATE" ] || pace=(--pps="$rate")
+        sudo -n tcpreplay --intf1="$DEV" --stats=1 "${pace[@]}" "$pcap" > "$log" 2>&1
+    else
+        sudo -n trafgen --in "$cfg" --out "$DEV" --rate "${rate}pps" --cpus "$CPUS" \
+            --num "$packets" --no-sock-mem > "$log" 2>&1
+    fi
     after_dropped=$(stat_of tx_dropped)
     after_errors=$(stat_of tx_errors)
 
-    # trafgen's own count of what it put on the wire, taken from the saved log rather
+    # The engine's own count of what it put on the wire, taken from the saved log rather
     # than from a pipeline: `trafgen | grep -q` under pipefail returns 141 because grep
     # exits first and trafgen dies of SIGPIPE.
-    sent=$(awk '/packets outgoing/ { n = $1 } END { print n }' "$log")
+    if [ "$ENGINE" = tcpreplay ]; then
+        sent=$(awk '/^Actual:/ { n = $2 } END { print n }' "$log")
+    else
+        sent=$(awk '/packets outgoing/ { n = $1 } END { print n }' "$log")
+    fi
     dropped=$(( after_dropped - before_dropped ))
     errors=$(( after_errors - before_errors ))
 
@@ -183,9 +213,13 @@ EOF
         verdict=sent-whole
     fi
 
-    printf 'replay-legit: trace=%s dev=%s packets=%s span=%ss rate=%spps sent=%s tx_dropped=%s tx_errors=%s -> %s\n' \
-        "$(basename "$pcap")" "$DEV" "$packets" "$span" "$rate" "${sent:-none}" "$dropped" "$errors" "$verdict"
-    echo "$(basename "$pcap"),$packets,$span,$rate,${sent:-NA},$dropped,$errors,$verdict" >> "$csv"
+    # With tcpreplay and no --rate the pacing is the trace's own, packet by packet, and
+    # the figure printed is its average. Naming it "mean" rather than "rate" keeps it from
+    # being read as a rate that was imposed.
+    if [ "$ENGINE" = tcpreplay ] && [ -z "$RATE" ]; then label=mean; else label=rate; fi
+    printf 'replay-legit: trace=%s engine=%s dev=%s packets=%s span=%ss %s=%spps sent=%s tx_dropped=%s tx_errors=%s -> %s\n' \
+        "$(basename "$pcap")" "$ENGINE" "$DEV" "$packets" "$span" "$label" "$rate" "${sent:-none}" "$dropped" "$errors" "$verdict"
+    echo "$(basename "$pcap"),$ENGINE,$packets,$span,$rate,${sent:-NA},$dropped,$errors,$verdict" >> "$csv"
 
     # The flag decides the exit status, never what is measured or printed: a number that
     # only appears when it is being asserted on is a number nobody can compare against.
