@@ -11,7 +11,10 @@ pub use counters::CounterId;
 pub use event::EventHeader;
 pub use keys::{LpmKey, V4_MAPPED_PREFIX_BITS};
 pub use packet::{Family, FragState, MAX_OFFSET, PacketView, anomaly};
-pub use settings::{DEFAULT_SETTINGS, NO_CUTOFF, SETTINGS_SYMBOL, STAGE_CUTOFF_SHIFT, setting};
+pub use settings::{
+    BUCKET_KEY_SYMBOLS, BUCKET_RATE_SYMBOLS, DEFAULT_SETTINGS, NO_CUTOFF, SETTINGS_SYMBOL,
+    STAGE_CUTOFF_SHIFT, setting,
+};
 pub use verdict::{Action, LpmValue, SCOPE_MAX, Scope};
 
 use core::mem::{align_of, size_of};

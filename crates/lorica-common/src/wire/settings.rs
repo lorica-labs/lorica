@@ -74,3 +74,24 @@ pub const NO_CUTOFF: u32 = 0;
 /// The symbol the loader patches. Named here so the program and the loader cannot
 /// disagree about it.
 pub const SETTINGS_SYMBOL: &str = "SETTINGS";
+
+/// The two halves of the 128-bit key the bucket index is hashed with, drawn at load and
+/// never persisted.
+///
+/// Two `u64` globals rather than one struct because `u64` is unambiguously `aya::Pod`,
+/// and a struct patched through `override_global` would need a layout both sides agree
+/// on for no gain. Same mechanism as [`SETTINGS_SYMBOL`], same reason: the alternative is
+/// a map read, and a map read is a helper call on the fast path.
+pub const BUCKET_KEY_SYMBOLS: [&str; 2] = ["BUCKET_KEY0", "BUCKET_KEY1"];
+
+/// The two budgets stage 7 charges against, as `(rate, burst)` symbol pairs: normal
+/// first, then the one a signature match routes a packet to.
+///
+/// Load-time globals and not a map for the same reason as the policy word. This phase
+/// applies budgets that come from the configuration and never varies them, so nothing
+/// has to change while the program is attached; what stage 6 chooses is which of the two
+/// applies.
+pub const BUCKET_RATE_SYMBOLS: [[&str; 2]; 2] = [
+    ["BUCKET_NORMAL_RATE", "BUCKET_NORMAL_BURST"],
+    ["BUCKET_SUSPECT_RATE", "BUCKET_SUSPECT_BURST"],
+];
