@@ -32,7 +32,7 @@ const TCP_URG: u8 = 1 << 5;
 /// The legitimate column is the same source port under the threshold, which is the
 /// tightest neighbour there is: everything the stage can see is identical except the
 /// size, so a threshold set one step too low fails here and nowhere else.
-const AMPLIFIERS: [(u16, usize, usize, CounterId); 6] = [
+const AMPLIFIERS: [(u16, usize, usize, CounterId); 4] = [
     // A DNS answer above the 512-byte floor against an ordinary A-record reply.
     (53, 600, 80, CounterId::SignatureAmpDns),
     // A mode 7 monlist answer against a mode 4 reply, which is 48 bytes.
@@ -41,11 +41,18 @@ const AMPLIFIERS: [(u16, usize, usize, CounterId); 6] = [
     (1900, 700, 300, CounterId::SignatureAmpSsdp),
     // An MTU-filling stat dump against a `get` answer for a small value.
     (11211, 1400, 60, CounterId::SignatureAmpMemcached),
-    // A2S_INFO with the player list against an ordinary in-game datagram.
-    (27015, 1200, 25, CounterId::SignatureAmpA2s),
-    // UNCONNECTED_PONG carrying a long MOTD against a short one.
-    (19132, 400, 30, CounterId::SignatureAmpRaknet),
 ];
+
+/// The Source query header, four `0xff` opening every A2S request and every A2S answer.
+/// A gameplay datagram on the same port opens with a sequence number instead.
+const SOURCE_QUERY_MAGIC: [u8; 4] = [0xff; 4];
+
+/// RakNet's offline message identifier, carried by every unconnected message, at the
+/// offset an UNCONNECTED_PONG puts it: one identifier byte, a timestamp, a server GUID.
+const RAKNET_MAGIC: [u8; 16] = [
+    0x00, 0xff, 0xff, 0x00, 0xfe, 0xfe, 0xfe, 0xfe, 0xfd, 0xfd, 0xfd, 0xfd, 0x12, 0x34, 0x56, 0x78,
+];
+const RAKNET_PONG_MAGIC_OFF: usize = 17;
 
 fn signature_counters() -> Vec<CounterId> {
     CounterId::ALL
@@ -124,6 +131,87 @@ fn a_reply_from_the_same_service_port_is_left_alone() {
     for (sport, _, legitimate, counter) in AMPLIFIERS {
         let pkt = reflected(sport, legitimate);
         quiet(&prog, &pkt, &format!("a {} reply", counter.name()));
+    }
+}
+
+/// The two game vectors match the bytes their protocol puts on the wire, so their fixtures
+/// carry those bytes and their counter-examples are the same port at the same size with the
+/// MAGIC absent. That is a much tighter neighbour than a size threshold: a Source server
+/// serves gameplay on the query port, and a gameplay datagram is exactly this — same port,
+/// same size, different first four bytes.
+#[test]
+fn the_game_vectors_match_their_magic_and_nothing_else() {
+    let prog = program();
+
+    let a2s = PktBuilder::eth()
+        .ipv4()
+        .src_v4([203, 0, 113, 9])
+        .udp(27_015, GAME_PORT)
+        .payload(1200)
+        .payload_at(0, &SOURCE_QUERY_MAGIC)
+        .build();
+    fires(&prog, &a2s, CounterId::SignatureAmpA2s);
+
+    let gameplay = PktBuilder::eth()
+        .ipv4()
+        .src_v4([203, 0, 113, 9])
+        .udp(27_015, GAME_PORT)
+        .payload(1200)
+        .payload_at(0, &[0x01, 0x00, 0x00, 0x00])
+        .build();
+    quiet(&prog, &gameplay, "a gameplay datagram from the query port");
+
+    let pong = PktBuilder::eth()
+        .ipv4()
+        .src_v4([203, 0, 113, 9])
+        .udp(19_132, GAME_PORT)
+        .payload(400)
+        .payload_at(RAKNET_PONG_MAGIC_OFF, &RAKNET_MAGIC)
+        .build();
+    fires(&prog, &pong, CounterId::SignatureAmpRaknet);
+
+    // The same size from the same port with no MAGIC. Before the payload was readable this
+    // packet fired, which is why the vector was rated weak: a verbose MOTD is legitimate
+    // and crossing a size threshold was the whole accusation.
+    let verbose = PktBuilder::eth()
+        .ipv4()
+        .src_v4([203, 0, 113, 9])
+        .udp(19_132, GAME_PORT)
+        .payload(400)
+        .build();
+    quiet(
+        &prog,
+        &verbose,
+        "a long datagram from the RakNet port with no MAGIC",
+    );
+}
+
+/// **The false positive the reference trace caught.**
+///
+/// Every amplified reply above, re-addressed to an ephemeral port instead of a service
+/// port, must be silent. A datagram arriving where this host picks its own source ports
+/// could be the answer to something it sent, and no size threshold separates a reflected
+/// datagram from a large solicited one: the reference trace carries a 1100-byte DNS answer
+/// to a DNSSEC query, and every threshold in the table sits under it.
+///
+/// This is not a hypothetical. Before the check existed, `legit_trace` failed on exactly
+/// that packet with `signature_amp_dns is 1 after the reference trace and should be 0`,
+/// which is what that fixture is for.
+#[test]
+fn an_amplified_reply_to_an_ephemeral_port_could_have_been_asked_for() {
+    let prog = program();
+    for (sport, amplified, _, counter) in AMPLIFIERS {
+        let pkt = PktBuilder::eth()
+            .ipv4()
+            .src_v4([203, 0, 113, 9])
+            .udp(sport, 47_001)
+            .payload(amplified)
+            .build();
+        quiet(
+            &prog,
+            &pkt,
+            &format!("a {} sized reply to an ephemeral port", counter.name()),
+        );
     }
 }
 

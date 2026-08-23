@@ -7,10 +7,15 @@
 //!
 //! A vector that is a *fact* about the packet — a fragment whose length cannot exist,
 //! a flag combination no stack emits, two headers that disagree — is dropped, because
-//! there is nothing left to be wrong about. A vector recognised by a service port and
-//! a size threshold is a *judgement*: the packet could be a large legitimate reply, so
-//! it answers `RateLimit` and the buckets decide how much of it gets through. That is
-//! the whole reason stage 6 has three answers instead of two.
+//! there is nothing left to be wrong about. A vector recognised by what a reflector
+//! answers is a *judgement*: the packet could be the reply to a query something behind
+//! this pipeline really sent, so it answers `RateLimit` and the buckets decide how much
+//! of it gets through. That is the whole reason stage 6 has three answers instead of two.
+//!
+//! Matching a MAGIC tightens a judgement without turning it into a fact, which is why
+//! the two game vectors that now read the payload still answer `RateLimit`. An A2S
+//! answer is an A2S answer whether or not anybody asked for it, and only the operator's
+//! own outbound traffic knows which — and that is not something one datagram carries.
 
 use carapace_common::CounterId;
 

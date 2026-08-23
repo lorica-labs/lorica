@@ -50,6 +50,7 @@ pub struct PktBuilder {
     tcp_flags: u8,
     icmp: (u8, u8),
     payload_len: usize,
+    payload_head: Vec<(usize, Vec<u8>)>,
     proto_override: Option<u8>,
     ip_total_len_override: Option<u16>,
     udp_len_override: Option<u16>,
@@ -72,6 +73,7 @@ impl PktBuilder {
             tcp_flags: 0,
             icmp: (0, 0),
             payload_len: 0,
+            payload_head: Vec::new(),
             proto_override: None,
             ip_total_len_override: None,
             udp_len_override: None,
@@ -194,6 +196,21 @@ impl PktBuilder {
         self
     }
 
+    /// Writes bytes at an offset inside the payload, over the filler.
+    ///
+    /// The signature stage reads payload bytes now — an A2S answer opens with four
+    /// `0xff`, a RakNet unconnected message carries a sixteen-byte MAGIC — so a fixture
+    /// that only sets a length can no longer state the case. It extends rather than
+    /// replaces `payload`: the length is still what a size threshold sees, and this is
+    /// what a content match sees.
+    pub fn payload_at(mut self, at: usize, bytes: &[u8]) -> Self {
+        if at + bytes.len() > self.payload_len {
+            self.payload_len = at + bytes.len();
+        }
+        self.payload_head.push((at, bytes.to_vec()));
+        self
+    }
+
     /// A protocol with no header this builder knows how to write, such as ESP. The
     /// packet then reaches the list on its address and protocol alone, which is the
     /// case fragmented tunnel traffic lands in.
@@ -236,7 +253,11 @@ impl PktBuilder {
             Family::V6 => self.write_ipv6(&mut out),
         }
         self.write_l4(&mut out);
-        out.resize(out.len() + self.payload_len, 0x41);
+        let payload_at = out.len();
+        out.resize(payload_at + self.payload_len, 0x41);
+        for (at, bytes) in &self.payload_head {
+            out[payload_at + at..payload_at + at + bytes.len()].copy_from_slice(bytes);
+        }
         self.fix_lengths(&mut out, l3_off);
 
         if let Some(at) = self.truncate_at {

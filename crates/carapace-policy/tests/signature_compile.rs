@@ -2,14 +2,20 @@
 //! the data path — because the two crates build for different targets and cannot see
 //! each other. These tests are what stands in for the compiler across that gap.
 
-use carapace_common::{Action, CounterId, setting};
+use carapace_common::{Action, Clock, CounterId, setting};
 use carapace_policy::{Config, MemlockModel, compile, compile::signature};
 
-const NOW: u64 = 1_000_000_000;
+/// The rate and the reading the compiler turns a TTL in seconds into a deadline with. 250 Hz
+/// rather than 1000, as the other policy tests use: a deadline built by multiplying by the
+/// wrong constant is off by a factor of four here and exactly right at 1000.
+const CLOCK: Clock = Clock {
+    hz: 250,
+    jiffies: 1_000_000,
+};
 
 fn settings_word(text: &str) -> u32 {
     let config = Config::from_toml(text).expect("the configuration did not parse");
-    compile(&config, NOW, MemlockModel::MEASURED)
+    compile(&config, CLOCK, MemlockModel::MEASURED)
         .expect("the configuration did not compile")
         .settings
 }

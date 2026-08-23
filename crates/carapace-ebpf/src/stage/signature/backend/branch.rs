@@ -1,26 +1,26 @@
-//! The branch cascade. One `#[inline(never)]` subprogram per family of vectors.
+//! The branch cascade. One subprogram per family of vectors.
 //!
-//! Every one of them decides on the parsed view alone. That is not a shortcut, it is
-//! the shape of the pipeline: `PacketView` deliberately carries no packet pointer, so a
-//! stage cannot reach back into the frame, and stage 6 is called with the view and
-//! nothing else. What a signature gets is therefore the ports, the two length fields,
-//! the flags and the fragment state — and every vector below is decided on a single
-//! datagram out of those. Where a magic string would have made a match tighter, the
-//! comment says so.
+//! Eight of the ten vectors decide on the parsed view alone â€” the ports, the two length
+//! fields, the flags, the fragment state â€” and that is enough, because each of them is a
+//! statement about a single datagram. The other two reach into the payload, which the
+//! paragraph this one replaces said they could not: `PacketView` carried no packet
+//! pointer, so A2S and RakNet were recognised by a source port and a size threshold and
+//! the report that shipped them called both weak. The view now carries `data` and
+//! `data_end`, and [`PacketView::payload_bytes`] reads through them, so those two match
+//! the bytes their protocol puts on the wire and keep the port and the size as
+//! corroboration.
 //!
-//! The families are separate subprograms rather than one inlined cascade so that each
-//! gets its own frame and its own JIT symbol: a stack limit of 512 bytes per frame is
-//! not a constraint this stage is anywhere near, but a per-family symbol is what makes
-//! the cost of the cascade readable in a profile.
+//! The families stay separate functions because each answers a different question, but
+//! their `inline(never)` is conditional now: the object that ships merges them into the
+//! stage frame and only a `profiling` build gives each a JIT symbol. Merging frames is
+//! what brings the 512-byte stack limit within reach, and the largest thing held here is
+//! a sixteen-byte MAGIC.
 
 use carapace_common::{FragState, PacketView};
 
 use crate::{
-    parse::l4::{IPPROTO_TCP, IPPROTO_UDP},
-    stage::{
-        sanity::{TCP_ACK, TCP_RST, TCP_SYN},
-        signature::{backend::SignatureBackend, catalog::VectorId},
-    },
+    parse::l4::{IPPROTO_TCP, IPPROTO_UDP, TCP_ACK, TCP_RST, TCP_SYN},
+    stage::signature::{backend::SignatureBackend, catalog::VectorId},
 };
 
 const UDP_HDR_LEN: u16 = 8;
@@ -41,10 +41,11 @@ const TCP_URG: u8 = 1 << 5;
 ///
 /// The direction is what makes the port meaningful: a packet arriving from source port
 /// 53 is something a resolver sent, and nothing behind this pipeline asked it to. The
-/// size is what separates the vector from the reply it imitates, and it is the whole
-/// discriminator available on one datagram — every threshold here sits above what the
-/// protocol's own answer costs and below what its amplifier returns.
-const AMPLIFIERS: [(u16, u16, VectorId); 6] = [
+/// size is what separates the vector from the reply it imitates, and for these four it
+/// is the whole discriminator â€” every threshold here sits above what the protocol's own
+/// answer costs and below what its amplifier returns. The two game protocols below have
+/// a MAGIC to match instead, which is why they are not in this table.
+const AMPLIFIERS: [(u16, u16, VectorId); 4] = [
     // A response that fits the 512-byte floor of DNS without EDNS is a reply. Above
     // it lives the ANY/DNSSEC/TXT family the reflectors are chosen for.
     (53, 512, VectorId::AmpDns),
@@ -57,15 +58,67 @@ const AMPLIFIERS: [(u16, u16, VectorId); 6] = [
     // The largest factor in the field, four to five orders of magnitude: a legitimate
     // UDP `get` answer for a small value does not reach a kilobyte.
     (11211, 1024, VectorId::AmpMemcached),
-    // A2S_INFO is 25 bytes on the wire and produces 250 at minimum, up to about three
-    // kilobytes with the player list.
-    (27015, 250, VectorId::AmpA2s),
-    // UNCONNECTED_PING is 25 bytes, UNCONNECTED_PONG 35 plus a server-controlled MOTD.
-    // The floor is above a bare pong and above the MOTD of an ordinary server; it is
-    // the weakest threshold of the six, because the string the pong carries is the
-    // server's to choose and a verbose one is legitimate.
-    (19132, 128, VectorId::AmpRaknet),
 ];
+
+const A2S_PORT: u16 = 27_015;
+
+/// A2S_INFO is 25 bytes on the wire and produces 250 at minimum, up to about three
+/// kilobytes with the player list.
+const A2S_FLOOR: u16 = 250;
+
+/// The Source query protocol header: four `0xff` bytes opening every A2S request and
+/// every A2S answer.
+///
+/// The fifth byte names the message â€” `T` for the A2S_INFO request, `I` for the answer
+/// it produces â€” and is deliberately not compared. The accusation is that a datagram
+/// arrived from a query port unbidden, and both directions of the query protocol are
+/// that. What the four bytes buy is the separation from the game: a Source server serves
+/// gameplay on the same port, and a gameplay datagram opens with a sequence number, or
+/// with `0xfffffffe` when it is one piece of a split one. Never with `0xffffffff`.
+const SOURCE_QUERY_MAGIC: [u8; 4] = [0xff; 4];
+
+const RAKNET_PORT: u16 = 19_132;
+
+/// UNCONNECTED_PONG is 35 bytes plus a server-controlled MOTD. This was the weakest
+/// claim in the catalogue while it was the whole claim, because a verbose MOTD is
+/// legitimate and crossing a size threshold was the entire accusation. With the MAGIC
+/// matched it is corroboration, and what it excludes is a pong too short for any
+/// amplification to have happened.
+const RAKNET_FLOOR: u16 = 128;
+
+/// RakNet's offline message identifier, carried verbatim by every unconnected message.
+const RAKNET_MAGIC: [u8; 16] = [
+    0x00, 0xff, 0xff, 0x00, 0xfe, 0xfe, 0xfe, 0xfe, 0xfd, 0xfd, 0xfd, 0xfd, 0x12, 0x34, 0x56, 0x78,
+];
+
+/// Where the MAGIC sits in an UNCONNECTED_PONG: one identifier byte, an eight-byte
+/// timestamp, an eight-byte server GUID.
+///
+/// It sits at nine in an UNCONNECTED_PING and that offset is not read. A ping is 33 bytes
+/// on the wire and cannot reach the floor above, so the only unconnected message this
+/// vector can ever see is the answer.
+const RAKNET_PONG_MAGIC_OFF: u16 = 17;
+
+/// The bottom of the local port range Linux picks a source port from, so the bottom of
+/// what a reply to something this host sent can be addressed to.
+///
+/// `net.ipv4.ip_local_port_range` starts here by default. An operator who moved it has a
+/// knob this phase does not add, and moving it *down* is the direction that would cost
+/// precision rather than safety.
+const EPHEMERAL_FLOOR: u16 = 32_768;
+
+/// Whether a datagram arriving at this port could be an answer to something that left.
+///
+/// A reflected flood is aimed at its victim, and the attacker picks the port; nothing
+/// stops them picking an ephemeral one, so this is not a complete filter and is not meant
+/// to be. What it establishes is a fact about one datagram: an answer arriving at a
+/// *service* port cannot be an answer, because nothing here queries from a service port.
+/// The flood aimed at an ephemeral port is a flood at a single port, which is what the
+/// leaky buckets of stage 7 are for — this stage exists to drop what it can name, not to
+/// name everything.
+const fn could_be_solicited(dport: u16) -> bool {
+    dport >= EPHEMERAL_FLOOR
+}
 
 /// `(port_a, port_b)` couples where each end answers whatever the other sends, so one
 /// spoofed datagram addressed to both of them never stops (Loopy Hellow, NDSS 2024).
@@ -119,13 +172,24 @@ const fn udp_payload_len(view: &PacketView) -> u16 {
 /// carries more, and the point of the two coherence families below is that the headers
 /// agree with each other and not with the wire.
 const fn stated_l4_len(view: &PacketView) -> u16 {
-    let l3_hdr = view.l4_off.saturating_sub(view.l3_off) as u16;
+    let l3_hdr = view.l4_off.saturating_sub(view.l3_off);
     view.ip_total_len.saturating_sub(l3_hdr)
 }
 
-#[inline(never)]
+/// The port and the size are tested before the payload in both game vectors, so the one
+/// packet read of the stage happens only for a datagram already coming from that port at
+/// that size. A flood of anything else pays two compares for it.
+#[cfg_attr(feature = "profiling", inline(never))]
 fn amplification(view: &PacketView) -> Option<VectorId> {
     if view.proto != IPPROTO_UDP {
+        return None;
+    }
+    // A reply that could have been asked for is not an accusation, whatever its size.
+    // This is not caution: the reference trace carries a 1100-byte DNS answer to a
+    // DNSSEC query, entirely legitimate, and every threshold below sits under it. Size
+    // alone cannot separate a reflected datagram from a large solicited one, and this
+    // stage sees one datagram with no memory of what left the host.
+    if could_be_solicited(view.dport) {
         return None;
     }
     let payload = udp_payload_len(view);
@@ -136,10 +200,22 @@ fn amplification(view: &PacketView) -> Option<VectorId> {
             return Some(vector);
         }
     }
+    if view.sport == A2S_PORT
+        && payload >= A2S_FLOOR
+        && view.payload_bytes::<4>(0) == Some(SOURCE_QUERY_MAGIC)
+    {
+        return Some(VectorId::AmpA2s);
+    }
+    if view.sport == RAKNET_PORT
+        && payload >= RAKNET_FLOOR
+        && view.payload_bytes::<16>(RAKNET_PONG_MAGIC_OFF) == Some(RAKNET_MAGIC)
+    {
+        return Some(VectorId::AmpRaknet);
+    }
     None
 }
 
-#[inline(never)]
+#[cfg_attr(feature = "profiling", inline(never))]
 fn loop_pair(view: &PacketView) -> Option<VectorId> {
     if view.proto != IPPROTO_UDP {
         return None;
@@ -155,7 +231,7 @@ fn loop_pair(view: &PacketView) -> Option<VectorId> {
 /// What stage 4 does not cover. It decides the fate of a *later* fragment, which has no
 /// transport header to be incoherent about; these two are properties of a *first*
 /// fragment, which walked every earlier stage as an ordinary packet.
-#[inline(never)]
+#[cfg_attr(feature = "profiling", inline(never))]
 fn fragment_abuse(view: &PacketView) -> Option<VectorId> {
     if view.frag() != FragState::First {
         return None;
@@ -174,13 +250,13 @@ fn fragment_abuse(view: &PacketView) -> Option<VectorId> {
 /// emits. A segment with none of SYN, ACK and RST is neither opening a connection nor
 /// answering on one nor tearing one down, so whatever else it carries is a probe: that
 /// covers PSH alone, URG alone, PSH with URG, and the Xmas tree minus its FIN. RST
-/// alone is deliberately outside it — a reset for a segment that carried no ACK is sent
+/// alone is deliberately outside it â€” a reset for a segment that carried no ACK is sent
 /// with the ACK bit clear, and refusing it would break the one legitimate flags-without-
 /// ACK case there is.
 ///
 /// SYN with URG is the second: no stack has ever put an urgent pointer on a handshake.
 /// SYN with PSH is *not* here, because TCP Fast Open really does push data on the SYN.
-#[inline(never)]
+#[cfg_attr(feature = "profiling", inline(never))]
 fn impossible_flags(view: &PacketView) -> Option<VectorId> {
     if view.proto != IPPROTO_TCP {
         return None;
@@ -201,7 +277,7 @@ fn impossible_flags(view: &PacketView) -> Option<VectorId> {
 /// and never the two fields against each other.
 ///
 /// That gap is exactly where the evasion lives. Ethernet pads a short frame, so a UDP
-/// length below what arrived is legitimate and sanity has to allow it — which lets a
+/// length below what arrived is legitimate and sanity has to allow it â€” which lets a
 /// datagram claim any length under the frame size, and the receiver reassembles a
 /// different number of bytes than the filter measured. The two headers, however, are
 /// bound to each other by both specifications: the IP payload of an unfragmented packet
@@ -209,7 +285,7 @@ fn impossible_flags(view: &PacketView) -> Option<VectorId> {
 ///
 /// Unfragmented only, and UDP only. A fragment's length field describes the whole
 /// datagram rather than the piece that arrived, and TCP states no length at all.
-#[inline(never)]
+#[cfg_attr(feature = "profiling", inline(never))]
 fn length_mismatch(view: &PacketView) -> Option<VectorId> {
     if view.proto != IPPROTO_UDP || view.frag() != FragState::None {
         return None;
