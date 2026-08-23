@@ -26,3 +26,7 @@ pub fn program_with(settings: u32) -> TestProg {
 pub fn program_with_buckets(settings: u32, buckets: BucketGlobals) -> TestProg {
     TestProg::load_buckets(PROGRAM, settings, buckets)
 }
+
+pub fn program_with_vectors(settings: u32, vectors: u32) -> TestProg {
+    TestProg::load_vectors(PROGRAM, settings, vectors)
+}

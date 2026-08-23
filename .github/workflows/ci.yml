@@ -105,8 +105,12 @@ jobs:
 
   # Assertion 3, the per-packet cost, is deliberately not a step here.
   #
-  # It is armed, and it is armed on the measurement VM: `measure-stage-cost.sh
-  # --max-instructions 765`. Two reasons it cannot be a runner step. The script drives
+  # It is armed, and it is armed on the measurement VM:
+  # `measure-stage-cost.sh --max-instructions 1325 --max-ns 144`. Both halves, because the
+  # instruction count is what reproduces and the nanoseconds are what the promise is about;
+  # the script says out loud when either flag is missing, since a ceiling of 765 stood
+  # against a program of 1317 for a whole phase and the silence was the whole problem.
+  # Two reasons it cannot be a runner step. The script drives
   # two lab machines over SSH, one to build a static musl binary and one to run it,
   # because the machine with the target kernel has no toolchain. And the quantity is
   # machine-specific: it is the instruction count of the whole pipeline with the count of

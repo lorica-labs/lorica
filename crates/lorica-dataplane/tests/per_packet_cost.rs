@@ -19,8 +19,8 @@
 
 mod support;
 
-use lorica_common::{Action, Deadline, LpmKey, LpmValue, Scope, setting};
-use support::{PktBuilder, XdpAction, program, program_with};
+use lorica_common::{Action, DEFAULT_SETTINGS, Deadline, LpmKey, LpmValue, Scope, setting};
+use support::{PktBuilder, XdpAction, program, program_with, program_with_vectors};
 
 /// `bench/results/floor-20260822T093726Z.json`: an `XDP_PASS` that does nothing, same
 /// harness, same machine. Subtracted from every figure here.
@@ -93,6 +93,20 @@ fn the_cost_of_each_path_through_the_pipeline() {
     report(
         "UDP matching nothing, uRPF armed",
         armed.ns_per_run(&plain, REPEAT),
+    );
+
+    // What the signature catalogue costs a packet that matches none of it, bracketed by the
+    // two ends of the configuration space. The vector word is a load-time constant, so a
+    // cleared bit is not a branch skipped at run time: the verifier removes that vector
+    // before the program is JITed. The line above arms the whole catalogue, which is the
+    // worst case and not the common one; this one arms nothing, which is the floor. A real
+    // configuration sits between the two, and the byte counts of `signature_pruning` are
+    // monotone in the number of vectors armed.
+    let bare = program_with_vectors(DEFAULT_SETTINGS, 0);
+    assert_eq!(bare.run(&plain), XdpAction::Pass);
+    report(
+        "UDP matching nothing, no vector in the program",
+        bare.ns_per_run(&plain, REPEAT),
     );
 
     let v6 = PktBuilder::eth().ipv6().udp(1111, GAME_PORT).build();

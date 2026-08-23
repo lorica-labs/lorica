@@ -17,8 +17,8 @@
 
 mod support;
 
-use lorica_common::DEFAULT_SETTINGS;
-use support::run::{load_raw, plain_object_path, xdp_program};
+use lorica_common::{DEFAULT_SETTINGS, SIGNATURE_VECTORS_ALL};
+use support::run::{load_raw_vectors, plain_object_path, xdp_program};
 
 /// Measured with four stages implemented and three still stubs: **5 321 bytes** on
 /// 7.0.0-30 (Haswell, VM 900) and **5 283 bytes** on 6.8.0-138 (VM 901). The two kernels
@@ -50,11 +50,34 @@ use support::run::{load_raw, plain_object_path, xdp_program};
 /// ignore. The second failure mode is the one that actually happened here, and it is why
 /// the raise came mid-phase rather than at the end: a red guard had begun to mask the
 /// kernel matrix.
-const JITED_CEILING: u32 = 7_378;
+///
+/// **The last raise, with the seven stages in.** The bank and the reverse-path lookup took
+/// it to 8 668, then replacing SipHash-2-4 on the bucket index with keyed multiply-shift
+/// took it back to 7 378 — the standing ceiling, hit exactly, which was luck and not margin.
+/// Removing the packet-path division took 16 more off. Then the signature catalogue moved
+/// behind a load-time word, and that is what fixes the margin instead of papering over it:
+/// the verifier removes an unarmed vector before the program is JITed, so the size now
+/// depends on the configuration.
+///
+/// **Which is why the number below is the whole catalogue and not the default.** Measured on
+/// 7.0.0-30: **7 572** with every vector armed, 7 235 for a six-of-ten game host, 6 688 for
+/// the four coherence facts alone, 6 152 for nothing armed. A ceiling has to bound the
+/// largest program the configuration space can produce, so it is set over the first of those
+/// and [`the_jited_program_stays_under_its_ceiling`] arms the catalogue to reach it.
+///
+/// That is a correction and not a formality: for one commit this test loaded without the
+/// vector word and so measured 6 152 — it stayed green while guarding a program nobody
+/// would ever load. A size assertion that measures the smallest reachable program is worse
+/// than no assertion, because it reads like one.
+const JITED_CEILING: u32 = 8_330;
 
 #[test]
 fn the_jited_program_stays_under_its_ceiling() {
-    let mut ebpf = load_raw(&plain_object_path(), DEFAULT_SETTINGS);
+    let mut ebpf = load_raw_vectors(
+        &plain_object_path(),
+        DEFAULT_SETTINGS,
+        Some(SIGNATURE_VECTORS_ALL),
+    );
     let program = xdp_program(&mut ebpf, support::PROGRAM);
     let info = program.info().expect("reading the program info failed");
     let jited = info.size_jitted();

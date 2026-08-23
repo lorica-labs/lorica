@@ -2,6 +2,14 @@
 # What each stage of the pipeline costs, in nanoseconds, cycles and cache misses.
 #
 #   measure-stage-cost.sh [--out DIR] [--levels A,B,C] [--iface IF]
+#                         [--max-instructions N] [--max-ns N]
+#
+# The two ceilings, measured on 6.8.0-138 with the whole signature catalogue armed, which is
+# the largest program the configuration space produces: 1298.4 instructions per packet and
+# 131 ns above the floor. Armed at 1325 (2 %, ten times the observed spread of 0.16 %) and
+# 144 (10 %, against a spread of 3 to 5 ns). Neither is a CI step and the reason is in
+# ci.yml; both say so out loud when they are not armed, because a ceiling of 765 stood
+# against a program of 1317 for a whole phase and the absent flag is why nobody saw it.
 #
 # Runs on the development host and drives the two lab machines, like measure-map-batch.sh
 # and for the same reason: the measurement VM is the only machine that may be measured and
@@ -44,6 +52,11 @@ LEVELS=
 # script fails on excess: that is assertion 3, armed on instructions and not on nanoseconds
 # because instructions reproduce to about one per packet where the nanoseconds drift.
 MAX_INSTRUCTIONS=
+# The same, in nanoseconds. Armable here and not in a Rust test, because a nanosecond
+# ceiling is a property of one machine and this script names the machine it drives, while a
+# test runs wherever the suite runs: the same pipeline reads 121 ns on the measurement VM
+# and about 158 on the build VM, so a checked-in constant would be wrong on one of them.
+MAX_NS=
 IFACE=${LORICA_IFACE:-enp6s19}
 BUILD_HOST=${LORICA_BUILD_HOST:-lab-dev}
 TARGET_HOST=${LORICA_TARGET_HOST:-lab-target}
@@ -61,6 +74,7 @@ while [ $# -gt 0 ]; do
         --out)     OUT=$2; shift 2 ;;
         --levels)  LEVELS=$2; shift 2 ;;
         --max-instructions) MAX_INSTRUCTIONS=$2; shift 2 ;;
+        --max-ns)  MAX_NS=$2; shift 2 ;;
         --iface)   IFACE=$2; shift 2 ;;
         -h|--help) sed -n '2,28p' "$0"; exit 0 ;;
         *) echo "unknown argument: $1" >&2; exit 2 ;;
@@ -189,10 +203,24 @@ per_packet=$(awk -v d="$deepest" -v f="$floor" -v p="$PACKETS" 'BEGIN { printf "
 echo
 echo "instructions per packet, harness subtracted: $per_packet"
 
+# An unarmed guard that says nothing is the failure mode this project has already paid for:
+# the ceiling stood at 765 while the program measured 1317, and because the flag was absent
+# nothing anywhere said so. Silence is now impossible in either direction.
 if [ -n "$MAX_INSTRUCTIONS" ]; then
     over=$(awk -v v="$per_packet" -v m="$MAX_INSTRUCTIONS" 'BEGIN { print (v > m ? 1 : 0) }')
     [ "$over" -eq 0 ] || die "$per_packet instructions per packet against a ceiling of $MAX_INSTRUCTIONS"
     echo "assertion 3: $per_packet instructions per packet, ceiling $MAX_INSTRUCTIONS, within budget"
+else
+    echo "assertion 3: NOT ARMED, no --max-instructions given. $per_packet measured, nothing checked."
+fi
+
+if [ -n "$MAX_NS" ]; then
+    deepest_ns=$(cut -d, -f4 "$csv" | tail -1)
+    over=$(awk -v v="$deepest_ns" -v m="$MAX_NS" 'BEGIN { print (v > m ? 1 : 0) }')
+    [ "$over" -eq 0 ] || die "$deepest_ns ns per packet against a ceiling of $MAX_NS"
+    echo "assertion 3 bis: $deepest_ns ns per packet above the floor, ceiling $MAX_NS, within budget"
+else
+    echo "assertion 3 bis: NOT ARMED, no --max-ns given."
 fi
 
 printf '\n%s\n' "$csv"

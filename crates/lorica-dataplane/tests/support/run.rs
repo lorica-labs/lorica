@@ -164,13 +164,29 @@ impl TestProg {
     /// are about the buckets. Everything else keeps the unconfigured budget the program
     /// carries in its own `.rodata`, which enforces nothing.
     pub fn load_buckets(name: &str, settings: u32, buckets: BucketGlobals) -> Self {
-        Self::load_full(&object_path(), name, settings, Some(buckets))
+        Self::load_full(
+            &object_path(),
+            name,
+            settings,
+            Some(buckets),
+            SIGNATURE_VECTORS_ALL,
+        )
     }
 
     /// Loads a named object rather than the one the environment points at, for the one
     /// measurement that has to compare two builds of the same program in one process.
     pub fn load_object(path: &std::path::Path, name: &str, settings: u32) -> Self {
-        Self::load_full(path, name, settings, None)
+        Self::load_full(path, name, settings, None, SIGNATURE_VECTORS_ALL)
+    }
+
+    /// Loads with only the named signature vectors in the program at all.
+    ///
+    /// The mask is not a run-time filter: a cleared bit means the verifier removed that
+    /// vector before the program was JITed. So this is how the cost of a *configuration* is
+    /// measured rather than the cost of the catalogue, and the two differ by more than the
+    /// gates that survive.
+    pub fn load_vectors(name: &str, settings: u32, vectors: u32) -> Self {
+        Self::load_full(&object_path(), name, settings, None, vectors)
     }
 
     fn load_full(
@@ -178,6 +194,7 @@ impl TestProg {
         name: &str,
         settings: u32,
         buckets: Option<BucketGlobals>,
+        vectors: u32,
     ) -> Self {
         let object = fs::read(path).unwrap_or_else(|err| {
             panic!(
@@ -190,11 +207,11 @@ impl TestProg {
 
         let mut loader = EbpfLoader::new();
         loader.override_global(SETTINGS_SYMBOL, &settings, true);
-        // The whole catalogue, which is what a case about a vector wants and what a case
-        // about anything else wants not to think about. The program's own initialiser is
-        // none of it, so a vector left unpatched is not merely off — it is not in the
-        // verified program, and every counter assertion about it would read zero.
-        loader.override_global(SIGNATURE_VECTORS_SYMBOL, &SIGNATURE_VECTORS_ALL, true);
+        // The whole catalogue by default, which is what a case about a vector wants and
+        // what a case about anything else wants not to think about. The program's own
+        // initialiser is none of it, so a vector left unpatched is not merely off — it is
+        // not in the verified program, and every counter assertion about it would read zero.
+        loader.override_global(SIGNATURE_VECTORS_SYMBOL, &vectors, true);
         // Kept alive past the borrow: `override_global` records a reference, and the
         // patching happens in `load`.
         let words = buckets.map(|b| {
