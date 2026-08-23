@@ -8,4 +8,4 @@ mod bank;
 mod leaky;
 
 pub use bank::{BANK_SLOT_BYTES, BankLayout, DEFAULT_BANK_BUCKETS, SHARE_SCALE};
-pub use leaky::{BURST_MAX, Bucket, Charge, Drain, Rate, UNITS_PER_BYTE};
+pub use leaky::{BURST_MAX, Bucket, Charge, DRAIN_FRACTION_BITS, Drain, Rate, UNITS_PER_BYTE};

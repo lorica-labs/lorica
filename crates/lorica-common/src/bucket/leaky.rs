@@ -2,33 +2,53 @@ use core::mem::size_of;
 
 /// One byte, in the sub-byte units a bucket level is counted in.
 ///
-/// The level is not counted in bytes because the drain of one update,
-/// `per_sec * dt / 10^9`, is an integer division: it rounds down, and the shortfall
-/// is charged to the burst. In whole bytes that shortfall reaches one byte per
-/// packet, so a few hundred conformant packets whose gaps merely jitter around the
-/// rate eat an MTU of burst and start being refused. Sub-byte units divide it by the
-/// scale, and 512 is the scale that costs nothing: `10^9 = 2^9 * 1953125`, so the
-/// nanosecond conversion and the unit conversion collapse into one division by one
-/// constant, the same single instruction the byte version needs.
+/// The level is not counted in bytes because the drain of one update rounds down and the
+/// shortfall is charged to the burst. In whole bytes that shortfall reaches one byte per
+/// packet, so a few hundred conformant packets whose gaps merely jitter around the rate eat
+/// an MTU of burst and start being refused. Sub-byte units divide it by the scale, and this
+/// scale keeps it under 1/512 byte per update, which is the same answer to the same argument
+/// as before.
+///
+/// 512 used to be the scale for a second reason that has expired: `10^9 = 2^9 * 1953125`,
+/// so against a *nanosecond* clock the time conversion and the unit conversion collapsed
+/// into one division by 1953125. The clock is `bpf_jiffies64` and the conversion is
+/// [`Drain::per_jiffy`], in userspace, once per load. What the scale still has to be is a
+/// power of two, because it reaches the packet path as `<< 9` in the cost and in the
+/// ceiling.
 pub const UNITS_PER_BYTE: u64 = 512;
 
-/// `10^9 / UNITS_PER_BYTE`: nanoseconds per drained unit at one byte per second.
-const NS_PER_UNIT: u64 = 1_953_125;
+/// Fractional bits the [`Drain`] word carries, and the whole reason [`Bucket::charge`] has
+/// no division left in it.
+///
+/// The drain of one update is `drain * dt` scaled down. Any scale is available, because the
+/// word is built in userspace and can carry whatever fixed point suits the kernel side, and
+/// a power of two is the only kind that costs one cycle: BPF has no 64-by-64-to-128
+/// multiply, so LLVM cannot turn a division by a constant into a reciprocal multiply on this
+/// target however constant the constant is — it emits a real `BPF_DIV` and the x86 JIT emits
+/// a real `div`, tens of cycles and not pipelined, on the dependency chain of every packet.
+///
+/// 20 fractional bits and not more, because the saturated quotient has to stay above every
+/// reachable level: see [`BURST_MAX`]. Not fewer either, because these bits are the
+/// precision of the *rate* and not of the level: the word for one byte per second at 1000 Hz
+/// is 536870, so the configured rate is honoured to 2e-6 of itself, and every bit dropped
+/// here doubles that.
+pub const DRAIN_FRACTION_BITS: u32 = 20;
 
 /// Largest burst honoured; a larger one is clamped to it.
 ///
 /// A burst above 16 GiB is not a rate limit. Clamping it closes the arithmetic:
-/// `per_sec * dt` saturates for a long enough gap, and the saturated quotient
-/// (`u64::MAX / NS_PER_UNIT`, about 9.4e12 units) has to stay above every reachable
+/// `drain * dt` saturates for a long enough gap, and the saturated quotient
+/// (`u64::MAX >> DRAIN_FRACTION_BITS`, 1.76e13 units) has to stay above every reachable
 /// level (`BURST_MAX * UNITS_PER_BYTE`, 8.8e12 units) or an idle bucket configured
-/// with an absurd burst would fail to drain.
+/// with an absurd burst would fail to drain. The margin is a factor of two, where the
+/// division this shift replaced left 1.07.
 pub const BURST_MAX: u64 = 1 << 34;
 
 /// A leak, and the burst it tolerates, in bytes.
 ///
 /// A zero drain and a zero burst are both reachable configurations and both mean refuse
-/// everything; neither is a division by zero, because the only division in the update is
-/// by `NS_PER_UNIT`.
+/// everything; neither is a division by zero, because there is no division in the update
+/// at all.
 #[repr(C)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Rate {
@@ -37,8 +57,8 @@ pub struct Rate {
 }
 
 /// How fast one bucket leaks, against the clock [`Bucket::charge`] is handed: bucket units
-/// per tick of that clock, scaled by `NS_PER_UNIT` so the update is one multiply and one
-/// division by a constant.
+/// per tick of that clock, in fixed point with [`DRAIN_FRACTION_BITS`] fractional bits so
+/// the update is one multiply and one shift.
 ///
 /// **A newtype and not the `u64` it wraps, because the `u64` was called `per_sec` and was
 /// read as bytes per second.** The data path hands `charge` `bpf_jiffies64` — 4 ns against
@@ -60,20 +80,36 @@ impl Drain {
     /// counts jiffies, which is the data path's clock and the only one that ships.
     ///
     /// `hz` is measured through `CLOCK_PROBE`, because the kernel exports neither
-    /// `CONFIG_HZ` nor the counter. `10^9 / hz` is exact for 100, 250 and 1000 Hz and
-    /// 3.3e-8 low for 300, which is four orders below the tolerance the rate itself is
-    /// recognised to. Saturating, because the unconfigured budget the program carries is
-    /// `u64::MAX` and scaling it must not wrap into a strict one.
+    /// `CONFIG_HZ` nor the counter. The factor is the units one byte per second leaks in one
+    /// jiffy, in the fixed point `charge` shifts back out: `UNITS_PER_BYTE << 20` over `hz`.
+    /// The factor rounds down, so the error is relative and the same at every rate: 1.7e-6 at
+    /// 1000 Hz, its worst case, where the division it replaced was exact at 100, 250 and 1000
+    /// and 3.3e-8 low at 300. Both are orders below the tolerance the rate itself is
+    /// recognised to, and both round down, which is the direction that never leaks. This
+    /// division is in userspace: the kernel side sees only the word.
+    ///
+    /// Saturating, because the unconfigured budget the program carries is `u64::MAX` and
+    /// scaling it must not wrap into a strict one.
     pub const fn per_jiffy(bytes_per_sec: u64, hz: u32) -> Self {
         let hz = if hz == 0 { 1 } else { hz as u64 };
-        Self(saturating_mul(bytes_per_sec, 1_000_000_000 / hz))
+        Self(saturating_mul(
+            bytes_per_sec,
+            (UNITS_PER_BYTE << DRAIN_FRACTION_BITS) / hz,
+        ))
     }
 
-    /// From bytes per second, for a `charge` whose clock counts nanoseconds. The scale is 1,
-    /// which is exactly why the mismatch above was invisible; no clock in the program is
-    /// this one, and the properties of the arithmetic are stated against it.
+    /// From bytes per second, for a `charge` whose clock counts nanoseconds. No clock in the
+    /// program is this one, and the properties of the arithmetic are stated against it.
+    ///
+    /// No power of two divides `10^9`, so this conversion cannot be exact whatever the level
+    /// unit is — which is the whole reason the *kernel* side no longer performs it. The
+    /// product is taken first so the rounding is relative rather than a floor on the factor,
+    /// and it rounds down: the conservation property is stated as never draining more than
+    /// the rate owed, and rounding to nearest breaks it by a few bytes over a long run. One
+    /// byte per second is under half a unit per nanosecond-tick and scales to a drain of
+    /// zero, which no jiffy rate does and which only a nanosecond clock could ask for.
     pub const fn per_nanosecond(bytes_per_sec: u64) -> Self {
-        Self(bytes_per_sec)
+        Self(saturating_mul(bytes_per_sec, UNITS_PER_BYTE << DRAIN_FRACTION_BITS) / 1_000_000_000)
     }
 
     /// The scaled word itself.
@@ -173,7 +209,11 @@ impl Bucket {
         // Saturating rather than wrapping: the eBPF crate builds with
         // overflow-checks off, so a wrap there would be silent, and a saturated
         // product means a gap long enough to empty any level `BURST_MAX` allows.
-        let drained = saturating_mul(rate.drain.into_raw(), dt) / NS_PER_UNIT;
+        //
+        // A shift and not a division. This is the only arithmetic on the packet path that
+        // was ever a `BPF_DIV`, and a `div` the x86 JIT cannot pipeline sat on the
+        // dependency chain between the load and the store of the bucket.
+        let drained = saturating_mul(rate.drain.into_raw(), dt) >> DRAIN_FRACTION_BITS;
         self.level = self.level.saturating_sub(drained);
 
         let ceiling = rate.burst.min(BURST_MAX) * UNITS_PER_BYTE;

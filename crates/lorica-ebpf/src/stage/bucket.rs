@@ -16,9 +16,13 @@
 //! 7.0.0-30: 8668 JITed bytes down to 7378 — which is the checked-in ceiling exactly, so the
 //! headroom is zero and not comfortable. `hash/multiply_shift.rs` states what was given up.
 //!
-//! The 39 ns is dominated by one 64-bit division: the drain divides by 10^9 / 512, LLVM
-//! cannot strength-reduce it because the reciprocal multiply would need a high multiply BPF
-//! does not have, and a `div` is tens of cycles. Worth revisiting. Not revisited here.
+//! **The 39 ns was dominated by one 64-bit division, and that division is gone.** The drain
+//! divided by `10^9 / 512`; LLVM cannot strength-reduce a division on this target, because
+//! the reciprocal multiply would need a high multiply BPF does not have, so it emitted a
+//! real `BPF_DIV` and the JIT a real `div` — tens of cycles, unpipelined, between the load
+//! and the store of the bucket. The level unit no longer has to be `10^9`'s cofactor: the
+//! jiffy conversion moved to the loader, the `Drain` word is fixed point, and the update
+//! shifts. What that is worth in nanoseconds is the 901's to say.
 //!
 //! Over budget and enforcing, the stage answers `Drop`, or `Mark` when the operator asked
 //! for the excess to reach the stack tagged instead. `Mark` does not write the metadata it
