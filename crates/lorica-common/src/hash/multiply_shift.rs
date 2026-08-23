@@ -12,8 +12,8 @@
 //! offline chosen-collision construction: an attacker who can compute the index picks
 //! addresses that land in the bucket a chosen legitimate source lands in, and starves that
 //! source alongside their own traffic. Two-universality answers exactly that — two distinct
-//! addresses collide with probability 1/m whatever the attacker picks, m being the bucket
-//! count — and the requirement is narrower than it looks because of an asymmetry: an
+//! addresses collide with probability of order 1/m whatever the attacker picks, m being the
+//! bucket count — and the requirement is narrower than it looks because of an asymmetry: an
 //! attacker who merely makes *their own* addresses collide gains nothing, since sources
 //! sharing a bucket share one budget and are therefore limited harder.
 //!
@@ -27,11 +27,23 @@
 
 /// Keyed multiply-shift over the two 64-bit words of a 16-byte address.
 ///
-/// Dietzfelbinger's multiply-shift, extended to a vector of words the way Thorup states it.
-/// Only the low 64 bits of each product are needed, which is the one multiply BPF does
-/// cheaply, and only the **high** bits of the sum are usable: the low bits of a wrapping
-/// multiply are weak, and taking the top `log2(m)` bits is what the 2-universality proof is
-/// about. Reducing this output with a mask or a modulo would keep the wrong end of it.
+/// Dietzfelbinger's multiply-shift. Only the low 64 bits of each product are needed, which
+/// is the one multiply BPF does cheaply, and only the **high** bits of the sum are usable:
+/// the low bits of a wrapping multiply are weak, and taking the top `log2(m)` bits is what
+/// the bound is about. Reducing this output with a mask or a modulo would keep the wrong end
+/// of it.
+///
+/// **Where the bound applies, stated exactly rather than generously.** For one word the
+/// classical result is `P[h(x) = h(y)] <= 2/m` for any distinct `x` and `y` over a uniform
+/// odd multiplier, and that is the case IPv4 traffic runs — see [`Self::hash`], where an
+/// IPv4-mapped address leaves `k0` multiplying zero. Summing two words in the same 64 bits
+/// is the practical extension, not the form the textbook bound is stated for: the clean
+/// proof takes the sum in twice the word width, which is exactly the 128-bit arithmetic BPF
+/// does not have. **This code does not claim that bound for IPv6.** What it does claim for
+/// both is the property the stage actually rests on — that collisions cannot be constructed
+/// without the key — and the measured evidence is `tests/keyed_index.rs`, where 10 000
+/// addresses built to collide under the unkeyed hash spread to a chi-square of 76.8 against
+/// a threshold of 1294.4.
 #[derive(Clone, Copy)]
 pub struct MultiplyShift {
     k0: u64,
