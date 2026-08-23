@@ -19,7 +19,8 @@ use std::{
 use anyhow::{Context, Result, bail};
 use aya::{Ebpf, EbpfLoader};
 use lorica_common::{
-    BUCKET_KEY_SYMBOLS, Clock, CounterId, DEFAULT_SETTINGS, SETTINGS_SYMBOL, key_words,
+    BUCKET_KEY_SYMBOLS, Clock, CounterId, DEFAULT_SETTINGS, SETTINGS_SYMBOL, SIGNATURE_VECTORS_ALL,
+    SIGNATURE_VECTORS_SYMBOL, key_words,
 };
 use lorica_dataplane::{clock, loader, maps};
 use tokio::{runtime::Builder, time::MissedTickBehavior};
@@ -228,6 +229,11 @@ fn load(object: &Path, slots: u32) -> Result<(&'static Ebpf, Clock)> {
         key_words(loader::draw_index_key().context("cannot draw the key of the bucket index")?);
     let mut ebpf = EbpfLoader::new()
         .override_global(SETTINGS_SYMBOL, &DEFAULT_SETTINGS, true)
+        // The whole catalogue, because no configuration is read here yet and the program's
+        // own initialiser is none of it. `Compiled::signature_vectors` is what goes here
+        // once the configuration reaches this path, and the vectors it leaves out are then
+        // absent from the verified program rather than skipped by it.
+        .override_global(SIGNATURE_VECTORS_SYMBOL, &SIGNATURE_VECTORS_ALL, true)
         .override_global(BUCKET_KEY_SYMBOLS[0], &key[0], true)
         .override_global(BUCKET_KEY_SYMBOLS[1], &key[1], true)
         .map_max_entries("COUNTERS", slots)

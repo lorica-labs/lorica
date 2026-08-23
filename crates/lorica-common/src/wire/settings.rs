@@ -95,3 +95,24 @@ pub const BUCKET_RATE_SYMBOLS: [[&str; 2]; 2] = [
     ["BUCKET_NORMAL_RATE", "BUCKET_NORMAL_BURST"],
     ["BUCKET_SUSPECT_RATE", "BUCKET_SUSPECT_BURST"],
 ];
+
+/// One bit per vector of the signature catalogue, in catalogue order, patched by the
+/// loader like the policy word.
+///
+/// Not a bit of [`SETTINGS_SYMBOL`]: the low byte of that word is spoken for and the upper
+/// half is the measurement cutoff. Its own global also means the loader decides the
+/// catalogue and the policy separately, which is what they are.
+///
+/// The reason this is a load-time global rather than a compiled-in constant is the
+/// verifier: `.rodata` is read-only and constant to it, so it propagates the mask and
+/// physically removes the branch of every vector the configuration left out. A
+/// configuration that keeps two vectors carries two comparisons and not ten.
+pub const SIGNATURE_VECTORS_SYMBOL: &str = "SIGNATURE_VECTORS";
+
+/// The whole catalogue, ten vectors. What a loader patches when the operator named none:
+/// observation of everything is what a configuration that says nothing asks for.
+///
+/// The program's own initialiser is zero, for the same reason the bucket budgets carry the
+/// unconfigured one — a load that patched nothing enforces nothing — and
+/// `signature_compile` asserts this mask is exactly as wide as the catalogue.
+pub const SIGNATURE_VECTORS_ALL: u32 = (1 << 10) - 1;

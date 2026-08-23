@@ -16,7 +16,9 @@
 //! and a size threshold is a judgement about a packet that could be legitimate, so it
 //! is rate-limited and the buckets decide how much of it gets through.
 
-use lorica_common::{Action, CounterId};
+use lorica_common::{Action, CounterId, SIGNATURE_VECTORS_ALL};
+
+use crate::compile::CompileError;
 
 /// One vector of the catalogue.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -43,6 +45,36 @@ pub const CATALOG: [Vector; 10] = [
     vector(CounterId::SignatureImpossibleTcpFlags, Action::Drop),
     vector(CounterId::SignatureLengthMismatch, Action::Drop),
 ];
+
+/// The mask the loader patches has to be exactly as wide as the catalogue: a bit past the
+/// end would arm a vector that does not exist, and one short would leave the last row out
+/// of every default load.
+const _: () = assert!(SIGNATURE_VECTORS_ALL == (1 << CATALOG.len()) - 1);
+
+/// The activation word the data path reads, one bit per row in catalogue order.
+///
+/// `None` is the whole catalogue, because that is what a configuration saying nothing about
+/// signatures asks for: the product's default mode is observation, and a vector quietly
+/// absent is a defense nobody notices missing. What the word buys is that the vectors it
+/// leaves out are removed from the program by the verifier rather than skipped by it.
+pub fn vectors_word(named: Option<&[String]>) -> Result<u32, CompileError> {
+    let Some(named) = named else {
+        return Ok(SIGNATURE_VECTORS_ALL);
+    };
+    let mut word = 0;
+    for name in named {
+        let row = CATALOG.iter().position(|vector| {
+            vector.counter.name().strip_prefix("signature_") == Some(name.as_str())
+        });
+        match row {
+            Some(row) => word |= 1 << row,
+            None => {
+                return Err(CompileError::UnknownSignatureVector { name: name.clone() });
+            }
+        }
+    }
+    Ok(word)
+}
 
 /// What an armed stage does when this counter moves. `None` for a counter that is not a
 /// vector at all, so a caller cannot get an answer for a question it did not ask.

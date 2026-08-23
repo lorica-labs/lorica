@@ -43,6 +43,16 @@ static BUCKET_SUSPECT_RATE: u64 = u64::MAX;
 #[unsafe(no_mangle)]
 static BUCKET_SUSPECT_BURST: u64 = BURST_MAX;
 
+/// The catalogue stage 6 was loaded with, one bit per vector in catalogue order.
+///
+/// Zero, and the loader patches what the configuration asks for, so a program nobody
+/// configured carries no vector — the same choice the budgets above make. The point of the
+/// global is that the verifier reads `.rodata` as constant and *removes* the branch of
+/// every vector the bit is clear for, so the cascade costs the configuration and not the
+/// catalogue.
+#[unsafe(no_mangle)]
+static SIGNATURE_VECTORS: u32 = 0;
+
 /// Same `read_volatile` as the policy word and for the same reason: a folded read would
 /// compile the initialiser into the program the loader is about to patch.
 #[inline(always)]
@@ -98,6 +108,14 @@ pub fn enforce_buckets() -> bool {
 #[inline(always)]
 pub fn mark_over_budget() -> bool {
     flags() & setting::MARK_OVER_BUDGET != 0
+}
+
+/// `read_volatile` for the same reason as the policy word: the loader rewrites this after
+/// the compiler has seen it and before the verifier does.
+#[inline(always)]
+pub fn signature_vectors() -> u32 {
+    // SAFETY: a plain aligned read of a static in this program own read-only data.
+    unsafe { core::ptr::read_volatile(&SIGNATURE_VECTORS) }
 }
 
 #[inline(always)]

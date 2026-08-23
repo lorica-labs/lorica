@@ -17,7 +17,8 @@ use aya::{
 };
 use lorica_common::{
     BUCKET_KEY_SYMBOLS, BUCKET_RATE_SYMBOLS, Bucket, Clock, CounterId, DEFAULT_SETTINGS, LpmKey,
-    LpmValue, MultiplyShift, PacketView, Rate, SETTINGS_SYMBOL, key_words,
+    LpmValue, MultiplyShift, PacketView, Rate, SETTINGS_SYMBOL, SIGNATURE_VECTORS_ALL,
+    SIGNATURE_VECTORS_SYMBOL, key_words,
 };
 use lorica_dataplane::clock;
 
@@ -189,6 +190,11 @@ impl TestProg {
 
         let mut loader = EbpfLoader::new();
         loader.override_global(SETTINGS_SYMBOL, &settings, true);
+        // The whole catalogue, which is what a case about a vector wants and what a case
+        // about anything else wants not to think about. The program's own initialiser is
+        // none of it, so a vector left unpatched is not merely off — it is not in the
+        // verified program, and every counter assertion about it would read zero.
+        loader.override_global(SIGNATURE_VECTORS_SYMBOL, &SIGNATURE_VECTORS_ALL, true);
         // Kept alive past the borrow: `override_global` records a reference, and the
         // patching happens in `load`.
         let words = buckets.map(|b| {
@@ -460,11 +466,31 @@ fn default_object_path() -> PathBuf {
 
 /// Loads an object into the kernel without the test-run wrapper, for the tests that
 /// attach it to a real interface rather than feeding it packets.
+///
+/// The signature catalogue is left at the program's own initialiser, which is empty, so
+/// what this loads is the program with stage 6 pruned out of it. None of the callers
+/// asserts anything about a vector — they attach, they fault, they route — but the size
+/// ceiling reads its number from here, and the number it reads is therefore a program
+/// without the catalogue. Patching [`SIGNATURE_VECTORS_ALL`] here is the honest thing the
+/// moment the ceiling is re-baselined: `signature_pruning` prints what the whole catalogue
+/// costs, and it is above the ceiling standing today.
 pub fn load_raw(path: &std::path::Path, settings: u32) -> Ebpf {
+    load_raw_vectors(path, settings, None)
+}
+
+/// The same load with the signature catalogue stated, for the assertion about what the
+/// verifier leaves in the program: the vectors a mask omits are not skipped at run time,
+/// they are removed before the program is JITed, so the mask is what makes two loads of one
+/// object two different programs.
+pub fn load_raw_vectors(path: &std::path::Path, settings: u32, vectors: Option<u32>) -> Ebpf {
     let object = fs::read(path)
         .unwrap_or_else(|err| panic!("cannot read the eBPF object at {}: {err}", path.display()));
-    EbpfLoader::new()
-        .override_global(SETTINGS_SYMBOL, &settings, true)
+    let mut loader = EbpfLoader::new();
+    loader.override_global(SETTINGS_SYMBOL, &settings, true);
+    if let Some(vectors) = vectors.as_ref() {
+        loader.override_global(SIGNATURE_VECTORS_SYMBOL, vectors, true);
+    }
+    loader
         .load(&object)
         .unwrap_or_else(|err| panic!("loading {} failed: {err}", path.display()))
 }
