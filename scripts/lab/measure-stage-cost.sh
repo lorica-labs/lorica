@@ -2,14 +2,27 @@
 # What each stage of the pipeline costs, in nanoseconds, cycles and cache misses.
 #
 #   measure-stage-cost.sh [--out DIR] [--levels A,B,C] [--iface IF]
-#                         [--max-instructions N] [--max-ns N]
+#                         [--max-instructions N] [--max-ns N] [--max-cycles N]
 #
-# The two ceilings, measured on 6.8.0-138 with the whole signature catalogue armed, which is
-# the largest program the configuration space produces: 1298.4 instructions per packet and
-# 131 ns above the floor. Armed at 1325 (2 %, ten times the observed spread of 0.16 %) and
-# 144 (10 %, against a spread of 3 to 5 ns). Neither is a CI step and the reason is in
-# ci.yml; both say so out loud when they are not armed, because a ceiling of 765 stood
-# against a program of 1317 for a whole phase and the absent flag is why nobody saw it.
+# **Which unit to quote, and why it is not the nanoseconds.** The `ns` columns are the
+# `duration` field `BPF_PROG_TEST_RUN` returns, and that field was measured against the CPU
+# time of the same work: 128 ns of `duration` for 262 ns of task-clock, a factor of 2.06,
+# stable across levels and across repeats. Every nanosecond this project has ever published
+# comes from that field, so every *ratio* and every stage-to-stage *difference* stays valid —
+# the factor is common to both terms — while every *absolute* is about half the CPU time
+# actually spent. The frequency cannot be pinned from inside the guest either: there is no
+# cpufreq at all, and /proc/cpuinfo reports the nominal TSC rate rather than the core clock.
+# Measured out of `cycles / task-clock`, this host runs at 1.87 to 1.95 GHz with no turbo.
+#
+# So **cycles per packet is the figure to quote**: 0.4 % reproducible where the nanoseconds
+# are 2.4 %, and no assumption about a clock this guest cannot read.
+#
+# The three ceilings, on 6.8.0-138 with the whole signature catalogue armed, which is the
+# largest program the configuration space produces: 1298.4 instructions, 531 cycles and
+# 131 ns of `duration` per packet. Armed at 1325 (2 %, ten times the 0.16 % spread), 545
+# (2.6 %) and 144 (10 %). None is a CI step and the reason is in ci.yml; all three say so
+# out loud when they are not armed, because a ceiling of 765 stood against a program of 1317
+# for a whole phase and the absent flag is why nobody saw it.
 #
 # Runs on the development host and drives the two lab machines, like measure-map-batch.sh
 # and for the same reason: the measurement VM is the only machine that may be measured and
@@ -57,6 +70,9 @@ MAX_INSTRUCTIONS=
 # test runs wherever the suite runs: the same pipeline reads 121 ns on the measurement VM
 # and about 158 on the build VM, so a checked-in constant would be wrong on one of them.
 MAX_NS=
+# And in cycles, which is the unit that needs no frequency and reproduces six times better
+# than the nanoseconds. See the note on units below.
+MAX_CYCLES=
 IFACE=${LORICA_IFACE:-enp6s19}
 BUILD_HOST=${LORICA_BUILD_HOST:-lab-dev}
 TARGET_HOST=${LORICA_TARGET_HOST:-lab-target}
@@ -75,6 +91,7 @@ while [ $# -gt 0 ]; do
         --levels)  LEVELS=$2; shift 2 ;;
         --max-instructions) MAX_INSTRUCTIONS=$2; shift 2 ;;
         --max-ns)  MAX_NS=$2; shift 2 ;;
+        --max-cycles) MAX_CYCLES=$2; shift 2 ;;
         --iface)   IFACE=$2; shift 2 ;;
         -h|--help) sed -n '2,28p' "$0"; exit 0 ;;
         *) echo "unknown argument: $1" >&2; exit 2 ;;
@@ -193,7 +210,11 @@ done
 # are deterministic to about one per packet, which is what a "did the cutoff take" check needs.
 floor=$(awk -F, 'NR == 2 { print $7 }' "$csv")
 deepest=$(awk -F, 'END { print $7 }' "$csv")
-case $floor$deepest in ''|*[!0-9]*) die "the CSV carries no instruction column" ;; esac
+floor_cycles=$(awk -F, 'NR == 2 { print $6 }' "$csv")
+deepest_cycles=$(awk -F, 'END { print $6 }' "$csv")
+case $floor$deepest$floor_cycles$deepest_cycles in
+    ''|*[!0-9]*) die "the CSV carries no instruction or cycle column" ;;
+esac
 [ "$deepest" -gt "$floor" ] || die "the deepest level executes $deepest instructions and the empty program $floor: the object was built without the stage-cutoff feature, so every level ran the whole pipeline"
 
 # The program, with the harness subtracted. This is the figure assertion 3 is armed on:
@@ -212,6 +233,20 @@ if [ -n "$MAX_INSTRUCTIONS" ]; then
     echo "assertion 3: $per_packet instructions per packet, ceiling $MAX_INSTRUCTIONS, within budget"
 else
     echo "assertion 3: NOT ARMED, no --max-instructions given. $per_packet measured, nothing checked."
+fi
+
+# Cycles per packet, by the same subtraction as the instructions and for the same reason.
+# This is the figure to quote: it reproduces to 0.4 % where the nanoseconds reproduce to
+# 2.4 %, and it carries no assumption about a frequency this guest cannot even read.
+per_packet_cycles=$(awk -v d="$deepest_cycles" -v f="$floor_cycles" -v p="$PACKETS" 'BEGIN { printf "%.1f", (p > 0 ? (d - f) / p : 0) }')
+echo "cycles per packet, harness subtracted:       $per_packet_cycles"
+
+if [ -n "$MAX_CYCLES" ]; then
+    over=$(awk -v v="$per_packet_cycles" -v m="$MAX_CYCLES" 'BEGIN { print (v > m ? 1 : 0) }')
+    [ "$over" -eq 0 ] || die "$per_packet_cycles cycles per packet against a ceiling of $MAX_CYCLES"
+    echo "assertion 3 ter: $per_packet_cycles cycles per packet, ceiling $MAX_CYCLES, within budget"
+else
+    echo "assertion 3 ter: NOT ARMED, no --max-cycles given."
 fi
 
 if [ -n "$MAX_NS" ]; then
