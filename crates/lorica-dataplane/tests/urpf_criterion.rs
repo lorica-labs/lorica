@@ -18,6 +18,10 @@ fn route(dst_len: u8, oif: u32) -> Route {
     Route {
         family: Family::V4,
         dst_len,
+        // The criterion never reads the prefix; it is in the type so the watcher can tell
+        // two routes of the same length apart. Every route here is the zero prefix, which
+        // is what makes these tables shorter than the answers they produce.
+        dst: [0; 16],
         table: RT_TABLE_MAIN,
         oif: Some(oif),
     }

@@ -32,16 +32,28 @@ pub enum Family {
     V6,
 }
 
-/// One route, reduced to the four fields this decision reads.
+/// One route, reduced to the fields this decision reads plus the one that tells two
+/// routes apart.
 ///
-/// Not the destination prefix, and not the gateway: the criterion asks which table a
-/// route sits in, whether it is the least specific one there is, and where it leaves.
-/// Two routes that agree on all four are the same route as far as the answer goes.
+/// The criterion itself reads four: which table a route sits in, whether it is the least
+/// specific one there is, and where it leaves. `dst` is not one of them and no branch of
+/// `discriminates` looks at it. It is carried because the incremental table of the watcher
+/// uses equality on this type as set identity, and without the prefix two different
+/// routes of the same length on the same interface are one entry — measured on
+/// `10.90.78.0/24` and `10.91.78.0/24`, where deleting either emptied the entry that stood
+/// for both.
+///
+/// Not the gateway, though: two routes to the same prefix through the same interface by
+/// different gateways answer the same question and are the same route here.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Route {
     pub family: Family,
     /// Destination prefix length. Zero is the default route.
     pub dst_len: u8,
+    /// The destination prefix, zero-padded, and all zeroes when the message carried none —
+    /// which is what a default route looks like, consistently with `dst_len == 0`. Held
+    /// for identity only.
+    pub dst: [u8; 16],
     pub table: u32,
     /// Where the route leaves. `Some(0)` is a route that deliberately leads nowhere — a
     /// blackhole, an unreachable — which the reverse lookup fails on, and failing is

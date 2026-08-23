@@ -65,6 +65,9 @@ const RTN_LEADS_NOWHERE: std::ops::RangeInclusive<u8> = 6..=9;
 
 /// `nlattr` carries flag bits in the high end of its type field.
 const NLA_TYPE_MASK: u16 = 0x3fff;
+/// The destination prefix. Read for identity and not for the criterion: a default
+/// route carries none at all, which is the zero prefix by another name.
+const RTA_DST: u16 = 1;
 const RTA_OIF: u16 = 4;
 const RTA_MULTIPATH: u16 = 9;
 /// The table id when it does not fit the byte in `rtmsg`, which is every table above 255
@@ -367,6 +370,7 @@ fn record(table: &mut Vec<Route>, body: &[u8], adding: bool) {
     let mut route = Route {
         family,
         dst_len: body[RTM_DST_LEN_OFFSET],
+        dst: [0; 16],
         table: u32::from(body[RTM_TABLE_OFFSET]),
         // Not zero: until an attribute says otherwise the interface is unstated, and the
         // criterion is owed the difference between that and a route that leads nowhere.
@@ -377,6 +381,9 @@ fn record(table: &mut Vec<Route>, body: &[u8], adding: bool) {
     let mut multipath = None;
     for (kind, payload) in attributes(&body[RTMSG_LEN..]) {
         match (kind, payload.len()) {
+            (RTA_DST, 1..=16) => {
+                route.dst[..payload.len()].copy_from_slice(payload);
+            }
             (RTA_OIF, 4..) => {
                 route.oif = Some(u32::from_ne_bytes(payload[0..4].try_into().unwrap()));
             }
@@ -408,13 +415,28 @@ fn record(table: &mut Vec<Route>, body: &[u8], adding: bool) {
     }
 }
 
-/// Identity is the four fields the criterion reads, so a duplicate is not stored twice.
+/// Identity is the destination prefix plus the four fields the criterion reads, so a
+/// duplicate is not stored twice.
 ///
-/// That is what makes `ip route replace` — which is what a DHCP client does to the
-/// default route — land on the entry it replaces instead of beside it. The cost is that
-/// two defaults through one interface differing only in metric are one entry here, and
-/// the model then loses both on the first deletion. It reads as a table with no default,
-/// which arms a stage that the live lookup then passes everything through.
+/// Deduplicating is what makes `ip route replace` — which is what a DHCP client does to
+/// the default route — land on the entry it replaces instead of beside it. A replace
+/// carries the same prefix, so adding the prefix to the identity does not cost that.
+///
+/// **The prefix is in the identity because leaving it out was measured wrong.** Without
+/// it, `10.90.78.0/24` and `10.91.78.0/24` on one interface are one entry, and deleting
+/// either empties it: the model then reads as a table with no route on that interface,
+/// which reports a criterion change and costs a reload plus the whole hold window before
+/// the stage comes back. Measured on a route flap under live traffic, three phases, one
+/// spurious reload.
+///
+/// What remains is narrower: two routes to the same prefix through the same interface
+/// differing only in metric are still one entry, and the model loses both on the first
+/// deletion. Where that lands depends on what else the interface carries, and it is worth
+/// naming both because they are not the same failure. With other routes still on the
+/// interface the model sees routes but no default, which is `Discriminates` and **arms** a
+/// stage the live lookup then passes everything through — a cost of +140 ns a packet and
+/// not a drop. With nothing else it is `NoPathOnIngress`, which disarms, and disarming
+/// does not wait for the hold.
 fn store(table: &mut Vec<Route>, route: Route, adding: bool) {
     match (adding, table.iter().position(|known| *known == route)) {
         (true, None) => table.push(route),
@@ -554,6 +576,54 @@ mod tests {
         entry.resize(RTNH_IFINDEX_OFFSET, 0);
         entry.extend(oif.to_ne_bytes());
         entry
+    }
+
+    /// Two prefixes of the same length on one interface are two routes, and deleting one
+    /// leaves the other.
+    ///
+    /// Without the prefix in the identity they were one entry and the first deletion
+    /// emptied it, which the watcher then reported as a criterion change: a route flap
+    /// under live traffic cost a reload and the whole hold window on top of its own
+    /// outage. That was measured before it was fixed, which is why the assertion is on
+    /// what is left in the table and not only on the answer.
+    #[test]
+    fn two_prefixes_of_one_length_are_two_routes() {
+        let oif = (2u32).to_ne_bytes().to_vec();
+        let (a, b) = (vec![10, 90, 78, 0], vec![10, 91, 78, 0]);
+        let mut table = Vec::new();
+        for dst in [&a, &b] {
+            apply(
+                &mut table,
+                &message(
+                    libc::RTM_NEWROUTE,
+                    24,
+                    &[(RTA_DST, dst.clone()), (RTA_OIF, oif.clone())],
+                ),
+            );
+        }
+        assert_eq!(table.len(), 2, "{table:?}");
+
+        apply(
+            &mut table,
+            &message(libc::RTM_DELROUTE, 24, &[(RTA_DST, a), (RTA_OIF, oif)]),
+        );
+        assert_eq!(table.len(), 1, "{table:?}");
+        assert_eq!(&table[0].dst[..4], &b[..], "the wrong route was removed");
+    }
+
+    /// The same route announced twice is one entry, which is what `ip route replace` looks
+    /// like on the wire: a second add with no deletion in front of it.
+    #[test]
+    fn the_same_route_twice_is_one_route() {
+        let oif = (2u32).to_ne_bytes().to_vec();
+        let mut table = Vec::new();
+        for _ in 0..2 {
+            apply(
+                &mut table,
+                &message(libc::RTM_NEWROUTE, 0, &[(RTA_OIF, oif.clone())]),
+            );
+        }
+        assert_eq!(table.len(), 1, "{table:?}");
     }
 
     /// A route arrives, the criterion answers for it, the route goes away again. The
