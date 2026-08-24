@@ -76,8 +76,25 @@ exercise() {
     # perf's own stderr rather than perf --output: given an existing file, perf refuses
     # it with "Permission denied" even as root, and mktemp's whole point is that the
     # file already exists.
+    # Ubuntu's /usr/bin/perf is a wrapper that dispatches on `uname -r` to
+    # /usr/lib/linux-tools/<version>/perf. Under virtme-ng the booted kernel has no
+    # linux-tools of its own, so the wrapper prints "perf not found for kernel ..." and
+    # counts nothing — which this script then reported as a missing count, blaming the
+    # measurement for a dispatch that never happened.
+    #
+    # Counting a tracepoint does not depend on the kernel build: perf_event_open takes the
+    # id out of tracefs. So the host's binary is used directly, and its absence is a refusal
+    # rather than a silent zero. LORICA_PERF carries the same choice to the Rust test that
+    # counts the same tracepoint, which would otherwise hit the same wrapper.
+    PERF=""
+    for candidate in /usr/lib/linux-tools/*/perf; do
+        [ -x "$candidate" ] && PERF=$candidate
+    done
+    [ -n "$PERF" ] || { echo "FAIL  no perf binary under /usr/lib/linux-tools" >&2; return 1; }
+    export LORICA_PERF=$PERF
+
     exc_file=$(mktemp)
-    { sudo -n perf stat -e xdp:xdp_exception -a -- bash "$STAGE/target-run.sh"; } \
+    { sudo -n "$PERF" stat -e xdp:xdp_exception -a -- bash "$STAGE/target-run.sh"; } \
         2>"$exc_file" || status=1
     cat "$exc_file" >&2
     exc=$(awk '/xdp:xdp_exception/ {gsub(/,/, "", $1); print $1; exit}' "$exc_file")

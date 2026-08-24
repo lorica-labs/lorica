@@ -149,7 +149,7 @@ async fn serve(options: Options) -> Result<()> {
     // afterwards is measurable by difference.
     let settled = alloc::allocations();
     eprintln!(
-        "loricad: {} counter slots, batch {}, {} Hz, full sweep every {} ticks,          {} slot reads per second, socket {}, kernel clock {} Hz at jiffy {}",
+        "loricad: {} counter slots, batch {}, {} Hz, full sweep every {} ticks, {} slot reads per second, socket {}, kernel clock {} Hz at jiffy {}",
         options.counter_slots,
         options.batch,
         options.hz,

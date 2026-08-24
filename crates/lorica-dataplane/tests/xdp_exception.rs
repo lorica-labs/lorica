@@ -45,12 +45,16 @@ fn deliberate_drops_under_real_traffic_raise_no_exception() {
 
     // perf counts system-wide for the length of the ping, and its own stderr is the
     // report: `perf stat --output <existing file>` is refused even as root.
-    let perf = Command::new("perf")
+    // The binary and not the name: Ubuntu's `perf` wrapper dispatches on `uname -r`, and under
+    // virtme-ng the booted kernel has no linux-tools of its own, so the wrapper counts
+    // nothing. `kernel-matrix.sh` resolves one and states it here.
+    let perf_bin = std::env::var("LORICA_PERF").unwrap_or_else(|_| "perf".to_owned());
+    let perf = Command::new(&perf_bin)
         .args(["stat", "-e", "xdp:xdp_exception", "-a", "--", "sleep", "6"])
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .spawn()
-        .expect("cannot run perf stat");
+        .unwrap_or_else(|err| panic!("cannot run {perf_bin}: {err}"));
 
     link.in_netns(&[
         "ping",
