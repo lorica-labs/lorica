@@ -81,17 +81,37 @@ fn the_cost_of_each_path_through_the_pipeline() {
         prog.ns_per_run(&plain, REPEAT),
     );
 
-    // The same path with stage 5 armed, which is the whole cost of the reverse-path lookup:
-    // the difference against the line above is what the loader decides to pay or not.
+    // The same path with stage 5 armed: the difference against the line above is what the
+    // loader decides to pay or not.
     //
-    // It is a floor and not the cost on a router. The frame carries no ingress interface,
-    // so the lookup asks about the loopback of a machine that does not forward and comes
-    // back `FWD_DISABLED` — the table was reached and the device check refused. A host that
-    // really routes walks the table and, without `SKIP_NEIGH`, the neighbour cache too.
+    // **The verdict here belongs to the host and not to the program, so it is reported and
+    // not asserted.** The frame carries no ingress interface, so on a machine that does not
+    // forward the device check refuses before the table is consulted, the answer is
+    // `FWD_DISABLED`, and the packet passes counted as `urpf_lookup_unsupported`. On a
+    // machine that does forward — a CI runner, where a container runtime has turned
+    // `ip_forward` on — the reverse lookup of a documentation address resolves nowhere
+    // useful and the stage drops it. Both are stage 5 working, and which one a host gives is
+    // not something this file can decide.
+    //
+    // It matters to the number and not only to the assertion: a packet the stage drops
+    // leaves the pipeline at stage 5 and never pays stages 6 and 7, so the figure is the
+    // cost *up to and including* the reverse-path lookup rather than of the whole pipeline.
+    // That is why the verdict goes in the label — a number whose meaning depends on the
+    // host has to carry the host's answer next to it. The verdicts themselves are asserted
+    // in `urpf_stage.rs`, against real interfaces with real routes, which is the only place
+    // they can be.
+    //
+    // Either way it is a floor and not the cost on a router: a host that really routes walks
+    // the table, and without `SKIP_NEIGH` the neighbour cache too.
     let armed = program_with(setting::URPF_ENFORCE);
-    assert_eq!(armed.run(&plain), XdpAction::Pass);
+    let verdict = armed.run(&plain);
+    assert_ne!(
+        verdict,
+        XdpAction::Aborted,
+        "stage 5 aborted the program rather than deciding, so the figure below is not a cost"
+    );
     report(
-        "UDP matching nothing, uRPF armed",
+        &format!("UDP matching nothing, uRPF armed, {verdict:?}"),
         armed.ns_per_run(&plain, REPEAT),
     );
 
