@@ -70,9 +70,11 @@ jobs:
           components: rust-src
       - uses: Swatinem/rust-cache@v2
       - uses: ./.github/actions/bpf-linker
-      # clang builds the bench objects the attach test takes the hook with, perf
-      # counts the xdp_exception tracepoint.
-      - run: sudo apt-get update && sudo apt-get install -y clang linux-tools-common linux-tools-generic
+      # clang builds the bench objects the attach test takes the hook with, libbpf-dev
+      # carries the two headers they include that are not UAPI — bpf/bpf_helpers.h and
+      # bpf/bpf_endian.h, which the runner image does not ship — and perf counts the
+      # xdp_exception tracepoint. The five linux/* includes are UAPI and already present.
+      - run: sudo apt-get update && sudo apt-get install -y clang libbpf-dev linux-tools-common linux-tools-generic
       - run: cargo clippy --workspace --all-targets --features lorica-dataplane/kernel-tests -- -D warnings
       # Loading an XDP program needs CAP_BPF and CAP_NET_ADMIN, so the test
       # binaries run under sudo while the build stays unprivileged. This is the
@@ -175,5 +177,7 @@ jobs:
       - run: rustup target add x86_64-unknown-linux-musl
       # clang builds the bench objects that travel with the tests, perf counts
       # xdp:xdp_exception, virtme-ng supplies the kernels the runner is not running.
-      - run: sudo apt-get update && sudo apt-get install -y clang virtme-ng linux-tools-common linux-tools-generic
+      # libbpf-dev for the same reason as the integration job: this one runs the same
+      # kernel tests, so it compiles the same bench objects.
+      - run: sudo apt-get update && sudo apt-get install -y clang libbpf-dev virtme-ng linux-tools-common linux-tools-generic
       - run: scripts/lab/kernel-matrix.sh v6.8 v6.12 v7.0
