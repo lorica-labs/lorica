@@ -60,8 +60,14 @@ exercise() {
     # download that silently did nothing would report a pass for a kernel never booted.
     matches "$release" "$want" \
         || { printf 'FAIL  asked for %s, running on %s\n' "$want" "$release" >&2; return 1; }
-    [ -x "$STAGE/target-run.sh" ] \
-        || { printf 'FAIL  nothing staged in %s\n' "$STAGE" >&2; return 1; }
+    # Readable and not executable, because the line below runs it with bash and never
+    # needed the bit. It used to test -x, which passed in the lab and failed on a Linux
+    # checkout: this tree is developed on Windows, where git does not track the mode, so
+    # twelve of these scripts sit at 644 in the index and cp carries that into the staged
+    # copy. The message said nothing staged, which was false — the staging was fine and a
+    # permission bit was not.
+    [ -r "$STAGE/target-run.sh" ] \
+        || { printf 'FAIL  %s/target-run.sh is missing or unreadable\n' "$STAGE" >&2; return 1; }
 
     printf '\n=== %s on %s\n' "$want" "$release"
 
