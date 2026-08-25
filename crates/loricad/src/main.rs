@@ -314,6 +314,8 @@ async fn serve(mut options: Options) -> Result<()> {
                 let source = metrics::Source {
                     snapshot: &snapshot,
                     stages: latest.counters.named(),
+                    log_lost: log::lost(),
+                    log_folded: log::folded(),
                 };
                 // Awaited for the reason above, and more sharply: a scrape serialises the
                 // whole registry, so a scraper that stops reading must not be able to sit

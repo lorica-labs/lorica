@@ -56,4 +56,8 @@ pub struct Source<'a> {
     /// empty for one commit, when the sweep summed what it read and dropped the vector: the
     /// series existed and rendered zero forever, which reads like a stage that never fired.
     pub stages: &'a [u64],
+    /// Log lines the subscriber could not write, from `log::lost()`.
+    pub log_lost: u64,
+    /// Counter movements folded into an aggregate line, from `log::folded()`.
+    pub log_folded: u64,
 }

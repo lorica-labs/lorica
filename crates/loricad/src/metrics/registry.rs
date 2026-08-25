@@ -63,6 +63,15 @@ pub struct Handles {
     full_sweeps: Counter,
     counted: Counter,
     named_counted: Counter,
+    /// Lines the subscriber could not write. A daemon that loses logs without saying so is
+    /// worse than a silent one, and the alternative -- reading journald's own suppression
+    /// notice -- was measured and does not work: 22 500 messages were dropped with no notice
+    /// at all when the unit stopped logging at the end of its burst.
+    log_writes_lost: Counter,
+    /// Counter movements an aggregate line stands for instead of naming. Zero at rest and
+    /// load-dependent, which is what makes it readable: a permanently zero series reads like
+    /// a thing that never happens.
+    log_events_folded: Counter,
     counter_slots: Gauge,
     sweep_every: Gauge,
     slot_reads_per_second: Gauge,
@@ -122,6 +131,16 @@ impl Handles {
                 "agent_named_counted",
                 "Sum over the named counters at the last tick",
             ),
+            log_writes_lost: counter(
+                &mut registry,
+                "log_writes_lost",
+                "Log lines the subscriber could not write",
+            ),
+            log_events_folded: counter(
+                &mut registry,
+                "log_events_folded",
+                "Counter movements an aggregate line stood for instead of naming",
+            ),
             counter_slots: gauge(
                 &mut registry,
                 "agent_counter_slots",
@@ -180,6 +199,8 @@ impl Handles {
         store(&self.full_sweeps, snapshot.full_sweeps);
         store(&self.counted, snapshot.counted);
         store(&self.named_counted, snapshot.named_counted);
+        store(&self.log_writes_lost, source.log_lost);
+        store(&self.log_events_folded, source.log_folded);
 
         self.counter_slots.set(snapshot.counter_slots as i64);
         self.sweep_every.set(snapshot.sweep_every as i64);

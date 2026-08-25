@@ -39,9 +39,9 @@ use metrics::{Exporter, Source};
 /// The ceiling, in series, and it is a number rather than a formula on purpose: a formula
 /// would move with whatever the code does and stop being a decision.
 ///
-/// Fifty-eight series are rendered today, thirty-four of them the named counters of
-/// `CounterId`. The margin above is room for that list to reach forty and nothing else —
-/// any label added to any metric here lands past it.
+/// Sixty series are rendered today, thirty-four of them the named counters of `CounterId`.
+/// The margin above is room for that list to reach forty and nothing else — any label added
+/// to any metric here lands past it.
 ///
 /// **It was 72 against 66 until the top-talker ranks were deleted.** Keeping 72 against 58
 /// would have turned six slots of headroom into fourteen, which is enough for a whole label
@@ -86,6 +86,8 @@ fn render() -> String {
     let source = Source {
         snapshot: &snapshot,
         stages: &stages,
+        log_lost: 3,
+        log_folded: 17,
     };
     // Rendered twice: the quantile gauges are fed from the sketch of the scrapes before
     // this one, so a single render would leave them at zero and hide three series.
@@ -197,6 +199,8 @@ fn http_scrape_counts_the_same_series() {
             let source = Source {
                 snapshot: &snapshot,
                 stages: &stages,
+                log_lost: 3,
+                log_folded: 17,
             };
             for _ in 0..2 {
                 let stream = metrics::serve::accept(Some(&listener))
