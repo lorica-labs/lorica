@@ -20,6 +20,7 @@
 //! reimplementing them.
 
 pub mod guard;
+pub mod webhook;
 
 pub use lorica_common::{LpmKey, Scope};
 
