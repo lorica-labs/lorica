@@ -29,7 +29,9 @@ lorica-detect.workspace = true
 lorica-escalate.workspace = true
 lorica-policy.workspace = true
 anyhow.workspace = true
+arc-swap.workspace = true
 aya.workspace = true
+crossbeam-utils.workspace = true
 # current_thread only. #[tokio::main] would spawn one worker per logical CPU and
 # steal cache lines from the application this is supposed to protect.
 tokio = { workspace = true, features = ["rt", "macros", "time", "net", "io-util", "signal"] }
