@@ -174,9 +174,6 @@ async fn serve(options: Options) -> Result<()> {
     // Built here so the registry's one allocation per series is behind the settled count
     // below. A scrape after that allocates nothing but the growth of its output buffer.
     let mut exporter = metrics::Exporter::new();
-    // Nothing measures top talkers yet, so the ranks render at zero. The ring is passed
-    // rather than left out because its bound is what the series count rests on.
-    let talkers = metrics::Talkers::default();
 
     // The ladder, and the file descriptor it writes an accepted rung into. Resolved here so
     // an agent whose object has no list fails at startup rather than on the first refusal.
@@ -299,7 +296,6 @@ async fn serve(options: Options) -> Result<()> {
                 let source = metrics::Source {
                     snapshot: &snapshot,
                     stages: latest.counters.named(),
-                    talkers: &talkers,
                 };
                 // Awaited for the reason above, and more sharply: a scrape serialises the
                 // whole registry, so a scraper that stops reading must not be able to sit

@@ -33,14 +33,12 @@
 //! preference; there is none to make here because there is no routing to do.
 
 pub mod collector;
-pub mod exemplar;
 pub mod registry;
 pub mod serve;
 
 use crate::control::Snapshot;
 
 pub use collector::Exporter;
-pub use exemplar::{Talker, Talkers};
 
 /// Everything one scrape renders from.
 ///
@@ -54,12 +52,8 @@ pub struct Source<'a> {
     /// counter that has not fired should read; dropping the series instead would leave
     /// `rate()` undefined across the gap.
     ///
-    /// Empty when the agent calls this today. [`Snapshot`] carries `counted` and
-    /// `named_counted`, which are sums, and the sweep discards the per-slot totals it has
-    /// already read out of the map. Filling this slice needs the sweep to keep the vector
-    /// it reads, or the snapshot to carry it — neither is decided here.
+    /// Fed from the published snapshot, which carries one total per named counter. It was
+    /// empty for one commit, when the sweep summed what it read and dropped the vector: the
+    /// series existed and rendered zero forever, which reads like a stage that never fired.
     pub stages: &'a [u64],
-    /// The bounded ring of recent top talkers. Their addresses reach the exposition as
-    /// exemplars and never as label values; see [`exemplar`].
-    pub talkers: &'a Talkers,
 }

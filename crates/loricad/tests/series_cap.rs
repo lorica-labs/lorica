@@ -25,19 +25,22 @@ mod control;
 #[allow(dead_code)]
 mod metrics;
 
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
-
 use lorica_common::Clock;
 
-use metrics::{Exporter, Source, Talker, Talkers};
+use metrics::{Exporter, Source};
 
 /// The ceiling, in series, and it is a number rather than a formula on purpose: a formula
 /// would move with whatever the code does and stop being a decision.
 ///
-/// Sixty-six series are rendered today, thirty-four of them the named counters of
+/// Fifty-eight series are rendered today, thirty-four of them the named counters of
 /// `CounterId`. The margin above is room for that list to reach forty and nothing else —
 /// any label added to any metric here lands past it.
-const SERIES_CAP: usize = 72;
+///
+/// **It was 72 against 66 until the top-talker ranks were deleted.** Keeping 72 against 58
+/// would have turned six slots of headroom into fourteen, which is enough for a whole label
+/// family to arrive unnoticed: a ceiling left above the truth hides exactly what it was
+/// written to catch. Six is the number that was argued, so six is what it keeps.
+const SERIES_CAP: usize = 64;
 
 /// Label names an attacker picks the value of. Each one is a documented cardinality
 /// explosion: the defender's TSDB grows as fast as the attacker rotates sources.
@@ -63,23 +66,6 @@ fn snapshot() -> control::Snapshot {
     }
 }
 
-/// More talkers than the ring holds, so what the ranks render is what survived the wrap
-/// rather than what a cooperative caller pushed.
-fn talkers() -> Talkers {
-    let mut talkers = Talkers::default();
-    for i in 0..64u8 {
-        talkers.push(Talker {
-            source: if i % 2 == 0 {
-                IpAddr::V4(Ipv4Addr::new(203, 0, 113, i))
-            } else {
-                IpAddr::V6(Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, u16::from(i)))
-            },
-            packets: 1_000 + u64::from(i),
-        });
-    }
-    talkers
-}
-
 fn stages() -> Vec<u64> {
     (0..lorica_common::CounterId::ALL.len() as u64)
         .map(|i| 7 + i * 13)
@@ -89,12 +75,10 @@ fn stages() -> Vec<u64> {
 fn render() -> String {
     let snapshot = snapshot();
     let stages = stages();
-    let talkers = talkers();
     let mut exporter = Exporter::new();
     let source = Source {
         snapshot: &snapshot,
         stages: &stages,
-        talkers: &talkers,
     };
     // Rendered twice: the quantile gauges are fed from the sketch of the scrapes before
     // this one, so a single render would leave them at zero and hide three series.
@@ -202,12 +186,10 @@ fn http_scrape_counts_the_same_series() {
         let served = tokio::spawn(async move {
             let snapshot = snapshot();
             let stages = stages();
-            let talkers = talkers();
             let mut exporter = Exporter::new();
             let source = Source {
                 snapshot: &snapshot,
                 stages: &stages,
-                talkers: &talkers,
             };
             for _ in 0..2 {
                 let stream = metrics::serve::accept(Some(&listener))

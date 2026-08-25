@@ -28,14 +28,11 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use lorica_common::CounterId;
 use prometheus_client::{
-    metrics::{
-        counter::Counter, exemplar::CounterWithExemplar, family::Family, gauge::Gauge,
-        histogram::Histogram,
-    },
+    metrics::{counter::Counter, family::Family, gauge::Gauge, histogram::Histogram},
     registry::Registry,
 };
 
-use super::{Source, Talker, exemplar};
+use super::Source;
 
 /// One label, one value, and the value is a compile-time constant in every family below.
 type Label<V> = [(&'static str, V); 1];
@@ -44,9 +41,6 @@ type Label<V> = [(&'static str, V); 1];
 /// written down here: a copy of this number is a copy that goes stale the next time a
 /// stage is added.
 const STAGES: usize = CounterId::ALL.len();
-
-/// The ranks of the top-talker family, bounded by the ring that feeds it.
-const RANKS: usize = exemplar::CAPACITY;
 
 /// Exposed quantiles, paired with the label value that names them so the two cannot drift.
 const QUANTILES: [(&str, f64); 3] = [("0.5", 0.5), ("0.9", 0.9), ("0.99", 0.99)];
@@ -76,8 +70,6 @@ pub struct Handles {
     attached: Gauge,
     kernel_hz: Gauge,
     kernel_jiffies: Gauge,
-    /// Indexed by rank. The address of the talker is the exemplar, never the label.
-    top: [CounterWithExemplar<Talker>; RANKS],
     pub scrape: Histogram,
     /// In the order of [`QUANTILES`].
     pub quantiles: [Real; 3],
@@ -101,14 +93,6 @@ impl Handles {
         let stages = std::array::from_fn(|index| {
             stage_family.get_or_create_owned(&[("counter", CounterId::ALL[index].name())])
         });
-
-        let top_family = Family::<Label<usize>, CounterWithExemplar<Talker>>::default();
-        registry.register(
-            "top_source_packets",
-            "Packets from the talker currently at each rank; its address is an exemplar",
-            top_family.clone(),
-        );
-        let top = std::array::from_fn(|rank| top_family.get_or_create_owned(&[("rank", rank)]));
 
         let quantile_family = Family::<Label<&'static str>, Real>::default();
         registry.register(
@@ -173,7 +157,6 @@ impl Handles {
                 "agent_kernel_jiffies",
                 "The jiffy the data path is comparing deadlines against right now",
             ),
-            top,
             scrape: scrape_histogram(),
             quantiles,
         };
@@ -207,16 +190,6 @@ impl Handles {
         self.attached.set(i64::from(snapshot.attached));
         self.kernel_hz.set(i64::from(snapshot.clock.hz));
         self.kernel_jiffies.set(snapshot.clock.jiffies as i64);
-
-        for (rank, handle) in self.top.iter().enumerate() {
-            let talker = source.talkers.get(rank);
-            handle
-                .inner()
-                .store(talker.map_or(0, |t| t.packets), Ordering::Relaxed);
-            // Zero, because the value was just written whole: what this call is for is the
-            // exemplar, which has no setter of its own.
-            handle.inc_by(0, talker, None);
-        }
     }
 }
 
