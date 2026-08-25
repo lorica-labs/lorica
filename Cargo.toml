@@ -29,8 +29,15 @@ lorica-escalate = { path = "crates/lorica-escalate" }
 lorica-policy = { path = "crates/lorica-policy" }
 
 anyhow = "1.0.104"
+# One immutable snapshot published per tick, read by whoever asks. Readers take their own
+# Arc and the tick never waits for one, which is what keeps a scrape that stopped reading
+# from sitting in front of the timer. load_full only; see crates/loricad/src/state.rs.
+arc-swap = "1.7"
 aya = "0.14.0"
 aya-obj = "0.3.0"
+# CachePadded, and nothing else from it. The published pointer is the one word the tick
+# writes and every reader reads.
+crossbeam-utils = "0.8"
 libc = "0.2.189"
 object = "0.39.1"
 serde = { version = "1.0.229", features = ["derive"] }

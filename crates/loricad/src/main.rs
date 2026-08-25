@@ -9,12 +9,13 @@
 mod alloc;
 mod control;
 mod metrics;
+mod state;
 mod tick;
 
 use std::{
     path::{Path, PathBuf},
     process::ExitCode,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use anyhow::{Context, Result, bail};
@@ -162,6 +163,15 @@ async fn serve(options: Options) -> Result<()> {
     let deadline = (options.seconds > 0)
         .then(|| tokio::time::Instant::now() + Duration::from_secs(options.seconds));
 
+    // Two preallocated snapshot buffers, alternated. Built before `settled` below, so the
+    // two allocations it makes are startup's and the tick's difference stays a difference.
+    let mut published = state::Published::default();
+    // The origin of `at_ns`. Monotone since here rather than since boot: what reads it are
+    // deltas between two snapshots, and an offset cancels in a delta. Anything comparing a
+    // snapshot against a kernel deadline needs the jiffy base instead, which is what
+    // `clock::read` is for.
+    let started = Instant::now();
+
     // Every allocation of the startup is behind us at this point, so what the tick does
     // afterwards is measurable by difference.
     let settled = alloc::allocations();
@@ -181,14 +191,16 @@ async fn serve(options: Options) -> Result<()> {
         tokio::select! {
             _ = timer.tick() => {
                 sweep.run();
+                published.publish(&sweep, started.elapsed().as_nanos() as u64);
                 if deadline.is_some_and(|at| tokio::time::Instant::now() >= at) {
                     eprintln!(
                         "loricad: {} ticks, {} full sweeps of {} slots, {} failed, \
-                         {} allocations after the first sweep",
+                         {} snapshot buffers reallocated, {} allocations after the first sweep",
                         sweep.ticks(),
                         sweep.full_sweeps(),
                         sweep.slots(),
                         sweep.failures(),
+                        published.reallocations(),
                         alloc::allocations().saturating_sub(settled),
                     );
                     return Ok(());
@@ -205,11 +217,13 @@ async fn serve(options: Options) -> Result<()> {
             scraped = metrics::serve::accept(scrapes.as_ref()) => {
                 let stream = scraped.context("accepting a scrape failed")?;
                 let snapshot = snapshot(&sweep, &options, period, clock, ebpf);
+                // The snapshot the last tick published, held for the length of the response
+                // and no longer. `load_full`, so nothing of arc-swap's is held across the
+                // await below.
+                let latest = published.read();
                 let source = metrics::Source {
                     snapshot: &snapshot,
-                    // Empty: the sweep sums the slots it reads and keeps no per-stage
-                    // total, so every named counter renders at zero for now.
-                    stages: &[],
+                    stages: latest.counters.named(),
                     talkers: &talkers,
                 };
                 // Awaited for the reason above, and more sharply: a scrape serialises the

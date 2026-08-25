@@ -42,11 +42,37 @@ pub struct EntryCounter {
 pub struct CounterView {
     named: [u64; NAMED_SLOTS],
     entries: Vec<EntryCounter>,
+    failures: u64,
 }
 
 impl CounterView {
+    /// Zero failures, because a view built whole was read whole. The count is set by
+    /// [`Self::set_failures`] on the path that can fail, which is the tick's.
     pub fn new(named: [u64; NAMED_SLOTS], entries: Vec<EntryCounter>) -> Self {
-        Self { named, entries }
+        Self {
+            named,
+            entries,
+            failures: 0,
+        }
+    }
+
+    /// The named totals, writable, so a snapshot buffer can be republished without being
+    /// rebuilt. Nothing else in this crate writes a view: the tick owns the read.
+    pub fn named_mut(&mut self) -> &mut [u64; NAMED_SLOTS] {
+        &mut self.named
+    }
+
+    /// Reads of the counter map that failed, since the agent started.
+    ///
+    /// Carried in the snapshot rather than left in the reader, because a failed read leaves
+    /// the previous total standing: without this number a flat counter and a counter nobody
+    /// managed to read look identical, and the second one is an operator's problem.
+    pub const fn failures(&self) -> u64 {
+        self.failures
+    }
+
+    pub const fn set_failures(&mut self, failures: u64) {
+        self.failures = failures;
     }
 
     /// The running total, not a delta. Every rate in this crate is derived from two of
