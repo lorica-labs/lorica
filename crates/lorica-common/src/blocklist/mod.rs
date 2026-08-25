@@ -43,6 +43,35 @@
 //! address family: operator blocklists are large, static and rebuilt; detection entries are
 //! few, short-lived and expire on their own.
 //!
+//! # A table miss is not a verdict, and it falls back to nothing
+//!
+//! This is the one rule the two sides could disagree about while both looking correct, so it
+//! is written here rather than in either of them.
+//!
+//! [`Class24::Table`] replaces the code of the **whole** `/24`. So the moment one `/32`
+//! inside a denied `/8` needs the opposite verdict, the `/8`'s answer for the other 255
+//! addresses has nowhere left to live. The builder therefore writes those 255 keys out: in a
+//! `Table` block, **every address carrying a verdict has its own key**. A miss means no
+//! verdict was configured for that address, and the packet path continues exactly as it does
+//! on [`Class24::None`] — it does not re-read the block code, does not probe a second time
+//! with the block's base address, and does not fall back to anything.
+//!
+//! The alternative was a third code bit carrying the fallback, which is 8 MiB instead of 4 and
+//! breaks the 20 MiB the whole design is for. The price paid instead is that one exception
+//! inside a short prefix costs a full block of keys, which the builder charges against its
+//! expansion bound and refuses rather than truncates.
+//!
+//! # What two bits cannot spell
+//!
+//! [`Class24`] holds four codes and all four are taken, so a prefix at most `/24` long can
+//! carry deny or allow and nothing else. [`Action::Continue`], [`Action::RateLimit`] and
+//! [`Action::Mark`] on such a prefix are **refused at construction** — rounding them to the
+//! nearest verdict would silently change what the rule does. The same verdicts on a `/25` to
+//! `/32` are fine, because [`oa_tag`] has three bits for them. The escape hatch for an
+//! operator who genuinely needs to rate-limit a `/16` is the surviving `LPM_TRIE`, which
+//! carries a whole [`LpmValue`](crate::LpmValue); nothing routes there today, and this is a
+//! limit to publish rather than a gap to fill speculatively.
+//!
 //! # Why `CLASS24` is not a filter
 //!
 //! With a million `/32` scattered over roughly a million distinct `/24`, only about 6 % of the
