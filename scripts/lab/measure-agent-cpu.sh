@@ -66,10 +66,11 @@ die() { printf 'FAIL  %s\n' "$1" >&2; exit 1; }
 [ -f "$OBJECT" ] || die "--object must point at the eBPF object, got '${OBJECT}'"
 [ "$DURATION" -gt "$SETTLE" ] || die "--duration must exceed --settle, or RSS is read after the end"
 
-# The number the cost is linear in, computed once: the named counters every tick plus
-# the whole map every SWEEP_EVERY ticks. 18 is CounterId::COUNT, and the agent prints its
-# own figure at startup, which is checked against this one below.
-SLOT_READS=$(( 18 * HZ + (COUNTERS * HZ) / SWEEP_EVERY ))
+# The number the cost is linear in is read off the agent's own startup line further down,
+# never computed here. There used to be a second computation at this point, from a hardcoded
+# 18 for CounterId::COUNT -- which is 34 -- and a comment claiming it was checked against the
+# agent's figure. It was not: the read below simply overwrote it, so the stale constant was
+# dead and the promised guard did not exist. One source, and it is the process under test.
 
 mkdir -p "$OUT" || die "cannot create $OUT"
 STAMP=$(date -u +%Y%m%dT%H%M%SZ)
