@@ -9,7 +9,9 @@ Use GitHub's private vulnerability reporting on
 <https://github.com/lorica-labs/lorica> — the *Security* tab, *Report a vulnerability*. It
 opens a private thread with the maintainers and needs no prior contact.
 
-TODO(human): a security contact address, for reporters without a GitHub account.
+If you have no GitHub account, or would rather not report through one, write to
+**hugo.planque02@gmail.com**. Please say in the subject that it is a Lorica security
+report; nothing on that address is filtered for this project.
 
 **What we commit to.** An acknowledgement within **7 days**, and coordinated disclosure
 within **90 days** of that acknowledgement — the interval Project Zero set and most of this
