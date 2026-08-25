@@ -120,17 +120,11 @@ fn parse_options() -> Result<Options> {
             CounterId::COUNT
         );
     }
-    // Refused rather than aliased. Every entry the ladder writes points at a counter slot,
-    // and the slots below this belong to the named counters: an armed agent with no room
-    // above them would charge its own refusals to a stage counter and then read them back as
-    // evidence for the next rung.
-    if options.mode == Mode::Armed && options.counter_slots <= CounterId::COUNT {
-        bail!(
-            "--mode armed needs at least one slot above the {} named counters: pass \
-             --counters {} or more",
-            CounterId::COUNT,
-            CounterId::COUNT + 1
-        );
+    // The same predicate the control socket applies to `arm`, asked here of `--mode armed`.
+    // It lives next to the socket because that is the caller nobody reads a usage string
+    // before using; restating it would be how the guard comes to hold on one path only.
+    if options.mode == Mode::Armed {
+        control::arming_allowed(options.counter_slots).map_err(anyhow::Error::msg)?;
     }
     Ok(options)
 }
@@ -148,7 +142,7 @@ fn run(options: Options) -> Result<()> {
     runtime.block_on(serve(options))
 }
 
-async fn serve(options: Options) -> Result<()> {
+async fn serve(mut options: Options) -> Result<()> {
     let (ebpf, clock) = load(&options.object, options.counter_slots)?;
     // Two readers over the same map: one stops at the named counters, one covers every
     // slot. Each owns its buffers, sized once, so neither allocates again.
@@ -191,6 +185,9 @@ async fn serve(options: Options) -> Result<()> {
     // agent is alive, leaving a refusal standing for the ten minutes of its TTL after the
     // traffic that justified it stopped is the policy being made by a timeout.
     let mut standing: Option<lorica_common::LpmKey> = None;
+    // The rungs the ladder has stood on. The engine counts its transitions and keeps none,
+    // and `lorica-ctl tiers` answers with a list.
+    let mut tiers = control::Tiers::default();
 
     let period = Duration::from_micros(1_000_000 / u64::from(options.hz));
     let mut timer = tokio::time::interval(period);
@@ -234,6 +231,7 @@ async fn serve(options: Options) -> Result<()> {
                 // published one is what every reader sees, so a decision taken off anything
                 // else could disagree with the metric an operator is looking at.
                 let decision = engine.observe(&published.read());
+                tiers.note(sweep.ticks(), engine.current().rung());
                 match apply(list, options.mode, &decision, refusals)
                     .context("writing a refusal into the list failed")?
                 {
@@ -281,10 +279,25 @@ async fn serve(options: Options) -> Result<()> {
             accepted = listener.accept() => {
                 let (stream, _) = accepted.context("accepting on the control socket failed")?;
                 let snapshot = snapshot(&sweep, &options, period, clock, ebpf);
+                let latest = published.read();
+                // Borrows, not copies: `arm` and `disarm` change the mode the next tick
+                // reads and withdraw the key the descent would otherwise have taken out, so
+                // a control plane holding its own copies would be a second answer to
+                // whether this agent is armed.
+                let mut control = control::Control {
+                    mode: &mut options.mode,
+                    standing: &mut standing,
+                    pulled: &mut pulled,
+                    written,
+                    withheld,
+                    stages: latest.counters.named(),
+                    tiers: &tiers,
+                    ebpf,
+                };
                 // Awaited rather than spawned. One client at a time is the whole protocol,
                 // and a task per connection would let a slow reader hold the tick behind
                 // it on a single-threaded runtime without anybody noticing.
-                let _ = control::serve(stream, snapshot).await;
+                let _ = control::serve(stream, snapshot, &mut control).await;
             }
             scraped = metrics::serve::accept(scrapes.as_ref()) => {
                 let stream = scraped.context("accepting a scrape failed")?;
