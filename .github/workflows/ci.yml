@@ -128,12 +128,23 @@ jobs:
   # Assertion 3, the per-packet cost, is deliberately not a step here.
   #
   # It is armed, and it is armed on the measurement VM: `measure-stage-cost.sh
-  # --max-instructions 1325 --max-cycles 545 --max-ns 144`. Three ceilings, because they fail
+  # --max-instructions 1474 --max-cycles 700 --max-ns 144`. Three ceilings, because they fail
   # for different reasons: the instruction count is deterministic to 0.09 %, the cycle count
   # to 0.4 % and needs no clock the guest cannot read, and the nanoseconds are what the
   # promise is about even though they come from a field measured at half the CPU time. The
   # script says out loud when any of the three is missing, since a ceiling of 765 stood
   # against a program of 1317 and the silence was the whole problem.
+  #
+  # The first two moved when the flat blocklist landed on the packet path: 1297.4 to 1444.5
+  # instructions, and 549 to 612-652 cycles. But they are no longer the same kind of guard.
+  # Four consecutive runs of the unchanged program gave 1444.5 / 1444.5 / 1445.4 / 1443.8
+  # instructions and 612.5 / 619.7 / 652.4 / 614.8 cycles: 0.11 % against 6.5 %. So the
+  # instruction ceiling is the one that catches a regression and the cycle ceiling carries the
+  # spread of the instrument. The script's header says so too, where it used to claim 0.4 %.
+  #
+  # The nanosecond ceiling did not move, and not because it was checked: the nanoseconds went
+  # from 131 down to 109 while the instruction count rose eleven percent, and nothing here
+  # explains that. Lowering it on that basis would arm a number nobody can account for.
   # Two reasons it cannot be a runner step. The script drives
   # two lab machines over SSH, one to build a static musl binary and one to run it,
   # because the machine with the target kernel has no toolchain. And the quantity is

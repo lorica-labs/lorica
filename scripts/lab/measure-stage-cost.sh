@@ -14,8 +14,18 @@
 # cpufreq at all, and /proc/cpuinfo reports the nominal TSC rate rather than the core clock.
 # Measured out of `cycles / task-clock`, this host runs at 1.87 to 1.95 GHz with no turbo.
 #
-# So **cycles per packet is the figure to quote**: 0.4 % reproducible where the nanoseconds
-# are 2.4 %, and no assumption about a clock this guest cannot read.
+# So **cycles per packet is the figure to quote** rather than the nanoseconds, because it
+# assumes no clock this guest cannot read -- but the 0.4 % reproducibility this header used to
+# claim for it is not what this machine delivers. Three consecutive runs of one unchanged
+# program measured 612.5, 619.7 and 652.4 cycles per packet, monotonically rising, a spread of
+# 6.5 %; the instruction count over the same three runs was 1444.5, 1444.5 and 1445.4, a
+# spread of 0.06 %. Nothing here explains the drift, and it is not neighbour load: the lowest
+# figure came from the busiest run.
+#
+# What follows from that: **the instruction ceiling is the tight guard and the cycle ceiling is
+# not**. A code regression is caught at a tenth of an instruction per packet. The cycle ceiling
+# has to carry the 6.5 % this machine moves by, so it only catches a gross change, and its
+# margin is a measurement of the instrument rather than a budget for the program.
 #
 # The three ceilings, on 6.8.0-138 with the whole signature catalogue armed, which is the
 # largest program the configuration space produces: 1298.4 instructions, 531 cycles and
