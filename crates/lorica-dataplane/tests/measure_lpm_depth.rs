@@ -30,6 +30,22 @@
 //! - `hit_scattered` — present, a different /16 each pass.
 //! - `hit_clustered` — present, every pass inside one /16, so the last levels of the walk
 //!   are the same nodes and the cache behaves differently from arm 3.
+//! - `flat_deep_miss_inside` — the two flat tables, on **the same address arm 1 draws**, in
+//!   the same interleaved pass. See below.
+//!
+//! **Which arm the fifth one is compared against, because comparing it to the wrong one is a
+//! mistake already made here.** Arm 2 is the control and it is flat by construction: 115 ns at
+//! one entry, 117 at sixteen thousand, 109 at a million. Reading the new structure against
+//! *that* column says the tables are slower than the trie, which is the conclusion the earlier
+//! phase carried the whole way through, and it is wrong for one reason: arm 2 never entered
+//! the populated region, so it is not the cost of anything production pays. The column the
+//! fifth arm has to be read against is arm 1 — 116 / 285 / **414** — and it is named here so
+//! nobody has to work out which of the four it was. That is also why the fifth arm probes the
+//! very address arm 1 probes rather than one of its own: same address, same pass, same
+//! machine, two structures.
+//!
+//! The exit criterion is not a ratio at one size. It is that the fifth column does not move
+//! with the number of entries where arm 1 goes 116 / 285 / 414.
 //!
 //! **Units.** The nanoseconds are the `duration` field of `BPF_PROG_TEST_RUN`, measured at
 //! 128 ns against 262 ns of task-clock for the same work — a stable factor of 2.06. Ratios
@@ -50,9 +66,11 @@ use aya::{
     programs::{TestRun, TestRunOptions, Xdp},
 };
 use lorica_common::{
-    Action, CounterId, DEFAULT_SETTINGS, Deadline, LpmKey, LpmValue, SETTINGS_SYMBOL,
+    Action, BLOCKLIST_TRIE_SYMBOL, CLASS24_SYMBOL, CounterId, DEFAULT_SETTINGS, Deadline, LpmKey,
+    LpmValue, OA_TABLE_SYMBOL, SETTINGS_SYMBOL,
 };
 use lorica_dataplane::maps::{self, lpm};
+use lorica_policy::blocklist::{self, Snapshot};
 
 type Failure = Box<dyn std::error::Error>;
 
@@ -85,12 +103,20 @@ const FLOOR_NS: u128 = 15;
 const PROGRAM: &str = "lorica_xdp";
 const GAME_PORT: u16 = 30_120;
 
-const CASES: [&str; 4] = [
+const CASES: [&str; 5] = [
     "deep_miss_inside",
     "shallow_miss_control",
     "hit_scattered",
     "hit_clustered",
+    "flat_deep_miss_inside",
 ];
+
+/// The arm the fifth one is read against. Named rather than left as an index, because the
+/// whole failure this file exists to prevent is reading it against arm 2.
+const REALISTIC: usize = 0;
+
+/// The arm that runs against the two flat tables instead of the trie.
+const FLAT: usize = 4;
 
 /// 10.0.0.0/8: sixteen million hosts, so the million the gateway profile reserves sits at a
 /// density of one in sixteen and an address drawn inside it is usually absent.
@@ -115,6 +141,21 @@ struct Trie {
     sixteens: Vec<u8>,
     /// The /16 holding the most entries, which is the cluster arm 4 stays inside.
     densest: u8,
+}
+
+/// The same set of hosts as two flat tables, in a program with the trie stage removed.
+///
+/// Removed and not merely empty: `BLOCKLIST_TRIE` is a `.rodata` word the verifier folds, so
+/// the lookup, the deadline comparison and the scope walk are not in the JITed program at all.
+/// An empty trie beside the tables would still cost the `bpf_map_lookup_elem` this structure
+/// exists to remove, and the fifth column would then be measuring both structures at once.
+struct Flat {
+    ebpf: Ebpf,
+    /// Kernel memory of the `.bss` section aya materialises both tables in, read off the
+    /// descriptor. Against 198 MiB for the same million entries in the trie.
+    memlock: u64,
+    keys: usize,
+    worst_psl: u8,
 }
 
 impl Trie {
@@ -196,9 +237,19 @@ fn main() -> Result<(), Failure> {
     // out loud and dropped: reporting a smaller trie under a larger label is the one
     // failure this measurement could not survive.
     let mut loaded = Vec::with_capacity(sizes.len());
+    let mut flats = Vec::with_capacity(sizes.len());
     for &entries in &sizes {
-        match load(&object, entries) {
-            Ok(trie) => loaded.push(trie),
+        // Both structures or neither. A size whose trie loaded and whose tables did not would
+        // print four columns where the others print five, and a missing column reads like a
+        // structure that had nothing to say rather than like a load that failed.
+        match load(&object, entries).and_then(|trie| {
+            let flat = load_flat(&object, &trie.sorted)?;
+            Ok((trie, flat))
+        }) {
+            Ok((trie, flat)) => {
+                loaded.push(trie);
+                flats.push(flat);
+            }
             Err(err) => eprintln!("SKIP {entries} entries: {err}"),
         }
     }
@@ -210,16 +261,16 @@ fn main() -> Result<(), Failure> {
         .iter()
         .map(|trie| plan_probes(trie, passes))
         .collect::<Result<_, _>>()?;
-    for (trie, probes) in loaded.iter().zip(&plan) {
+    for ((trie, flat), probes) in loaded.iter().zip(&flats).zip(&plan) {
         guard_the_arms_apart(trie, probes);
-        classification_holds(trie, probes)?;
+        classification_holds(trie, flat, probes)?;
     }
 
     println!(
         "# repeat {repeat}, {passes} interleaved passes, floor {FLOOR_NS} ns subtracted; \
          duration is task-clock over 2.06, so the ratios are the readable part"
     );
-    for (trie, probes) in loaded.iter().zip(&plan) {
+    for ((trie, flat), probes) in loaded.iter().zip(&flats).zip(&plan) {
         println!(
             "# {} entries: all /32, as 128-bit v4-mapped keys, spread over 10.0.0.0/8; \
              {} distinct /16s populated, densest 10.{}.0.0/16 with {}; memlock {} B",
@@ -228,6 +279,11 @@ fn main() -> Result<(), Failure> {
             trie.densest,
             trie.inside(trie.densest).len(),
             trie.memlock
+        );
+        println!(
+            "#   the same set as two flat tables: {} keys, worst probe sequence {}, \
+             .bss memlock {} B",
+            flat.keys, flat.worst_psl, flat.memlock
         );
         for (case, addrs) in CASES.iter().zip(probes) {
             let bits: Vec<u32> = addrs.iter().map(|addr| trie.shared_bits(*addr)).collect();
@@ -250,10 +306,15 @@ fn main() -> Result<(), Failure> {
     // its own carries whatever the machine was doing during that block.
     let mut samples = vec![vec![Vec::with_capacity(passes); CASES.len()]; loaded.len()];
     for pass in 0..passes {
-        for (index, trie) in loaded.iter().enumerate() {
-            for (taken, addrs) in samples[index].iter_mut().zip(&plan[index]) {
+        for index in 0..loaded.len() {
+            for (case, addrs) in plan[index].iter().enumerate() {
                 let pkt = frame(addrs[pass].to_be_bytes());
-                taken.push(run_ns(&trie.ebpf, &pkt, repeat)?);
+                let ebpf = if case == FLAT {
+                    &flats[index].ebpf
+                } else {
+                    &loaded[index].ebpf
+                };
+                samples[index][case].push(run_ns(ebpf, &pkt, repeat)?);
             }
         }
     }
@@ -269,12 +330,19 @@ fn main() -> Result<(), Failure> {
             let low = *taken.iter().min().expect("one pass at least");
             let high = *taken.iter().max().expect("one pass at least");
             taken.sort_unstable();
+            // The kernel memory of the structure the row was measured on, and not of the
+            // program's largest map: a flat row carrying the trie's 198 MiB would read as the
+            // tables costing what they were brought in to replace.
+            let memlock = if case == FLAT {
+                flats[index].memlock
+            } else {
+                trie.memlock
+            };
             println!(
-                "{},{name},{repeat},{},{},{},{},{passes},{shared}",
+                "{},{name},{repeat},{},{},{memlock},{},{passes},{shared}",
                 trie.entries,
                 percentile(taken, 50).saturating_sub(FLOOR_NS),
                 high - low,
-                trie.memlock,
                 percentile(taken, 99).saturating_sub(FLOOR_NS),
             );
         }
@@ -308,7 +376,10 @@ fn plan_probes(trie: &Trie, passes: usize) -> Result<Vec<Vec<u32>>, Failure> {
             let spread = trie.sixteens[pass * trie.sixteens.len() / passes];
             addrs.push(match case {
                 "shallow_miss_control" => control,
-                "deep_miss_inside" => absent_inside(trie, spread, pass)?,
+                // The fifth arm asks for the same address as the first, which is what makes
+                // the two columns subtractable: `absent_inside` is a function of the loaded
+                // set and the pass, so the two calls cannot drift apart.
+                "deep_miss_inside" | "flat_deep_miss_inside" => absent_inside(trie, spread, pass)?,
                 "hit_scattered" => {
                     let present = trie.inside(spread);
                     present[pass % present.len()]
@@ -367,6 +438,12 @@ fn guard_the_arms_apart(trie: &Trie, probes: &[Vec<u32>]) {
          and the control shares {outside}: the two arms are measuring the same walk",
         trie.entries
     );
+    assert_eq!(
+        probes[FLAT], probes[REALISTIC],
+        "at {} entries the flat arm and the realistic arm are not probing the same addresses, \
+         so the two columns are not a comparison of two structures",
+        trie.entries
+    );
 }
 
 /// That the trie holds what this file thinks it holds, checked against the kernel once per
@@ -374,24 +451,33 @@ fn guard_the_arms_apart(trie: &Trie, probes: &[Vec<u32>]) {
 ///
 /// A hit that does not drop means arms 3 and 4 are timing a miss under a label that says
 /// hit, and every ratio in the table would then be between two misses.
-fn classification_holds(trie: &Trie, probes: &[Vec<u32>]) -> Result<(), Failure> {
-    let hit = run_action(&trie.ebpf, &frame(probes[2][0].to_be_bytes()))?;
-    if hit != XDP_DROP {
-        return Err(format!(
-            "{} returned {hit} at {} entries, and a loaded source has to be dropped",
-            dotted(probes[2][0]),
-            trie.entries
-        )
-        .into());
-    }
-    let miss = run_action(&trie.ebpf, &frame(probes[1][0].to_be_bytes()))?;
-    if miss != XDP_PASS {
-        return Err(format!(
-            "the control source returned {miss} at {} entries, and an absent source has to \
-             walk the pipeline to the end",
-            trie.entries
-        )
-        .into());
+///
+/// The flat program is asked the same two questions, and the answers have to be the same two
+/// answers. That is not the equivalence claim — `blocklist_equivalence.rs` draws a corpus for
+/// that — but it is the cheapest possible guard against timing an empty table: a set of
+/// tables that dropped nothing would give a beautifully flat fifth column and mean nothing at
+/// all.
+fn classification_holds(trie: &Trie, flat: &Flat, probes: &[Vec<u32>]) -> Result<(), Failure> {
+    for (label, ebpf) in [("the trie", &trie.ebpf), ("the flat tables", &flat.ebpf)] {
+        let hit = run_action(ebpf, &frame(probes[2][0].to_be_bytes()))?;
+        if hit != XDP_DROP {
+            return Err(format!(
+                "{label}: {} returned {hit} at {} entries, and a loaded source has to be \
+                 dropped",
+                dotted(probes[2][0]),
+                trie.entries
+            )
+            .into());
+        }
+        let miss = run_action(ebpf, &frame(probes[1][0].to_be_bytes()))?;
+        if miss != XDP_PASS {
+            return Err(format!(
+                "{label}: the control source returned {miss} at {} entries, and an absent \
+                 source has to walk the pipeline to the end",
+                trie.entries
+            )
+            .into());
+        }
     }
     Ok(())
 }
@@ -501,6 +587,61 @@ fn load(object: &[u8], entries: u32) -> Result<Trie, Failure> {
         sorted,
         sixteens,
         densest,
+    })
+}
+
+/// The same hosts as a published snapshot, in a program with no trie.
+///
+/// Built by [`lorica_policy::blocklist::build`] and not by this file, for the reason
+/// `tests/support/run.rs` gives about its own fixtures: insertion decides where a key lands,
+/// so a measurement that wrote its own slots would be timing a table the builder cannot
+/// produce. The exhaustive round trip the builder performs on the way is a second of
+/// userspace work at a million keys and buys the guarantee that every key is reachable in
+/// [`OA_PROBES`](lorica_common::blocklist::OA_PROBES) steps — which is exactly what the
+/// unrolled probe sequence in the packet path assumes.
+///
+/// **The expansion bound is zero, and that is an assertion.** These are all `/32`, which cost
+/// no expansion, and no prefix shorter than a `/24` is loaded, so no block has a verdict to
+/// fill. A charge against this bound would mean the set is not the set this file describes.
+fn load_flat(object: &[u8], hosts: &[u32]) -> Result<Flat, Failure> {
+    let prefixes: Vec<(u32, u32, Action)> =
+        hosts.iter().map(|&addr| (addr, 32, Action::Drop)).collect();
+    let snapshot: Snapshot = blocklist::build(&prefixes, 0)
+        .map_err(|err| format!("the builder refused {} hosts: {err}", hosts.len()))?;
+    // SAFETY: `OaSlot` is `repr(C)`, eight bytes and no padding — asserted in
+    // `lorica_common::blocklist` — so the vector is exactly its own bytes.
+    let table = unsafe {
+        std::slice::from_raw_parts(
+            snapshot.oa.as_ptr().cast::<u8>(),
+            std::mem::size_of_val(snapshot.oa.as_slice()),
+        )
+    };
+
+    let settings = DEFAULT_SETTINGS;
+    let trie_armed = 0u32;
+    let mut ebpf = EbpfLoader::new()
+        .override_global(SETTINGS_SYMBOL, &settings, true)
+        .override_global(CLASS24_SYMBOL, &snapshot.class24[..], true)
+        .override_global(OA_TABLE_SYMBOL, table, true)
+        .override_global(BLOCKLIST_TRIE_SYMBOL, &trie_armed, true)
+        // One entry and no per-entry counters: the stage that reads them is not in this
+        // program, and a trie sized like the one next door would charge this row 198 MiB of
+        // kernel memory it does not use.
+        .map_max_entries("UNIFIED_LIST", 1)
+        .map_max_entries("COUNTERS", CounterId::COUNT)
+        .load(object)
+        .map_err(|err| format!("loading the flat program failed: {err}"))?;
+    verify(&mut ebpf)?;
+
+    let bss = maps::fd(&ebpf, ".bss").ok_or(
+        "no .bss map in the loaded program, so the two tables are not where aya puts them",
+    )?;
+    let memlock = maps::memlock_bytes(bss)?;
+    Ok(Flat {
+        ebpf,
+        memlock,
+        keys: snapshot.keys,
+        worst_psl: snapshot.worst_psl,
     })
 }
 
