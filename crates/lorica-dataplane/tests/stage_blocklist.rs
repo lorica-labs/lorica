@@ -183,7 +183,15 @@ fn the_trie_leaves_the_program_when_the_configuration_has_no_real_prefix() {
     );
 
     let (with, without) = (armed.translated_len(), pruned.translated_len());
-    println!("translated: {with} bytes with the trie, {without} without");
+    // The JITed figures ride along because the size ceiling next door is stated in them, and
+    // the configuration this stage exists to serve — an IPv4 blocklist, observation only — is
+    // the pruned one rather than the armed one.
+    println!(
+        "translated: {with} bytes with the trie, {without} without; \
+         JITed: {} with, {} without",
+        armed.jited_len(),
+        pruned.jited_len()
+    );
     assert!(
         without < with,
         "the trie word cleared left the program the same size, {without} against {with}, \
