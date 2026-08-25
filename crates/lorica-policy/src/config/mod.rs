@@ -10,6 +10,14 @@ use crate::profile::ProfileKind;
 pub struct Config {
     pub profile: ProfileKind,
 
+    /// Whether the mitigation may refuse traffic, or only report what it would refuse.
+    ///
+    /// The one default in this file that decides something, and it decides the safe
+    /// direction: `observe` writes no refusal into the unified list whatever rung the
+    /// ladder reaches. An operator who wants drops types the word.
+    #[serde(default)]
+    pub mode: Mode,
+
     #[serde(default)]
     pub settings: Settings,
 
@@ -61,6 +69,27 @@ pub struct Settings {
     pub enforce_signatures: bool,
 }
 
+/// Whether what the ladder decides is applied or only reported.
+///
+/// **The alternative, with its number.** The policy word already carries two arming bits
+/// — one for the catalogue, one for the bank — so the cheap move is a third bit for the
+/// ladder and no new type. It is not that, because those two arm a *stage* of the data
+/// path against traffic it classifies itself, while this arms the agent to write into the
+/// list; an operator reading three bits would have to know which of them their own drop
+/// came from, and an operator reading `mode = "observe"` knows that none of them can
+/// produce one. The cost of the type is one field and one serde attribute.
+///
+/// Two variants and no `dry-run` third: `observe` *is* the dry run, and it is the default,
+/// so a mode meaning "compute everything and apply nothing" would be a second spelling of
+/// the same thing.
+#[derive(Deserialize, Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum Mode {
+    #[default]
+    Observe,
+    Armed,
+}
+
 #[derive(Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum ActionName {
@@ -95,5 +124,30 @@ pub struct Rule {
 impl Config {
     pub fn from_toml(text: &str) -> Result<Self, toml::de::Error> {
         toml::from_str(text)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Config, Mode};
+
+    /// The default is the whole safety argument of the mode, so it is asserted on a file
+    /// that does not mention it rather than left to the derive.
+    #[test]
+    fn a_configuration_that_says_nothing_observes() {
+        let config = Config::from_toml("profile = \"host\"").expect("the minimal file must parse");
+        assert_eq!(config.mode, Mode::Observe);
+    }
+
+    #[test]
+    fn arming_is_one_word_and_a_misspelling_is_refused() {
+        let armed = Config::from_toml("profile = \"host\"\nmode = \"armed\"")
+            .expect("mode = armed must parse");
+        assert_eq!(armed.mode, Mode::Armed);
+        // Not a fallback to observe: a file that meant to arm and did not is a file the
+        // operator has to be told about, and silently observing would be the mitigation
+        // nobody notices is off.
+        Config::from_toml("profile = \"host\"\nmode = \"enforce\"")
+            .expect_err("a spelling that is neither of the two must be refused");
     }
 }

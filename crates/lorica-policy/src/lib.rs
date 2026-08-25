@@ -12,5 +12,5 @@ pub mod profile;
 
 pub use blocklist::{BuildError, Snapshot, build};
 pub use compile::{CompileError, Compiled, Warning, compile};
-pub use config::Config;
+pub use config::{Config, Mode};
 pub use profile::{MapSizes, MemlockModel, ProfileKind, REFERENCE_CPUS};

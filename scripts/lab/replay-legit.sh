@@ -3,7 +3,8 @@
 # target can be asked whether its XDP program dropped any of it.
 #
 #   replay-legit.sh --pcap FILE | --all [--rate PPS] [--out DIR] [--dev NAME]
-#                   [--engine tcpreplay|trafgen] [--assert-zero-drop]
+#                   [--engine tcpreplay|trafgen] [--mode observe|armed]
+#                   [--assert-zero-drop] [--dry-run]
 #
 # Runs on VM 902 (generator). It attaches nothing. bpftool cannot load this
 # repository's object — aya emits legacy map definitions libbpf dropped in 1.0 — and
@@ -28,6 +29,18 @@
 # timing, so the replay is paced at a constant rate. Four of the seven stages are
 # stateless and indifferent to pacing; stage 7 is not. Without --rate the constant rate
 # defaults to the trace's own packets-divided-by-span, never to a round number.
+#
+# --mode names the arming the target was running under, observe or armed. It is recorded
+# and not acted on, because this script attaches nothing and has no way to read the
+# target's own mode: it belongs in the row because the same trace answers two different
+# questions against an observing agent and against an armed one, and a result that does
+# not say which one it answered is a number nobody can compare against next month.
+#
+# --dry-run checks the arguments, the engine, the interface and every trace, and sends
+# nothing, which is also why it runs unprivileged where a real replay does not. It cannot
+# answer --assert-zero-drop and refuses to be asked rather than reporting a zero it never
+# measured: a harness that can exit 0 without having put a packet on the wire invalidates
+# every green result it has ever given, which happened twice here, on a full disk.
 
 set -uo pipefail
 
@@ -41,6 +54,8 @@ ALL=0
 RATE=
 ASSERT=0
 ENGINE=tcpreplay
+MODE=observe
+DRY=0
 
 # One CPU, not a flag. trafgen splits its packet list across the CPUs it is given and
 # sends the parts in parallel, which reorders the trace; a capture whose order is
@@ -57,8 +72,10 @@ while [ $# -gt 0 ]; do
         --dev)              DEV=$2; shift 2 ;;
         --traces)           TRACES=$2; shift 2 ;;
         --engine)           ENGINE=$2; shift 2 ;;
+        --mode)             MODE=$2; shift 2 ;;
         --assert-zero-drop) ASSERT=1; shift ;;
-        -h|--help)          sed -n '2,30p' "$0"; exit 0 ;;
+        --dry-run)          DRY=1; shift ;;
+        -h|--help)          sed -n '2,43p' "$0"; exit 0 ;;
         *) echo "unknown argument: $1" >&2; exit 2 ;;
     esac
 done
@@ -67,6 +84,12 @@ die() { printf 'replay-legit: %s\n' "$1" >&2; exit 2; }
 
 [ -n "$PCAP" ] || [ "$ALL" = 1 ] || die "one of --pcap FILE or --all is required"
 [ -z "$PCAP" ] || [ "$ALL" = 0 ] || die "--pcap and --all are mutually exclusive"
+case $MODE in
+    observe|armed) ;;
+    *) die "unknown mode $MODE: expected observe or armed, which are the two the agent has" ;;
+esac
+[ "$DRY" = 0 ] || [ "$ASSERT" = 0 ] \
+    || die "--dry-run puts nothing on the wire, so it has nothing to assert on: refusing to answer --assert-zero-drop rather than reporting a zero that was never measured"
 command -v python3 >/dev/null || die "no python3: the trace scan that derives the default rate needs it"
 
 case $ENGINE in
@@ -141,7 +164,7 @@ mkdir -p "$OUT"
 env_file=$(scripts/lab/capture-env.sh "$OUT" "$DEV")
 [ -n "$env_file" ] || die "capture-env produced no path"
 csv="$OUT/legit-replay.csv"
-echo "trace,engine,packets,span_s,rate_pps,sent,tx_dropped,tx_errors,verdict" > "$csv"
+echo "trace,engine,mode,packets,span_s,rate_pps,sent,tx_dropped,tx_errors,verdict" > "$csv"
 
 cfg=$(mktemp --suffix=.trafgen)
 log=$(mktemp)
@@ -171,60 +194,77 @@ EOF
         rate=$derived
     fi
 
-    if [ "$ENGINE" = trafgen ]; then
-        netsniff-ng --in "$pcap" --out "$cfg" --silent \
-            || die "netsniff-ng could not convert $pcap"
-    fi
-
-    before_dropped=$(stat_of tx_dropped)
-    before_errors=$(stat_of tx_errors)
-    if [ "$ENGINE" = tcpreplay ]; then
-        # No --pps unless one was asked for: the point of this engine is that the pacing
-        # comes from the capture. --pps overrides it, so passing --rate here means asking
-        # for a rate the trace never had, deliberately.
-        pace=()
-        [ -z "$RATE" ] || pace=(--pps="$rate")
-        sudo -n tcpreplay --intf1="$DEV" --stats=1 "${pace[@]}" "$pcap" > "$log" 2>&1
+    if [ "$DRY" = 1 ]; then
+        # Everything above ran: the arguments, the engine, the interface and the scan of
+        # this trace. What did not run is the send, so there is no count to report and no
+        # verdict to reach, and the row says exactly that instead of borrowing one of the
+        # four below.
+        sent=
+        dropped=NA
+        errors=NA
+        verdict=not-sent
     else
-        sudo -n trafgen --in "$cfg" --out "$DEV" --rate "${rate}pps" --cpus "$CPUS" \
-            --num "$packets" --no-sock-mem > "$log" 2>&1
-    fi
-    after_dropped=$(stat_of tx_dropped)
-    after_errors=$(stat_of tx_errors)
+        if [ "$ENGINE" = trafgen ]; then
+            # Part of the send and not of the checks: netsniff-ng locks pages, so a dry
+            # run that converted would need the privileges a dry run exists not to need.
+            netsniff-ng --in "$pcap" --out "$cfg" --silent \
+                || die "netsniff-ng could not convert $pcap"
+        fi
 
-    # The engine's own count of what it put on the wire, taken from the saved log rather
-    # than from a pipeline: `trafgen | grep -q` under pipefail returns 141 because grep
-    # exits first and trafgen dies of SIGPIPE.
-    if [ "$ENGINE" = tcpreplay ]; then
-        sent=$(awk '/^Actual:/ { n = $2 } END { print n }' "$log")
-    else
-        sent=$(awk '/packets outgoing/ { n = $1 } END { print n }' "$log")
-    fi
-    dropped=$(( after_dropped - before_dropped ))
-    errors=$(( after_errors - before_errors ))
+        before_dropped=$(stat_of tx_dropped)
+        before_errors=$(stat_of tx_errors)
+        if [ "$ENGINE" = tcpreplay ]; then
+            # No --pps unless one was asked for: the point of this engine is that the
+            # pacing comes from the capture. --pps overrides it, so passing --rate here
+            # means asking for a rate the trace never had, deliberately.
+            pace=()
+            [ -z "$RATE" ] || pace=(--pps="$rate")
+            sudo -n tcpreplay --intf1="$DEV" --stats=1 "${pace[@]}" "$pcap" > "$log" 2>&1
+        else
+            sudo -n trafgen --in "$cfg" --out "$DEV" --rate "${rate}pps" --cpus "$CPUS" \
+                --num "$packets" --no-sock-mem > "$log" 2>&1
+        fi
+        after_dropped=$(stat_of tx_dropped)
+        after_errors=$(stat_of tx_errors)
 
-    if [ -z "$sent" ]; then
-        verdict=no-send-report
-    elif [ "$sent" != "$packets" ]; then
-        verdict=short-send
-    elif [ "$dropped" != 0 ] || [ "$errors" != 0 ]; then
-        verdict=tx-loss
-    else
-        verdict=sent-whole
+        # The engine's own count of what it put on the wire, taken from the saved log
+        # rather than from a pipeline: `trafgen | grep -q` under pipefail returns 141
+        # because grep exits first and trafgen dies of SIGPIPE.
+        if [ "$ENGINE" = tcpreplay ]; then
+            sent=$(awk '/^Actual:/ { n = $2 } END { print n }' "$log")
+        else
+            sent=$(awk '/packets outgoing/ { n = $1 } END { print n }' "$log")
+        fi
+        dropped=$(( after_dropped - before_dropped ))
+        errors=$(( after_errors - before_errors ))
+
+        if [ -z "$sent" ]; then
+            verdict=no-send-report
+        elif [ "$sent" != "$packets" ]; then
+            verdict=short-send
+        elif [ "$dropped" != 0 ] || [ "$errors" != 0 ]; then
+            verdict=tx-loss
+        else
+            verdict=sent-whole
+        fi
     fi
 
     # With tcpreplay and no --rate the pacing is the trace's own, packet by packet, and
     # the figure printed is its average. Naming it "mean" rather than "rate" keeps it from
     # being read as a rate that was imposed.
     if [ "$ENGINE" = tcpreplay ] && [ -z "$RATE" ]; then label=mean; else label=rate; fi
-    printf 'replay-legit: trace=%s engine=%s dev=%s packets=%s span=%ss %s=%spps sent=%s tx_dropped=%s tx_errors=%s -> %s\n' \
-        "$(basename "$pcap")" "$ENGINE" "$DEV" "$packets" "$span" "$label" "$rate" "${sent:-none}" "$dropped" "$errors" "$verdict"
-    echo "$(basename "$pcap"),$ENGINE,$packets,$span,$rate,${sent:-NA},$dropped,$errors,$verdict" >> "$csv"
+    printf 'replay-legit: trace=%s engine=%s mode=%s dev=%s packets=%s span=%ss %s=%spps sent=%s tx_dropped=%s tx_errors=%s -> %s\n' \
+        "$(basename "$pcap")" "$ENGINE" "$MODE" "$DEV" "$packets" "$span" "$label" "$rate" "${sent:-none}" "$dropped" "$errors" "$verdict"
+    echo "$(basename "$pcap"),$ENGINE,$MODE,$packets,$span,$rate,${sent:-NA},$dropped,$errors,$verdict" >> "$csv"
 
     # The flag decides the exit status, never what is measured or printed: a number that
     # only appears when it is being asserted on is a number nobody can compare against.
     [ "$verdict" = sent-whole ] || [ "$ASSERT" = 0 ] || status=1
 done
 
+# Said out loud, because an exit of 0 from a run that sent nothing is the one result here
+# that could be mistaken for a campaign that passed.
+[ "$DRY" = 0 ] \
+    || echo "replay-legit: dry run over ${#traces[@]} trace(s), nothing was sent and no drop verdict was rendered"
 echo "$csv"
 exit "$status"
