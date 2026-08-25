@@ -5,16 +5,24 @@
 //! the agent's timer thread — the one thread whose allocation count `tests/tick_budget.rs`
 //! is written about. One buffer, reserved once in [`Writer::create`] and reused across every
 //! file, allocates nothing after startup; the cost is that flushing it is this module's job
-//! and not the standard library's, which is what makes [`Writer::rotate`] a place a record
-//! can be lost.
+//! and not the standard library's, which is what makes [`Writer::rotate`] the one place in
+//! the write path where a record can end up somewhere it does not belong.
 //!
-//! **So the ordering is the invariant: drain, then change files.** A rotation that swaps the
-//! file first throws away whatever the buffer held for the previous one — up to
-//! `buffered_records` records, silently, with the file's length still looking plausible
-//! because a fixed stride divides evenly either way. There is no `Drop` on [`Writer`] that
-//! would cover for it, and that absence is deliberate: a `Drop` flush hides the bug in the
-//! ordinary case and still loses the records when the swap happens mid-run.
-//! `rotation_loses_no_record` is what makes this a proven property rather than a comment.
+//! **So the ordering is the invariant: drain, then change files.** And the exact damage a
+//! rotation that swaps first does was measured rather than assumed, because the obvious
+//! guess is wrong. It does **not** lose the records: the buffer survives the swap and its
+//! contents land in the *next* file, so a test that only counts records across every file
+//! and checks their order passes against the broken version — which it did, 1 000 000 records
+//! and 184 files, green. What it does is leave the file it closed short of [`Writer::limit`]
+//! by whatever was pending, because those bytes were counted against that file's range and
+//! written outside it. So the assertion that catches it is that **a closed file has reached
+//! its limit**, and `rotation_loses_no_record` carries both: the count and the order, which
+//! are what the journal is for, and the per-file completeness, which is what fails when the
+//! ordering here is wrong.
+//!
+//! There is no `Drop` on [`Writer`], and that absence is deliberate: a `Drop` flush would
+//! make the tail of a journal depend on whether the writer was dropped or the process died,
+//! which is the difference [`Writer::flush`] exists to make explicit.
 //!
 //! Rotation does not `fsync` the file it closes. What it can lose is the buffer, not the
 //! page cache, and an `fsync` per file would be a hardening cadence — which is

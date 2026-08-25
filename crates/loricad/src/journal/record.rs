@@ -19,7 +19,7 @@
 //! `store/blocklist/binary.rs`: the file is written and read on one machine, and [`MAGIC`]
 //! is what a file carried elsewhere trips over instead of being read as plausible garbage.
 
-use core::mem::{align_of, size_of};
+use core::mem::size_of;
 
 use lorica_detect::{Decision, Reason};
 use zerocopy::{FromBytes, Immutable, IntoBytes, KnownLayout};
@@ -49,8 +49,7 @@ pub const REASON_PRESSURE: u8 = 1;
 pub const REASON_CONFIRMED: u8 = 2;
 pub const REASON_SATURATION: u8 = 3;
 
-/// Sixteen bytes, a multiple of the eight [`Record`] needs, so records begin aligned at a
-/// fixed offset.
+/// Sixteen bytes, in front of every file, so record `n` is at `16 + n * 48`.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, FromBytes, IntoBytes, Immutable, KnownLayout)]
 pub struct Header {
@@ -156,10 +155,16 @@ impl Record {
 pub const HEADER_BYTES: usize = size_of::<Header>();
 pub const RECORD_BYTES: usize = size_of::<Record>();
 
+// The two sizes are the interface. Asserted rather than trusted to the layout algorithm,
+// because a field added between two others changes the stride and every historical file
+// would then be read at the wrong offsets — which the magic and the version cannot catch,
+// since both are still correct. `Header::record_bytes` is what catches it at run time, and
+// these are what catch it at compile time.
 const _: () = assert!(HEADER_BYTES == 16);
 const _: () = assert!(RECORD_BYTES == 48);
-// The stride is only arithmetic if the header is a whole number of alignments, and the
-// round trip is only bit for bit if there is no implicit padding to be uninitialised. Both
-// halves are asserted so neither can drift when a field is added.
-const _: () = assert!(HEADER_BYTES % align_of::<Record>() == 0);
-const _: () = assert!(align_of::<Header>() >= align_of::<Record>());
+// No alignment assertion here, and the difference from `store/blocklist/binary.rs` is
+// deliberate. That format is cast in place out of a page-aligned `mmap`, so the header's
+// alignment is part of it. This one is read by `rotate::read`, which copies each record out
+// of a `Vec<u8>` that is aligned to one byte whatever the format says — so alignment is not
+// a property this file can have, and asserting it would be asserting something about the
+// compiler rather than about the journal. `Header` is in fact 4-aligned.

@@ -18,6 +18,10 @@
 mod blocklist;
 #[path = "../src/journal/mod.rs"]
 mod journal;
+// Shared with the other persistence tests, which use parts of it this one does not. The
+// allowance is on the declaration rather than in the file, so the file stays what the other
+// tests wrote.
+#[allow(dead_code)]
 mod support;
 
 use std::{hint::black_box, path::PathBuf, time::Instant};
@@ -72,12 +76,15 @@ const TICKS: u64 = 2_000_000;
 /// `scripts/lab/measure-blocklist-reload.sh` does. Unset, the test cleans up after itself.
 const KEEP: &str = "LORICA_JOURNAL_DIR";
 
-/// The test the module exists for.
+/// The test the module exists for: every record written comes back, once, in order, and in
+/// the file whose byte range it was counted against.
 ///
-/// Rotation is the one place a record can disappear without a trace: the writer owns its
-/// buffer, so changing which file `drain` writes to before draining throws the pending
-/// records away and leaves every file a plausible length, because a fixed stride divides
-/// evenly either way. Nothing else in the write path can lose a record silently.
+/// **The third clause is there because the first two do not catch the bug.** A rotation that
+/// changes files before draining does not throw the buffer away — the buffer outlives the
+/// swap and its contents land in the next file — so the count and the order survive it, and
+/// this test passed against the broken version. What the broken version leaves behind is a
+/// closed file that stopped short of [`LIMIT`]: those bytes were counted against its range
+/// and written outside it. Hence the length assertion below, which is the one that fails.
 ///
 /// The records are regenerated rather than remembered. A `Vec` of a million expectations is
 /// 48 MB of anonymous heap, which would make the RSS figure printed below a figure about the
@@ -142,6 +149,21 @@ fn rotation_loses_no_record() {
         "{} files is too few rotations for this to be a test of rotation",
         paths.len()
     );
+    // Every file but the one still open. A rotation happens on the append that takes a file
+    // to its limit and drains first, so a closed file is at or over the limit by exactly the
+    // pending buffer — and under the limit by exactly the buffer that was not drained.
+    for path in &paths[..paths.len() - 1] {
+        let len = std::fs::metadata(path)
+            .expect("cannot stat a journal file")
+            .len();
+        assert!(
+            len >= LIMIT,
+            "{} closed at {len} bytes, {} short of the {LIMIT} it was rotated at: \
+             the bytes counted against it were written to another file",
+            path.display(),
+            LIMIT - len
+        );
+    }
 }
 
 /// The roll-up's arithmetic, and what it costs at the agent's cadence.
