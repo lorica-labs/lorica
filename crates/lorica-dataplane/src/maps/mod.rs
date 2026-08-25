@@ -20,10 +20,15 @@ use aya::{Ebpf, maps::Map};
 ///
 /// aya hands out `&Map`, an enum whose variants all wrap the same `MapData`, while the
 /// typed wrappers keep their descriptor behind a sealed trait. This match is the only
-/// way across, and it names only the two map types this crate reaches by descriptor.
+/// way across, and it names only the three map types this crate reaches by descriptor.
+///
+/// `Array` is there for `.bss`, which nobody declared as a map: aya materialises a data
+/// section as an `ARRAY` of one entry whose value is the whole section, and that is where the
+/// two blocklist tables live. So their kernel cost is read off a descriptor like every other
+/// map's rather than multiplied out of the constants they were declared with.
 pub fn fd<'a>(ebpf: &'a Ebpf, name: &str) -> Option<BorrowedFd<'a>> {
     match ebpf.map(name)? {
-        Map::PerCpuArray(data) | Map::LpmTrie(data) => Some(data.fd().as_fd()),
+        Map::PerCpuArray(data) | Map::LpmTrie(data) | Map::Array(data) => Some(data.fd().as_fd()),
         _ => None,
     }
 }

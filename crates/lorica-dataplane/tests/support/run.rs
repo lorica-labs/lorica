@@ -141,6 +141,29 @@ impl Blocklist {
         }
     }
 
+    /// The two tables exactly as the policy builder produced them.
+    ///
+    /// The fluent constructors above are for a fixture somebody wrote by hand; this is for a
+    /// whole [`Snapshot`](lorica_policy::blocklist::Snapshot), which is what the equivalence
+    /// harness compares the trie against. The lengths are asserted rather than trusted: a
+    /// short vector splices into the head of the section and leaves the rest zeroed, which
+    /// reads as a table that simply answers nothing.
+    pub fn from_tables(class24: Vec<u8>, table: Vec<OaSlot>) -> Self {
+        assert_eq!(
+            class24.len(),
+            CLASS24_BYTES,
+            "a block table of {} bytes would splice into the head of the section and leave \
+             the rest zeroed",
+            class24.len()
+        );
+        assert_eq!(table.len(), OA_SLOTS, "the slot count is not OA_SLOTS");
+        Self {
+            class24,
+            table,
+            trie: true,
+        }
+    }
+
     /// Drops the `LPM_TRIE` stage out of the program, the way a configuration carrying no
     /// IPv6 entry and no armed agent does.
     pub fn without_trie(mut self) -> Self {
@@ -454,6 +477,20 @@ impl TestProg {
             .expect("reading the program info failed")
             .size_translated()
             .expect("the kernel did not report xlated_len")
+    }
+
+    /// The descriptor of one of the program's maps, under the name the ELF gives it.
+    ///
+    /// `.bss` is the one no other method can reach: it is not a map anybody declared, so
+    /// there is no typed wrapper for it, and its value is the whole data section — which is
+    /// what makes a full blocklist reload one write and what makes the kernel cost of the two
+    /// tables readable off a descriptor. The panic lists what the object does carry, because
+    /// a section aya spells differently would otherwise read as a missing table.
+    pub fn map_fd(&self, name: &str) -> std::os::fd::BorrowedFd<'_> {
+        lorica_dataplane::maps::fd(&self.ebpf, name).unwrap_or_else(|| {
+            let carried: Vec<&str> = self.ebpf.maps().map(|(name, _)| name).collect();
+            panic!("no map named {name} is reachable by descriptor; the object carries {carried:?}")
+        })
     }
 
     pub fn counter(&self, name: &str) -> u64 {
