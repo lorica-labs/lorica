@@ -3,23 +3,24 @@
 
 running 2 tests
 LORICA_WIRE_IFACE iface=enp6s19 addr=10.90.1.1/24
-LORICA_WIRE_READY iface=enp6s19 phase=replay window_ms=45000 mode=xdp
+LORICA_WIRE_READY iface=enp6s19 phase=replay window_ms=75000 mode=xdp
 LORICA_WIRE_READY iface=lori-wire phase=veth-clean window_ms=4000 mode=xdp
 LORICA_WIRE_COUNTER iface=lori-wire phase=veth-clean counter=parse_unknown_encap kind=pass delta=1
-LORICA_WIRE_COUNTER iface=lori-wire phase=veth-clean counter=icmp_neighbor_passed kind=pass delta=1
-LORICA_WIRE iface=lori-wire phase=veth-clean settings=0x00000008 window_ms=4000 rx_packets=104 xdp_exception=0 drops=0 flagged=0 verdict=pass
+LORICA_WIRE_COUNTER iface=lori-wire phase=veth-clean counter=icmp_neighbor_passed kind=pass delta=2
+LORICA_WIRE iface=lori-wire phase=veth-clean settings=0x00000008 window_ms=4000 rx_packets=106 xdp_exception=0 drops=0 flagged=0 verdict=pass
 LORICA_WIRE_READY iface=lori-wire phase=veth-control window_ms=4000 mode=xdp
 LORICA_WIRE_COUNTER iface=lori-wire phase=veth-control counter=icmp_neighbor_passed kind=pass delta=1
 LORICA_WIRE_COUNTER iface=lori-wire phase=veth-control counter=icmp_echo_dropped kind=drop delta=100
 LORICA_WIRE iface=lori-wire phase=veth-control settings=0x0000000a window_ms=4000 rx_packets=101 xdp_exception=0 drops=100 flagged=0 verdict=fail
 test real_frames_are_measured_and_a_deliberate_drop_fails_the_verdict ... ok
+test the_legitimate_replay_loses_no_packet_on_the_wire has been running for over 60 seconds
 LORICA_WIRE_COUNTER iface=enp6s19 phase=replay counter=parse_unknown_encap kind=pass delta=3
 LORICA_WIRE_COUNTER iface=enp6s19 phase=replay counter=icmp_path_mtu_passed kind=pass delta=2
 LORICA_WIRE_COUNTER iface=enp6s19 phase=replay counter=icmp_neighbor_passed kind=pass delta=2
 LORICA_WIRE_COUNTER iface=enp6s19 phase=replay counter=fragment_first_passed kind=pass delta=2
 LORICA_WIRE_COUNTER iface=enp6s19 phase=replay counter=fragment_later_allowed kind=pass delta=3
-LORICA_WIRE iface=enp6s19 phase=replay settings=0x00000008 window_ms=45000 rx_packets=45 xdp_exception=0 drops=0 flagged=0 verdict=pass
+LORICA_WIRE iface=enp6s19 phase=replay settings=0x00000008 window_ms=75000 rx_packets=45 xdp_exception=0 drops=0 flagged=0 verdict=pass
 test the_legitimate_replay_loses_no_packet_on_the_wire ... ok
 
-test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 45.51s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 75.41s
 

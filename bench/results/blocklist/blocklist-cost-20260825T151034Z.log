@@ -1,0 +1,40 @@
+
+--- measure_lpm_depth-53bc5f2bec2bb586 on 6.8.0-138-generic
+# repeat 1000000, 25 interleaved passes, floor 15 ns subtracted; duration is task-clock over 2.06, so the ratios are the readable part
+# 1 entries: all /32, as 128-bit v4-mapped keys, spread over 10.0.0.0/8; 1 distinct /16s populated, densest 10.0.0.0/16 with 1; memlock 104 B
+#   the same set as two flat tables: 1 keys, worst probe sequence 0, .bss memlock 20971904 B
+#   deep_miss_inside     first 10.0.112.189, shared bits 16..19 over 25 draws
+#   shallow_miss_control first 203.0.113.1, shared bits 0..0 over 25 draws
+#   hit_scattered        first 10.0.0.0, shared bits 32..32 over 25 draws
+#   hit_clustered        first 10.0.0.0, shared bits 32..32 over 25 draws
+#   flat_deep_miss_inside first 10.0.112.189, shared bits 16..19 over 25 draws
+# 16384 entries: all /32, as 128-bit v4-mapped keys, spread over 10.0.0.0/8; 256 distinct /16s populated, densest 10.252.0.0/16 with 68; memlock 1703936 B
+#   the same set as two flat tables: 16384 keys, worst probe sequence 1, .bss memlock 20971904 B
+#   deep_miss_inside     first 10.0.112.189, shared bits 19..29 over 25 draws
+#   shallow_miss_control first 203.0.113.1, shared bits 0..0 over 25 draws
+#   hit_scattered        first 10.0.0.0, shared bits 32..32 over 25 draws
+#   hit_clustered        first 10.252.9.174, shared bits 32..32 over 25 draws
+#   flat_deep_miss_inside first 10.0.112.189, shared bits 19..29 over 25 draws
+# 1000000 entries: all /32, as 128-bit v4-mapped keys, spread over 10.0.0.0/8; 256 distinct /16s populated, densest 10.249.0.0/16 with 3912; memlock 104000000 B
+#   the same set as two flat tables: 1000000 keys, worst probe sequence 10, .bss memlock 20971904 B
+#   deep_miss_inside     first 10.0.112.189, shared bits 27..30 over 25 draws
+#   shallow_miss_control first 203.0.113.1, shared bits 0..0 over 25 draws
+#   hit_scattered        first 10.0.0.0, shared bits 32..32 over 25 draws
+#   hit_clustered        first 10.249.0.6, shared bits 32..32 over 25 draws
+#   flat_deep_miss_inside first 10.0.112.189, shared bits 27..30 over 25 draws
+entries,case,repeat,ns_above_floor,ns_spread,memlock_bytes,p99_ns_above_floor,passes,shared_bits
+1,deep_miss_inside,1000000,92,2,104,94,25,16
+1,shallow_miss_control,1000000,92,1,104,93,25,0
+1,hit_scattered,1000000,71,3,104,73,25,32
+1,hit_clustered,1000000,71,2,104,72,25,32
+1,flat_deep_miss_inside,1000000,61,2,20971904,63,25,16
+16384,deep_miss_inside,1000000,220,90,1703936,305,25,19
+16384,shallow_miss_control,1000000,91,3,1703936,94,25,0
+16384,hit_scattered,1000000,249,66,1703936,272,25,32
+16384,hit_clustered,1000000,250,56,1703936,264,25,32
+16384,flat_deep_miss_inside,1000000,67,3,20971904,69,25,19
+1000000,deep_miss_inside,1000000,334,26,104000000,348,25,27
+1000000,shallow_miss_control,1000000,92,2,104000000,94,25,0
+1000000,hit_scattered,1000000,305,34,104000000,327,25,32
+1000000,hit_clustered,1000000,305,26,104000000,320,25,32
+1000000,flat_deep_miss_inside,1000000,71,11,20971904,79,25,27

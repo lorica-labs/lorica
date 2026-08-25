@@ -39,7 +39,13 @@ REMOTE_DIR=${LORICA_REMOTE_DIR:-src}
 RUN_DIR=${LORICA_RUN_DIR:-run}
 
 PCAP=bench/traces/legit-ref.pcap
-WINDOW_MS=45000
+# The default trace spans 28 s, and 45000 was not enough for it: a run of this script with
+# every default delivered 39 of the 44 frames, because the window opens before the generator
+# is built and shipped and closes on the tail of the replay. It refused rather than reporting
+# the drops=0 it had, which is what the guard is for -- but a default that cannot hold the
+# default input is a trap for whoever runs it next. 75000 holds it with room; a longer trace
+# still needs --window-ms.
+WINDOW_MS=75000
 IFACE=${LORICA_IFACE:-enp6s19}
 ENGINE=tcpreplay
 OUT=bench/results/wire-trace

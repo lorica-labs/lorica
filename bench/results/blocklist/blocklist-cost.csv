@@ -1,0 +1,4 @@
+entries,realistic_ns,flat_ns,realistic_cycles,flat_cycles,ratio,trie_memlock_bytes,bss_memlock_bytes
+1,92,61,379,251,1.51,104,20971904
+16384,220,67,906,276,3.28,1703936,20971904
+1000000,334,71,1376,293,4.70,104000000,20971904

@@ -1,0 +1,37 @@
+kernel 6.8.0-138-generic
+== equivalence
+
+running 3 tests
+test a_full_reload_is_one_write_of_the_section ... blocklist-reload section_bytes=20971520 class24_at=0 oa_at=4194304 writes=1 keys_before=7936 keys_after=7936
+ok
+test a_verdict_two_bits_cannot_spell_is_refused_on_a_short_prefix_and_taken_on_a_long_one ... blocklist-refusal short_refused=64 long_accepted=64
+ok
+test the_two_tables_answer_what_the_trie_answers_on_a_drawn_corpus ... blocklist-equivalence set=whole seed=0xb10c11575eed0001 keys=20000 uniform=5055 near=14945 prefixes=120 oa_keys=8192 expanded=8185 worst_psl=1 class_none=0 class_deny=14081 class_allow=5030 class_table=889 drops=14615 diverged=0
+blocklist-equivalence set=hosts_only seed=0xb10c11575eed0001 keys=20000 uniform=5055 near=14945 prefixes=32 oa_keys=803 expanded=796 worst_psl=0 class_none=19111 class_deny=0 class_allow=0 class_table=889 drops=108 diverged=0
+ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 13.53s
+
+equivalence-exit=0
+== reloads=0
+
+running 1 test
+blocklist-reload section_bytes=20971520 class24_at=0 oa_at=4194304 writes=0 keys_before=7936 keys_after=7936
+test a_full_reload_is_one_write_of_the_section ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2 filtered out; finished in 3.98s
+
+reload-exit-0=0
+bpf-calls-0=33
+bpf-update-elem-0=2
+== reloads=1
+
+running 1 test
+blocklist-reload section_bytes=20971520 class24_at=0 oa_at=4194304 writes=1 keys_before=7936 keys_after=7936
+test a_full_reload_is_one_write_of_the_section ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2 filtered out; finished in 3.99s
+
+reload-exit-1=0
+bpf-calls-1=34
+bpf-update-elem-1=3

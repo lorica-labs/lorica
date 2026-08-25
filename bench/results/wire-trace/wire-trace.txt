@@ -1,11 +1,11 @@
-pcap=legit-ref.pcap iface=enp6s19 engine=tcpreplay window_ms=45000
-replay-legit: trace=legit-ref.pcap engine=tcpreplay dev=enp6s19 packets=44 span=28.000000s mean=2pps sent=44 tx_dropped=0 tx_errors=0 -> sent-whole
+pcap=legit-ref.pcap iface=enp6s19 engine=tcpreplay window_ms=75000
+replay-legit: trace=legit-ref.pcap engine=tcpreplay mode=observe dev=enp6s19 packets=44 span=28.000000s mean=2pps sent=44 tx_dropped=0 tx_errors=0 -> sent-whole
 LORICA_WIRE_IFACE iface=enp6s19 addr=10.90.1.1/24
-LORICA_WIRE_READY iface=enp6s19 phase=replay window_ms=45000 mode=xdp
+LORICA_WIRE_READY iface=enp6s19 phase=replay window_ms=75000 mode=xdp
 LORICA_WIRE_READY iface=lori-wire phase=veth-clean window_ms=4000 mode=xdp
 LORICA_WIRE_COUNTER iface=lori-wire phase=veth-clean counter=parse_unknown_encap kind=pass delta=1
-LORICA_WIRE_COUNTER iface=lori-wire phase=veth-clean counter=icmp_neighbor_passed kind=pass delta=1
-LORICA_WIRE iface=lori-wire phase=veth-clean settings=0x00000008 window_ms=4000 rx_packets=104 xdp_exception=0 drops=0 flagged=0 verdict=pass
+LORICA_WIRE_COUNTER iface=lori-wire phase=veth-clean counter=icmp_neighbor_passed kind=pass delta=2
+LORICA_WIRE iface=lori-wire phase=veth-clean settings=0x00000008 window_ms=4000 rx_packets=106 xdp_exception=0 drops=0 flagged=0 verdict=pass
 LORICA_WIRE_READY iface=lori-wire phase=veth-control window_ms=4000 mode=xdp
 LORICA_WIRE_COUNTER iface=lori-wire phase=veth-control counter=icmp_neighbor_passed kind=pass delta=1
 LORICA_WIRE_COUNTER iface=lori-wire phase=veth-control counter=icmp_echo_dropped kind=drop delta=100
@@ -15,4 +15,4 @@ LORICA_WIRE_COUNTER iface=enp6s19 phase=replay counter=icmp_path_mtu_passed kind
 LORICA_WIRE_COUNTER iface=enp6s19 phase=replay counter=icmp_neighbor_passed kind=pass delta=2
 LORICA_WIRE_COUNTER iface=enp6s19 phase=replay counter=fragment_first_passed kind=pass delta=2
 LORICA_WIRE_COUNTER iface=enp6s19 phase=replay counter=fragment_later_allowed kind=pass delta=3
-LORICA_WIRE iface=enp6s19 phase=replay settings=0x00000008 window_ms=45000 rx_packets=45 xdp_exception=0 drops=0 flagged=0 verdict=pass
+LORICA_WIRE iface=enp6s19 phase=replay settings=0x00000008 window_ms=75000 rx_packets=45 xdp_exception=0 drops=0 flagged=0 verdict=pass
