@@ -24,7 +24,11 @@ ATTEMPTS=${LORICA_SSH_ATTEMPTS:-4}
 
 # target/ is excluded so the remote build cache survives, and .git so the remote
 # checkout is not rewritten under a running build.
-paths=(crates scripts bench Cargo.toml Cargo.lock rust-toolchain.toml rustfmt.toml clippy.toml)
+# docs is here because a test reads docs/limits.md: the capability table on that page
+# restates seven names and seven kernel releases from the code, and the test is what stops
+# them drifting. Without the directory in the tar the test cannot find the page and fails on
+# the lab for a reason that has nothing to do with what it checks.
+paths=(crates scripts bench docs Cargo.toml Cargo.lock rust-toolchain.toml rustfmt.toml clippy.toml)
 existing=()
 for path in "${paths[@]}"; do
     [ -e "$path" ] && existing+=("$path")
