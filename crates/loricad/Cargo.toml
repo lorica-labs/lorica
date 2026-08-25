@@ -44,6 +44,12 @@ prometheus-client = "0.25.0"
 # Quantiles at 9.5 ns per insertion and mergeable across agents. Three gauges come out of
 # it; a summary would invite averaging a q99, which is not a number.
 sketches-ddsketch = "0.3.1"
-tracing.workspace = true
+# release_max_level_info removes trace! and debug! from the release binary rather than
+# filtering them at runtime: the callsite disappears, so a debug line in the tick costs
+# nothing instead of costing a level comparison. No tracing-appender: its non_blocking buffer
+# holds 128 000 lines by default, about 18 MB at the line width measured in
+# tests/log_volume.rs, and it fills exactly during an attack. The buffer is the kernel's
+# socket, not this RSS.
+tracing = { workspace = true, features = ["release_max_level_info"] }
 tracing-subscriber.workspace = true
 zerocopy.workspace = true

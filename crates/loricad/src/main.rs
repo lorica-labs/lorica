@@ -9,6 +9,7 @@
 mod alloc;
 mod control;
 mod enforce;
+mod log;
 mod metrics;
 mod state;
 mod store;
@@ -130,6 +131,7 @@ fn parse_options() -> Result<Options> {
 }
 
 fn run(options: Options) -> Result<()> {
+    log::init()?;
     // Built by hand rather than through the attribute macro. `#[tokio::main]` spawns one
     // worker per logical CPU, which is 56 threads on a dual Xeon, and their work-stealing
     // takes cache lines from the application this agent exists to protect.
@@ -201,6 +203,7 @@ async fn serve(mut options: Options) -> Result<()> {
     // Two preallocated snapshot buffers, alternated. Built before `settled` below, so the
     // two allocations it makes are startup's and the tick's difference stays a difference.
     let mut published = state::Published::default();
+    let mut journal = log::Journal::default();
     // The origin of `at_ns`. Monotone since here rather than since boot: what reads it are
     // deltas between two snapshots, and an offset cancels in a delta. Anything comparing a
     // snapshot against a kernel deadline needs the jiffy base instead, which is what
@@ -256,6 +259,7 @@ async fn serve(mut options: Options) -> Result<()> {
                         }
                     }
                 }
+                journal.tick(&published.read(), &decision, written + withheld);
                 if deadline.is_some_and(|at| tokio::time::Instant::now() >= at) {
                     eprintln!(
                         "loricad: {} ticks, {} full sweeps of {} slots, {} failed, \
