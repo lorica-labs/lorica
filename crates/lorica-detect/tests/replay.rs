@@ -121,6 +121,7 @@ struct Run {
     final_tier: u8,
     bursts: u64,
     burst_driven: u64,
+    mark_noop: u64,
     drops: u64,
 }
 
@@ -157,6 +158,7 @@ fn replay(f: &Fixture, cfg: Config, stride: usize) -> Run {
         final_tier: engine.current().rung(),
         bursts: m.bursts,
         burst_driven: m.burst_driven_ticks,
+        mark_noop: m.mark_noop_ticks,
         drops,
     };
     println!(
@@ -184,6 +186,34 @@ fn flash_crowd() {
         run.peak_tier
     );
     assert!(run.transitions <= TRANSITION_CEILING);
+}
+
+/// Rungs 0 to 2 chain on the same timing whether or not `bpf_qdisc` exists. Without it rung
+/// 1 marks nothing and says so in a metric; it is not skipped, because skipping it would
+/// make the same traffic reach a different rung on two hosts at the same instant.
+#[test]
+fn the_kernel_does_not_change_the_verdict() {
+    let f = fixture("flash_crowd");
+
+    let without = replay(&f, Config::default(), 1);
+    let with = replay(
+        &f,
+        Config {
+            qdisc_available: true,
+            ..Config::default()
+        },
+        1,
+    );
+
+    assert_eq!(without.transitions, with.transitions);
+    assert_eq!(without.peak_tier, with.peak_tier);
+    assert_eq!(without.final_tier, with.final_tier);
+    assert!(
+        without.mark_noop > 0 && with.mark_noop == 0,
+        "rung 1 was {} no-op ticks without a qdisc and {} with one",
+        without.mark_noop,
+        with.mark_noop
+    );
 }
 
 #[test]
