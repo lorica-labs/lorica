@@ -6,11 +6,16 @@
 
 #![no_std]
 
+pub mod blocklist;
 pub mod bucket;
 pub mod hash;
 pub mod ttl;
 pub mod wire;
 
+pub use blocklist::{
+    BLOCKLIST_TRIE_SYMBOL, CLASS24_BYTES, CLASS24_SYMBOL, Class24, OA_BYTES, OA_MAX_KEYS,
+    OA_PROBES, OA_SLOTS, OA_TABLE_SYMBOL, OaSlot,
+};
 pub use bucket::{
     BANK_SLOT_BYTES, BURST_MAX, BankLayout, Bucket, Charge, DEFAULT_BANK_BUCKETS,
     DRAIN_FRACTION_BITS, Drain, Rate, SHARE_SCALE, UNITS_PER_BYTE,
