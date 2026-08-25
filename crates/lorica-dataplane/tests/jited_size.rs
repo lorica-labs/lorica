@@ -69,7 +69,22 @@ use support::run::{load_raw_vectors, plain_object_path, xdp_program};
 /// vector word and so measured 6 152 — it stayed green while guarding a program nobody
 /// would ever load. A size assertion that measures the smallest reachable program is worse
 /// than no assertion, because it reads like one.
-const JITED_CEILING: u32 = 8_330;
+///
+/// **The raise for the flat blocklist, which is what the paragraph above called the last
+/// one.** Replacing the trie walk with a `/24` class table and sixteen unrolled Robin Hood
+/// probes costs **1 965 JITed bytes**: measured on 7.0.0-30, 9 537 with the trie still armed
+/// and the whole catalogue — the largest program the configuration space produces — against
+/// 7 572 before. On an IPv4-only blocklist in observation the trie is pruned and it is 8 995,
+/// which is the common case and not what a ceiling bounds. Ten percent over 9 537.
+///
+/// The sixteen probes are most of those bytes and they were not rounded up for comfort: the
+/// worst probe sequence measured over 1 048 450 keys at the maximum permitted load is 11, and
+/// the builder refuses to publish a snapshot that needs more than
+/// [`OA_PROBES`](lorica_common::blocklist::OA_PROBES). Cutting the constant to 12 would buy
+/// back roughly a quarter of the probe code and leave one probe of margin, which trades JITed
+/// bytes — a ceiling that can be re-argued with a number — against refusing an operator's
+/// legitimate blocklist. That is the wrong direction to economise in.
+const JITED_CEILING: u32 = 10_491;
 
 #[test]
 fn the_jited_program_stays_under_its_ceiling() {

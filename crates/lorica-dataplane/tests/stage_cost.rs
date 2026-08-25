@@ -56,7 +56,12 @@ const LEVELS: [(u32, &str); 9] = [
     (2, "parse"),
     (3, "clock read"),
     (4, "stage 2 ICMP"),
-    (5, "stage 3 LPM list"),
+    // Two structures answer stage 3 now: the flat class table and the probe sequence behind
+    // it, then the trie for what neither covers. They share one cutoff level on purpose —
+    // adding a level would renumber every one below it, and the two are not separable by a
+    // cutoff anyway because the second only runs on what the first sends it. Their costs are
+    // separated by `measure_lpm_depth`, whose four arms are built for exactly that.
+    (5, "stage 3 source list"),
     (6, "stage 4 fragments"),
     (7, "stage 5 uRPF"),
     (8, "stage 6 signatures"),

@@ -18,9 +18,35 @@
 //!
 //! **The lever is that these are `.bss` globals and not maps.** A global is reached by one
 //! `LDX` — no `bpf_map_lookup_elem`, not even the eight instructions of
-//! `array_map_gen_lookup` — and `aya` creates `.bss` maps `BPF_F_MMAPABLE`, so the agent
-//! rewrites them through `mmap` rather than one syscall per entry. The "three map lookups per
-//! packet" budget stops being the binding constraint for this stage.
+//! `array_map_gen_lookup`. Measured on the shipped object: the stage adds zero helper calls,
+//! and `helper_budget` still reads five static calls against a ceiling of six with
+//! `KFUNC_BUDGET == 0`. The "three map lookups per packet" budget stops being the binding
+//! constraint for this stage.
+//!
+//! **`aya` does not create `.bss` maps `BPF_F_MMAPABLE`, and the reload works anyway.** This
+//! module used to claim it did, on the strength of the design note this came from; `aya-obj`
+//! 0.3 maps `EbpfSectionKind::Bss` to `map_flags: 0` and gives a read-only flag to `.rodata`
+//! alone. What it does instead is materialise the whole section as an `ARRAY` of **one** entry
+//! whose value is the section — so both tables live in a single 20 MiB value at offsets 0 and
+//! `CLASS24_BYTES`, and a full reload is **one** `bpf_map_update_elem` rather than one per
+//! entry. The exit criterion the flat tables were for is met, by a different mechanism than
+//! the one that was predicted.
+//!
+//! Twenty MiB of `.bss` is accepted: `bpftool map create … value 20971520 entries 1` succeeds
+//! on 6.8.0-138 and on 7.0.0-30, and the loaded program shows
+//! `map_value(map=.bss,ks=4,vs=20971520)` in the verifier log. The `-E2BIG` from
+//! `array_map_alloc_check` past `KMALLOC_MAX_SIZE` does not materialise; 32 MiB is accepted
+//! too.
+//!
+//! **What is still open, and it is not a lookup problem.** One `bpf_map_update_elem` over a
+//! live 20 MiB value is a copy the packet path can read halfway through, and an eight-byte
+//! slot torn between its key and its tag is a verdict neither snapshot holds. Writing whole
+//! immutable snapshots, which the builder does, does not by itself make publishing them
+//! atomic. Two fixed tables plus an active index would be 40 MiB and past the budget the
+//! whole design is for; `ARRAY_OF_MAPS` turns the map pointer into a variable and loses the
+//! inlining that is the point. The candidate answer is **re-attachment** — a second program
+//! instance with fresh `.bss`, swapped with `XDP_FLAGS_REPLACE`, whose cost is already
+//! measured — and it is a decision to take with a number, not here.
 //!
 //! **Not free, and the calibration reserve is written here so nobody rounds it to zero.**
 //! The bounds check and the Spectre mask survive; an inlined array access has been published
@@ -180,8 +206,19 @@ pub const fn class24_shift(index: usize) -> u32 {
 /// Log2 of the slot count. Sized so a million keys sit at a load factor of 0.477.
 pub const OA_INDEX_BITS: u32 = 21;
 
-/// Slot count. A power of two, which is what makes the index mask below structural rather
-/// than a bounds check the program has to remember to write.
+/// Slot count. A power of two, so [`OA_INDEX_MASK`] takes any `u32` to a valid index.
+///
+/// **That does not make the mask structural, and this module used to claim it did.** A
+/// compile-time size is exactly what lets LLVM prove the mask redundant and delete it: on the
+/// shipped object it folded [`oa_index`] to `(h >> 11) ^ (h >> 27)`, proved the result under
+/// 2^21, and removed the `AND`. The 7.0 verifier propagates the bound through that `XOR` and
+/// accepts it; **6.8, which is this project's floor, loses it** — `R2_w=scalar()` and then
+/// `math between map_value pointer and register with unbounded min value is not allowed`.
+/// Every blocklist test was refused on the floor kernel while passing on 7.0.
+///
+/// The packet path therefore forces the mask to survive with a `read_volatile` barrier between
+/// the hash and the `AND`, once, before the unrolled probes. It made the object 109 JITed
+/// bytes *smaller*, LLVM having also stopped duplicating the shift chain.
 pub const OA_SLOTS: usize = 1 << OA_INDEX_BITS;
 
 /// Mask taking any `u32` to a valid slot index.
