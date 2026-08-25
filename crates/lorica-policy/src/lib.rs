@@ -5,10 +5,12 @@
 //! cannot honour has to reach the operator while they are reading the file, not fail
 //! silently under attack.
 
+pub mod blocklist;
 pub mod compile;
 pub mod config;
 pub mod profile;
 
+pub use blocklist::{BuildError, Snapshot, build};
 pub use compile::{CompileError, Compiled, Warning, compile};
 pub use config::Config;
 pub use profile::{MapSizes, MemlockModel, ProfileKind, REFERENCE_CPUS};
