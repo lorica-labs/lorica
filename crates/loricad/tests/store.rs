@@ -11,14 +11,16 @@
 #[path = "../src/store/state.rs"]
 #[allow(dead_code)]
 mod state;
+mod support;
 
 use std::{
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::Command,
     time::{Duration, Instant},
 };
 
 use state::{State, Tier};
+use support::{Scratch, filesystem, machine};
 
 /// Ticks measured, after a warm-up. Ten thousand is a hundred seconds of a 100 Hz agent, so
 /// the median is a median over a realistic stretch and not over a burst.
@@ -65,44 +67,9 @@ const DURABLE_TICKS: u64 = 1;
 /// crash is expected to cost.
 const LOST_TICKS: u64 = 3;
 
-fn directory(name: &str) -> PathBuf {
-    let path = std::env::temp_dir().join(format!("lorica-store-{name}-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&path);
-    std::fs::create_dir_all(&path).expect("cannot create the test directory");
-    path
-}
-
-fn machine() -> String {
-    std::fs::read_to_string("/proc/sys/kernel/hostname")
-        .map(|name| name.trim().to_string())
-        .unwrap_or_else(|_| "unknown".into())
-}
-
-/// The filesystem type a path sits on, from `/proc/mounts`, longest mount point wins.
-///
-/// Reported with the timings because without it they cannot be read. `/tmp` is tmpfs on
-/// carapace-dev, where a durable commit performs no device write at all — quoting its cost as
-/// an fsync would be wrong by whatever the disk would have charged.
-fn filesystem(path: &std::path::Path) -> String {
-    let mounts = match std::fs::read_to_string("/proc/mounts") {
-        Ok(text) => text,
-        Err(_) => return "unknown".into(),
-    };
-    let mut best = ("", "unknown");
-    for line in mounts.lines() {
-        let mut fields = line.split_whitespace();
-        let Some(point) = fields.nth(1) else { continue };
-        let Some(kind) = fields.next() else { continue };
-        if path.starts_with(point) && point.len() >= best.0.len() {
-            best = (point, kind);
-        }
-    }
-    best.1.into()
-}
-
 #[test]
 fn a_tick_writes_in_under_twenty_microseconds() {
-    let directory = directory("tick");
+    let directory = Scratch::new("store-tick");
     let mut store =
         State::open(&directory.join("state.redb"), CADENCE).expect("cannot open the state");
 
@@ -153,8 +120,8 @@ fn a_tick_writes_in_under_twenty_microseconds() {
          p50 {:.1} us, p99 {:.1} us, max {:.1} us, budget {} us; {} durable commits at \
          p50 {:.1} us, a factor of {:.0}",
         machine(),
-        directory.display(),
-        filesystem(&directory),
+        directory.path().display(),
+        filesystem(directory.path()),
         if cfg!(debug_assertions) {
             "unoptimised"
         } else {
@@ -187,7 +154,7 @@ fn a_crash_between_durable_commits_leaves_a_consistent_base() {
         crash(&PathBuf::from(path));
     }
 
-    let directory = directory("crash");
+    let directory = Scratch::new("store-crash");
     let database = directory.join("state.redb");
     let status = Command::new(std::env::current_exe().expect("cannot find the test binary"))
         .args([
@@ -224,7 +191,7 @@ fn a_crash_between_durable_commits_leaves_a_consistent_base() {
 
 /// The child. Hardens at a known tick, writes a few more without hardening, then dies without
 /// running a single destructor.
-fn crash(database: &std::path::Path) -> ! {
+fn crash(database: &Path) -> ! {
     let mut store = State::open(database, NEVER).expect("the child cannot open the state");
     store
         .record(Tier::Attached)
@@ -241,7 +208,7 @@ fn crash(database: &std::path::Path) -> ! {
 
 #[test]
 fn a_tier_change_hardens_and_a_tick_at_the_same_tier_does_not() {
-    let directory = directory("tier");
+    let directory = Scratch::new("store-tier");
     let mut store =
         State::open(&directory.join("state.redb"), NEVER).expect("cannot open the state");
 
