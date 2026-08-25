@@ -9,6 +9,7 @@
 mod alloc;
 mod control;
 mod enforce;
+mod journal;
 mod metrics;
 mod state;
 mod store;
