@@ -27,22 +27,23 @@ use support::{Scratch, filesystem, machine};
 const SAMPLES: usize = 10_000;
 const WARMUP: usize = 200;
 
-/// The assertion, per build profile, and both halves are measured rather than chosen.
+/// The assertion, per build profile, and every number in here was measured on carapace-dev.
 ///
-/// **20 us was the figure this was written against and it is not reachable here.** On
-/// carapace-dev, release, tmpfs, redb 2.6.3, the median non-durable commit is 37.6 us at
-/// [`CADENCE`] and 23.0 us at a cadence of 2, which is the floor of a redb write transaction
-/// on this machine: `begin_write`, `open_table`, one insert, `commit`. Reducing the tick to a
-/// single insert moved it by 1.2 us, so the cost is the transaction and not the data. 60 us is
-/// the measured median with margin for the 63 us p99, and it is 0.06 % of a 100 ms period.
+/// **20 us was the figure this was written against and it is not reachable.** Release, ext4,
+/// redb 2.6.3: the median non-durable commit is 45.4 us at [`CADENCE`] and the p99 is 81.1.
+/// On tmpfs, where there is no device write at all, it is 37.6 us at the same cadence and
+/// 23.0 at a cadence of 2 — so 23 us is the floor of a redb write transaction on this
+/// machine, and it is `begin_write`, `open_table`, `commit`, not the data: cutting the tick
+/// from two inserts to one moved it by 1.2 us. 100 us covers the measured p99 and is 0.1 % of
+/// a 100 ms period.
 ///
 /// The debug budget is separate because an unoptimised build measures rustc: the same tick
-/// costs 713 us there. One number for both profiles would be either unmeetable in debug or
+/// costs 496 us there. One number for both profiles would be either unmeetable in debug or
 /// vacuous in release, and `scripts/lab/kernel-tests.sh` builds debug.
 const BUDGET: Duration = if cfg!(debug_assertions) {
     Duration::from_micros(2_000)
 } else {
-    Duration::from_micros(60)
+    Duration::from_micros(100)
 };
 
 /// Cadence used where hardening is not what is being measured. Larger than any test's
@@ -53,9 +54,11 @@ const NEVER: u64 = u64::MAX;
 ///
 /// Deliberately not [`NEVER`], and the reason is a measurement. Every non-durable commit pins
 /// a parent state redb has to keep and later clear, so the *cheap* path gets more expensive
-/// the longer hardening is deferred: 23.0 us at a cadence of 2, 27.5 at 10, 37.6 at 100, and
-/// 79 with no hardening at all over ten thousand commits. The cadence bounds what a crash
-/// costs, and it also bounds what a tick costs.
+/// the longer hardening is deferred: on tmpfs, 23.0 us at a cadence of 2, 27.5 at 10, 37.6 at
+/// 100, and 79 with no hardening at all over ten thousand commits. The durable commit pays
+/// for the same backlog — 31.9 us, 100.4, 1051 across those cadences — so deferring hardening
+/// does not reduce the total work, it concentrates it. The cadence bounds what a crash costs
+/// and it also bounds what a tick costs.
 const CADENCE: u64 = 100;
 
 const CRASH_ENV: &str = "LORICA_STORE_CRASH_DB";

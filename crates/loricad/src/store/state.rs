@@ -1,13 +1,18 @@
 //! The mitigation state, and the one number that decides what persisting it costs.
 //!
 //! **`fsync` per tick is the trap of this project, and it dwarfs the choice of engine.**
-//! Measured: a `Durability::None` commit costs redb 7 us against SQLite's 15 us, so the
-//! engines are within a factor of two of each other. Hardening every one of those commits
-//! takes redb to 1448 us and SQLite to 2638 us — two hundred times more, on a tick whose
-//! whole budget is a fraction of a 100 ms period. Whatever engine is under this, the number
-//! that decides whether the agent is a source of jitter is [`State::harden_every`], not the
-//! name of the library. redb is here because it is one thread, no C dependency, 3 MiB of
-//! RSS and 17 us to open, which are all the reasons of a distant second place.
+//! Measured on carapace-dev, release, ext4, redb 2.6.3: a `Durability::None` commit costs
+//! 45.4 us at the p50 and a `Durability::Immediate` one costs 3487 us, a factor of 77 on the
+//! same code with one flag changed. No engine choice is worth a factor of 77, so the number
+//! that decides whether the agent is a source of jitter is [`State::harden_every`] and not
+//! the name of the library. redb is here for the reasons of a distant second place: one
+//! thread, no C dependency, a few MiB of RSS, and a `Database::create` measured in tens of
+//! microseconds.
+//!
+//! The figures this was written against were 7 us and 1448 us. Neither reproduces here; the
+//! floor of a redb write transaction on this machine is 23 us with the database on tmpfs, and
+//! the durable side is whatever the virtual disk charges for an `fsync`, which fio put at
+//! 3.16 ms on the measurement VM. The ratio survives, the absolute numbers do not.
 //!
 //! **A non-durable commit is still a commit.** `Durability::None` does not mean "maybe
 //! written": the write transaction is atomic either way, and a crash rolls the database
