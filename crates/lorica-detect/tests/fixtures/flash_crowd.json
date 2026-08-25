@@ -1,0 +1,36 @@
+{
+  "name": "flash_crowd",
+  "about": "A legitimate rush. A game server's player count multiplies in a couple of seconds: the bank fills, the shaper holds it, and not one packet is objectively invalid. The assertion is that no rung that refuses a packet is ever reached, because nothing here can be confirmed by an exact key or by an invalid packet.",
+  "magnitudes": "PARAMETERS, not measurements. This tree holds no traffic measurement to draw on: the numbers it does hold are per-packet costs (81 ns to 243 ns of pipeline). The steady state is set at 6 000 over-budget packets per second and the rush at eight times that, and the bank is taken from 40 to 300 loaded buckets of 1024 (DEFAULT_BANK_BUCKETS is read from lorica-common, never copied). Any of these may be re-baselined against a real capture without changing what the fixture asserts.",
+  "period_ms": 100,
+  "steps": [
+    {
+      "repeat": 30,
+      "note": "steady state, three seconds of it",
+      "loaded_buckets": 40,
+      "level_kib": 18,
+      "counters": { "bucket_over_budget": 6000, "bucket_marked": 9000 }
+    },
+    {
+      "repeat": 10,
+      "note": "the rush arrives, one second in",
+      "loaded_buckets": 150,
+      "level_kib": 24,
+      "counters": { "bucket_over_budget": 24000, "bucket_marked": 41000 }
+    },
+    {
+      "repeat": 10,
+      "note": "second second: the bank is filling",
+      "loaded_buckets": 300,
+      "level_kib": 30,
+      "counters": { "bucket_over_budget": 48000, "bucket_marked": 78000 }
+    },
+    {
+      "repeat": 120,
+      "note": "twelve seconds of plateau. The shaper holds the level, so the bank stops rising and no link saturation is inferred. Still zero invalid packets, still no unified-list entry taking hits.",
+      "loaded_buckets": 300,
+      "level_kib": 30,
+      "counters": { "bucket_over_budget": 48000, "bucket_marked": 78000 }
+    }
+  ]
+}

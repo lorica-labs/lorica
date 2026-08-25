@@ -1,0 +1,29 @@
+{
+  "name": "sub_second_burst",
+  "about": "A burst-flood 300 ms long, placed inside one second and nowhere near its edges. Replayed twice from this one file: at the 100 ms cadence and at the 1 s cadence. The 1 s cadence spreads the same packets over 3.3 times the interval and reads 3.3 times less rate, which is the whole reason there are two cadences.",
+  "magnitudes": "PARAMETERS. The burst is set at 1 200 000 over-budget packets per second for 300 ms, over a steady state of 6 000 per second, and the engine's burst threshold defaults to 500 000 per second. The arithmetic that matters is a ratio and not the absolute size: 300 ms of it averaged over 1 s is 360 000 per second, which is under the threshold, while any 100 ms of it is 1 200 000, which is over. Re-baselining the threshold against a real link moves both numbers together.",
+  "period_ms": 100,
+  "steps": [
+    {
+      "repeat": 12,
+      "note": "steady state. Twelve periods, so the burst below starts inside the second period and ends inside it.",
+      "loaded_buckets": 40,
+      "level_kib": 18,
+      "counters": { "bucket_over_budget": 6000 }
+    },
+    {
+      "repeat": 3,
+      "note": "the burst: 300 ms, entirely inside one 1 s window",
+      "loaded_buckets": 620,
+      "level_kib": 46,
+      "counters": { "bucket_over_budget": 1200000 }
+    },
+    {
+      "repeat": 25,
+      "note": "back to steady state, and the bank drains back",
+      "loaded_buckets": 40,
+      "level_kib": 18,
+      "counters": { "bucket_over_budget": 6000 }
+    }
+  ]
+}

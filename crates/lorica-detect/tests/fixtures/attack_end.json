@@ -1,0 +1,47 @@
+{
+  "name": "attack_end",
+  "about": "One sustained flood, then it stops. Nothing intervenes afterwards: no operator, no external clock, no TTL expiry. The descent has to happen because the descent is implemented, which is the assertion — the final rung is 0.",
+  "magnitudes": "PARAMETERS. The flood is set at 900 000 over-budget packets per second for eighteen seconds, with 70 000 amplified-NTP signature matches per second and the entry at 198.51.100.42 taking 45 000 hits per second, then forty seconds of the same steady state the other fixtures use. Eighteen seconds is long enough for the ladder to climb past the rungs that refuse packets; forty is more than the descent needs, deliberately, so the assertion is about the descent existing and not about its exact length.",
+  "period_ms": 100,
+  "entry_v4": [198, 51, 100, 42],
+  "steps": [
+    {
+      "repeat": 20,
+      "note": "two seconds of steady state first, so the baseline is not the flood",
+      "loaded_buckets": 40,
+      "level_kib": 18,
+      "counters": { "bucket_over_budget": 6000 }
+    },
+    {
+      "repeat": 40,
+      "note": "the flood arrives and the bank fills for four seconds",
+      "loaded_buckets": 560,
+      "level_kib": 34,
+      "entry_per_sec": 45000,
+      "counters": {
+        "bucket_over_budget": 900000,
+        "signature_amp_ntp": 70000,
+        "lpm_drop_hit": 45000
+      }
+    },
+    {
+      "repeat": 140,
+      "note": "fourteen more seconds at the same level. The bank has stopped rising, so no link saturation is inferred and the ladder is driven by the confirmed key alone.",
+      "loaded_buckets": 560,
+      "level_kib": 34,
+      "entry_per_sec": 45000,
+      "counters": {
+        "bucket_over_budget": 900000,
+        "signature_amp_ntp": 70000,
+        "lpm_drop_hit": 45000
+      }
+    },
+    {
+      "repeat": 400,
+      "note": "it stops. Forty seconds, nothing but the steady state, no intervention.",
+      "loaded_buckets": 40,
+      "level_kib": 18,
+      "counters": { "bucket_over_budget": 6000 }
+    }
+  ]
+}
