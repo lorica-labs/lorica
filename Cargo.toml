@@ -8,6 +8,7 @@ members = [
     "crates/lorica-escalate",
     "crates/loricad",
     "crates/lorica-ctl",
+    "crates/lorica-export",
 ]
 # lorica-ebpf is a workspace of its own, not a member. bpfel-unknown-none is a
 # tier 3 target: it needs nightly and -Z build-std=core, and a toolchain cannot be
@@ -32,13 +33,24 @@ anyhow = "1.0.104"
 aya = "0.14.0"
 aya-obj = "0.3.0"
 libc = "0.2.189"
+# The blocklist is mapped, never read into a buffer: 80 MiB of file-backed clean pages the
+# kernel can evict, instead of 80 MiB of anonymous heap the allocator holds after the peak.
+memmap2 = "0.9"
 object = "0.39.1"
+# One thread, no C dependency, 3 MiB of RSS and 17 us to open. The engine matters far less
+# than the hardening cadence — 7 us per non-durable commit against 1448 with an fsync — so
+# the cheap embedded one wins by default.
+redb = "2.6"
 serde = { version = "1.0.229", features = ["derive"] }
 thiserror = "2.0.20"
 tokio = { version = "1.53.1", default-features = false }
 toml = "1.1.4"
 tracing = "0.1.44"
 tracing-subscriber = "0.3.23"
+# Casting the mapping in place. The alternative is a hand-written transmute plus a hand-
+# written alignment check, and the derive refuses a struct with implicit padding, which is
+# the mistake a hand-written one would not catch.
+zerocopy = { version = "0.8", features = ["derive"] }
 
 [profile.release]
 opt-level = 3

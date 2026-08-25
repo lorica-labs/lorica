@@ -464,6 +464,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "lorica-export"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "lorica-common",
+ "memmap2",
+ "zerocopy",
+]
+
+[[package]]
 name = "lorica-policy"
 version = "0.1.0"
 dependencies = [
@@ -484,9 +494,12 @@ dependencies = [
  "lorica-detect",
  "lorica-escalate",
  "lorica-policy",
+ "memmap2",
+ "redb",
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "zerocopy",
 ]
 
 [[package]]
@@ -494,6 +507,15 @@ name = "memchr"
 version = "2.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
+
+[[package]]
+name = "memmap2"
+version = "0.9.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d1219ed1b7f229ee7104d281dd01d6802fe28bb6e95d292942c4daacdeb798c0"
+dependencies = [
+ "libc",
+]
 
 [[package]]
 name = "miniz_oxide"
@@ -714,6 +736,15 @@ checksum = "22e18b0f0062d30d4230b2e85ff77fdfe4326feb054b9783a3460d8435c8ab91"
 dependencies = [
  "crossbeam-deque",
  "crossbeam-utils",
+]
+
+[[package]]
+name = "redb"
+version = "2.6.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8eca1e9d98d5a7e9002d0013e18d5a9b000aee942eb134883a82f06ebffb6c01"
+dependencies = [
+ "libc",
 ]
 
 [[package]]

@@ -8,6 +8,7 @@
 
 mod alloc;
 mod control;
+mod store;
 mod tick;
 
 use std::{
