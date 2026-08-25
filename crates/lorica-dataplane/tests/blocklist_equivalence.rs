@@ -300,7 +300,7 @@ fn compare(
     });
 
     let flat = flat_program(&snapshot);
-    let trie = trie_program(&config);
+    let trie = trie_program(config);
 
     let mut compared = 0usize;
     let mut classes = [0usize; 4];
