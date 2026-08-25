@@ -8,6 +8,7 @@
 
 mod alloc;
 mod control;
+mod metrics;
 mod tick;
 
 use std::{
@@ -32,7 +33,7 @@ const DEFAULT_SOCKET: &str = "/run/lorica/control.sock";
 const PROGRAM: &str = "lorica_xdp";
 
 const USAGE: &str = "usage: loricad --object PATH [--socket PATH] [--counters N] \
-                     [--hz N] [--batch N] [--seconds N]";
+                     [--hz N] [--batch N] [--seconds N] [--metrics ADDR|off]";
 
 struct Options {
     object: PathBuf,
@@ -52,6 +53,9 @@ struct Options {
     /// Seconds to run before exiting. Zero runs until signalled, which is what a real
     /// agent does; a measurement wants a bound.
     seconds: u64,
+    /// Where `/metrics` listens, or `off`. Loopback by default: the endpoint serialises the
+    /// whole registry per call, so exposing it off-host is an address somebody types.
+    metrics: String,
 }
 
 fn main() -> ExitCode {
@@ -73,6 +77,7 @@ fn parse_options() -> Result<Options> {
         batch: 1_000,
         sweep_every: 1,
         seconds: 0,
+        metrics: metrics::serve::DEFAULT_ADDR.to_owned(),
     };
     let mut args = std::env::args().skip(1);
     while let Some(flag) = args.next() {
@@ -85,6 +90,7 @@ fn parse_options() -> Result<Options> {
             "--batch" => options.batch = value()?.parse()?,
             "--sweep-every" => options.sweep_every = value()?.parse()?,
             "--seconds" => options.seconds = value()?.parse()?,
+            "--metrics" => options.metrics = value()?,
             other => bail!("unknown argument {other}\n{USAGE}"),
         }
     }
@@ -136,6 +142,17 @@ async fn serve(options: Options) -> Result<()> {
     let listener = control::listen(&options.socket)
         .with_context(|| format!("cannot listen on {}", options.socket.display()))?;
 
+    let scrapes = (options.metrics != "off")
+        .then(|| metrics::serve::bind(&options.metrics))
+        .transpose()
+        .with_context(|| format!("cannot listen on {}", options.metrics))?;
+    // Built here so the registry's one allocation per series is behind the settled count
+    // below. A scrape after that allocates nothing but the growth of its output buffer.
+    let mut exporter = metrics::Exporter::new();
+    // Nothing measures top talkers yet, so the ranks render at zero. The ring is passed
+    // rather than left out because its bound is what the series count rests on.
+    let talkers = metrics::Talkers::default();
+
     let period = Duration::from_micros(1_000_000 / u64::from(options.hz));
     let mut timer = tokio::time::interval(period);
     // Delay, never Burst. A late tick under attack must not be followed by a burst of
@@ -179,31 +196,58 @@ async fn serve(options: Options) -> Result<()> {
             }
             accepted = listener.accept() => {
                 let (stream, _) = accepted.context("accepting on the control socket failed")?;
-                let snapshot = control::Snapshot {
-                    counter_slots: sweep.slots(),
-                    ticks: sweep.ticks(),
-                    full_sweeps: sweep.full_sweeps(),
-                    sweep_every: sweep.every(),
-                    slot_reads_per_second: sweep.slot_reads_per_second(options.hz),
-                    counted: sweep.counted(),
-                    named_counted: sweep.named_counted(),
-                    period_ms: period.as_millis() as u64,
-                    attached: false,
-                    // The rate was measured once at startup; the jiffy is read here,
-                    // because the number worth publishing is the one the deadlines are
-                    // being compared against at the moment somebody asks. A zero is a
-                    // probe that stopped answering, which no running counter can be.
-                    clock: Clock {
-                        jiffies: clock::read(ebpf).unwrap_or(0),
-                        ..clock
-                    },
-                };
+                let snapshot = snapshot(&sweep, &options, period, clock, ebpf);
                 // Awaited rather than spawned. One client at a time is the whole protocol,
                 // and a task per connection would let a slow reader hold the tick behind
                 // it on a single-threaded runtime without anybody noticing.
                 let _ = control::serve(stream, snapshot).await;
             }
+            scraped = metrics::serve::accept(scrapes.as_ref()) => {
+                let stream = scraped.context("accepting a scrape failed")?;
+                let snapshot = snapshot(&sweep, &options, period, clock, ebpf);
+                let source = metrics::Source {
+                    snapshot: &snapshot,
+                    // Empty: the sweep sums the slots it reads and keeps no per-stage
+                    // total, so every named counter renders at zero for now.
+                    stages: &[],
+                    talkers: &talkers,
+                };
+                // Awaited for the reason above, and more sharply: a scrape serialises the
+                // whole registry, so a scraper that stops reading must not be able to sit
+                // in front of the tick.
+                let _ = metrics::serve::respond(stream, &mut exporter, &source).await;
+            }
         }
+    }
+}
+
+/// What the agent knows about itself, for whichever of the two listeners asked.
+///
+/// The clock rate was measured once at startup; the jiffy is read here, because the number
+/// worth publishing is the one the deadlines are being compared against at the moment
+/// somebody asks. A zero is a probe that stopped answering, which no running counter can
+/// be.
+fn snapshot(
+    sweep: &tick::Sweep,
+    options: &Options,
+    period: Duration,
+    clock: Clock,
+    ebpf: &'static Ebpf,
+) -> control::Snapshot {
+    control::Snapshot {
+        counter_slots: sweep.slots(),
+        ticks: sweep.ticks(),
+        full_sweeps: sweep.full_sweeps(),
+        sweep_every: sweep.every(),
+        slot_reads_per_second: sweep.slot_reads_per_second(options.hz),
+        counted: sweep.counted(),
+        named_counted: sweep.named_counted(),
+        period_ms: period.as_millis() as u64,
+        attached: false,
+        clock: Clock {
+            jiffies: clock::read(ebpf).unwrap_or(0),
+            ..clock
+        },
     }
 }
 
