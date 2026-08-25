@@ -461,6 +461,7 @@ name = "lorica-escalate"
 version = "0.1.0"
 dependencies = [
  "lorica-common",
+ "thiserror",
 ]
 
 [[package]]
