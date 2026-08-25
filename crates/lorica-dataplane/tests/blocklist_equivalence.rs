@@ -595,9 +595,13 @@ fn a_full_reload_is_one_write_of_the_section() {
         layout.bytes, layout.class24_at, layout.oa_at, before.keys, after.keys
     );
 
+    // Run unconditionally and assert conditionally. `test_run` is itself a `bpf` call, so a
+    // verification that happened only in the reload arm would put itself in the difference —
+    // it read as two calls per reload before this line was moved out of the branch.
+    let answer = prog.run(&pkt);
     if reloads > 0 {
         assert_eq!(
-            prog.run(&pkt),
+            answer,
             XdpAction::Pass,
             "{} still drops after the section was rewritten with a snapshot that allows it, \
              so the write did not reach the program",
