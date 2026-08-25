@@ -17,6 +17,14 @@
 //! bits of a 32-bit address and a slot key is a `u32`, so an IPv6 source falls through to the
 //! trie, which is now most of what the trie is for.
 //!
+//! **What the unrolling costs, measured on the object that ships.** 9 537 JITed bytes with the
+//! whole signature catalogue armed and the trie kept, 8 995 with the trie dropped, against
+//! 7 572 recorded for the program before this stage and a ceiling of 8 330 in
+//! `tests/jited_size.rs`. So sixteen unrolled steps put the largest reachable program over
+//! that ceiling by 1 207 bytes and the common configuration over it by 665. The ceiling is
+//! left standing red on purpose: it is a line somebody decides in a diff, not one this stage
+//! raises for itself.
+//!
 //! **The probe sequence is written out and never looped.** Sixteen steps, one per
 //! [`OA_PROBES`], because a loop bounded by anything the verifier reads as a variable
 //! multiplies its state space by the trip count for a bound that is known at build time
@@ -109,7 +117,21 @@ const fn verdict(action: Option<Action>) -> Outcome {
 #[inline(always)]
 fn probe(key: u32) -> Option<Action> {
     let table = &raw const OA_TABLE as *const OaSlot;
-    let mut index = oa_index(key);
+
+    // The barrier is the whole difference between loading on the 6.8 floor and not, and it is
+    // here because the mask alone was **measured** to be insufficient rather than assumed to
+    // be enough. LLVM folds `oa_index` into `(h >> 11) ^ (h >> 27)`, proves the result is
+    // under 2^21, and deletes the `AND` that made it safe — trap 3 of this program's history,
+    // again. 7.0 follows the reasoning; 6.8 loses the bound at that final `XOR`, reports the
+    // register as `scalar()` and refuses with `math between map_value pointer and register
+    // with unbounded min value is not allowed`. A volatile read through the stack is what
+    // LLVM may not see across, so the literal `AND` survives into the object and the verifier
+    // reads a bound off it. One store and one load, once, ahead of sixteen steps that need no
+    // barrier of their own: `oa_step` adds one before masking, so its `AND` is never provably
+    // redundant.
+    let home = oa_index(key);
+    // SAFETY: a volatile read of a live local of this frame.
+    let mut index = unsafe { core::ptr::read_volatile(&home) } & OA_INDEX_MASK;
 
     // One step per literal, and the count checked against the constant the builder
     // enforces: a sequence shorter than OA_PROBES would silently miss keys the builder
