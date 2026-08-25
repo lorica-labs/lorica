@@ -127,9 +127,9 @@ const SCHEMA: &str = "message journal_second {
 ///
 /// **One row group per journal file, which is what rotation already bounds.** A row group is
 /// held in memory until it is written, so its size has to be bounded by something; the
-/// alternative is a row count picked here, which would be a second bound competing with the
-/// one the agent's `--journal-limit` already sets. The seven columns are built as seven
-/// vectors of one journal file's records, which is a few megabytes at any sane limit.
+/// alternative is a row count chosen here, which would be a second bound competing with the
+/// rotation limit the writer was given. The seven columns are built as seven vectors of one
+/// journal file's records, which is a few megabytes at any sane limit.
 fn parquet(input: &Path, output: &Path) -> Result<()> {
     let paths = rotate::files(input)?;
     if paths.is_empty() {
