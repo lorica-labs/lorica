@@ -9,9 +9,16 @@ Use GitHub's private vulnerability reporting on
 <https://github.com/lorica-labs/lorica> — the *Security* tab, *Report a vulnerability*. It
 opens a private thread with the maintainers and needs no prior contact.
 
-TODO(human): a security contact address, if one is to be offered beside the GitHub channel.
-TODO(human): the response window and the coordinated-disclosure window you want to commit
-to. No number is written here because a promise nobody measured is worse than no promise.
+TODO(human): a security contact address, for reporters without a GitHub account.
+
+**What we commit to.** An acknowledgement within **7 days**, and coordinated disclosure
+within **90 days** of that acknowledgement — the interval Project Zero set and most of this
+ecosystem follows. If a fix needs longer we will say so before the ninetieth day rather than
+after it, and you are free to publish on that day whatever we have managed.
+
+Two things that shorten it: a vulnerability already being exploited is disclosed as soon as
+there is something an operator can do, and a report we cannot reproduce is closed with what
+we tried rather than left open silently.
 
 Please include what you would want to receive: the kernel release, how the agent was
 started, and the smallest input that shows the problem. If the report involves a crafted
