@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # What a blocklist reload costs: text to binary once, then the mapped load twice.
 #
-#   measure-blocklist-reload.sh --entries N --out DIR [--keep]
+#   measure-blocklist-reload.sh --entries N --out DIR [--work DIR] [--keep]
 #
 # The conversion is the expensive half and it runs off the agent's startup path, so its
 # peak RSS is measured and not budgeted. The load is the half the agent pays for, and it
@@ -9,10 +9,9 @@
 # page cache. Both numbers are reported; neither is a substitute for the other.
 #
 # Runs on the machine under measurement. --entries 10000000 writes about 180 MB of text
-# and 80 MB of binary, so check the disk before starting it on a shared VM. Entries are
-# generated at a stride of 397 through the address space; past about 10.8 million the
-# stride wraps and lorica-export refuses the duplicate, which is a real failure and not a
-# limit of this script.
+# and 80 MB of binary; the space is checked before anything is written. Addresses are
+# generated at a stride of 397, which is odd and therefore coprime with 2^32, so they stay
+# distinct however far the stride wraps and the exporter never sees a duplicate.
 #
 # Every extracted value is checked before it is used, and the result file is written last.
 # A harness that can exit 0 without having measured invalidates every green result it ever
@@ -26,11 +25,17 @@ ENTRIES=0
 OUT=""
 KEEP=0
 STRIDE=397
+# Not /tmp, and this was caught by the first smoke run of this script. /tmp is tmpfs on the
+# lab machines, a mapping of a tmpfs file is shmem, and shmem is dirty by nature: the same
+# 1.6 MB list reported 1568 KB of Private_Dirty from /tmp and 4 KB from /var/tmp. /var/tmp is
+# the directory whose definition is that it survives a reboot, so it is on a disk.
+WORK=/var/tmp
 
 while [ $# -gt 0 ]; do
     case $1 in
         --entries) ENTRIES=$2; shift 2 ;;
         --out)     OUT=$2; shift 2 ;;
+        --work)    WORK=$2; shift 2 ;;
         --keep)    KEEP=1; shift ;;
         -h|--help) sed -n '2,20p' "$0"; exit 0 ;;
         *) echo "unknown argument: $1" >&2; exit 2 ;;
@@ -58,16 +63,23 @@ done
 
 mkdir -p "$OUT" || die "cannot create $OUT"
 
+[ -d "$WORK" ] || die "$WORK does not exist; give --work a disk-backed directory"
+work_fs=$(stat -f -c %T "$WORK")
+[ -n "$work_fs" ] || die "cannot read the filesystem type of $WORK"
+[ "$work_fs" != tmpfs ] \
+    || die "$WORK is tmpfs, and a blocklist mapped from tmpfs is shmem: the page accounting \
+this script reports would say the agent owns the whole file"
+
 binary_bytes=$((16 + 8 * ENTRIES))
 # Text at 18 bytes a line is the shape of a dotted quad plus /32 plus deny; the factor of
 # two on top covers the exporter's own file and leaves the disk something.
 needed_kb=$(( (binary_bytes * 2 + ENTRIES * 18) / 1024 + 524288 ))
-avail_kb=$(df -Pk . | awk 'NR == 2 { print $4 }')
-number "the available space on the working filesystem" "$avail_kb"
+avail_kb=$(df -Pk "$WORK" | awk 'NR == 2 { print $4 }')
+number "the available space on $WORK" "$avail_kb"
 [ "$avail_kb" -ge "$needed_kb" ] \
-    || die "this run needs about $needed_kb KB and the filesystem has $avail_kb KB free"
+    || die "this run needs about $needed_kb KB and $WORK has $avail_kb KB free"
 
-work=$(mktemp -d) || die "cannot create a working directory"
+work=$(mktemp -d -p "$WORK") || die "cannot create a working directory under $WORK"
 cleanup() { [ "$KEEP" -eq 1 ] || rm -rf "$work"; }
 trap cleanup EXIT
 
@@ -166,6 +178,7 @@ cat > "$result" <<EOF
   "captured_utc": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
   "host": "$(hostname)",
   "environment": "$(basename "$env_file")",
+  "work_filesystem": "$work_fs",
   "entries": $ENTRIES,
   "text_bytes": $list_bytes,
   "binary_bytes": $got_bytes,
