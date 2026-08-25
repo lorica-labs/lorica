@@ -4,15 +4,32 @@ version = "0.1.0"
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-rust-version.workspace = true
+# Not the workspace's 1.85. The AVX-512 path in src/cardinality/scan.rs calls intrinsics
+# that stabilised in 1.89, and a manifest that claimed 1.85 would be claiming a build that
+# does not exist. Stated here rather than raised for the whole workspace: the other crates
+# still build on 1.85 and nothing is gained by moving them.
+rust-version = "1.89"
 
 [dependencies]
 lorica-common.workspace = true
+zerocopy.workspace = true
 
 # Test-only. The fixtures in tests/fixtures are JSON and the replay reads them; the crate
 # itself performs no I/O and must not carry a serialization dependency into the agent.
 # serde is the workspace's; serde_json is declared here rather than in the workspace so the
 # root manifest stays untouched.
 [dev-dependencies]
+criterion = "0.7"
 serde = { workspace = true }
 serde_json = "1.0"
+# The equivalence test needs a buffer aligned for `u64` to hand the view, and a `Vec<u8>`
+# is aligned to one byte: whether the view's alignment check fires would otherwise depend
+# on what the allocator happened to return.
+zerocopy.workspace = true
+
+# The scan is userspace arithmetic over a buffer, so an ordinary harness measures it and
+# the metrology correction that applies to `BPF_PROG_TEST_RUN` does not reach here.
+# Nanoseconds published from this bench are nanoseconds.
+[[bench]]
+name = "scan"
+harness = false

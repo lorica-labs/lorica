@@ -54,9 +54,14 @@ tokio = { version = "1.53.1", default-features = false }
 toml = "1.1.4"
 tracing = "0.1.44"
 tracing-subscriber = "0.3.23"
-# Casting the mapping in place. The alternative is a hand-written transmute plus a hand-
-# written alignment check, and the derive refuses a struct with implicit padding, which is
-# the mistake a hand-written one would not catch.
+# Two consumers, one declaration. The blocklist loader casts an mmapped file in place;
+# the cardinality scan casts a batch-read buffer to `[u64]`, which
+# `slice::from_raw_parts` on a pointer whose alignment comes from a syscall cannot be.
+# `derive` is on because the loader needs it and it is the feature that earns itself:
+# it refuses a struct with implicit padding, which is exactly the mistake a
+# hand-written transmute plus a hand-written alignment check would not catch. It costs
+# a proc-macro in the build graph; without it `cargo tree -e no-dev` showed the crate
+# arriving with no transitive dependency at all.
 zerocopy = { version = "0.8", features = ["derive"] }
 
 [profile.release]
