@@ -269,11 +269,15 @@ unsafe fn avx512(cur: &[u64], prev: &[u64], floor: u64) -> Reduction {
 /// AArch64 NEON, where the register holds two lanes rather than four or eight — and where
 /// the unsigned compares AVX2 lacks are all present, so no bias trick is needed.
 ///
-/// A safe function, unlike the two above: NEON is baseline on every `aarch64` target, so
-/// there is no feature to enable and no precondition for a caller to hold. Only the loads
-/// are unsafe, and their bound is checked here.
+/// `#[target_feature(enable = "neon")]` even though NEON is baseline on every `aarch64`
+/// target, because the compiler does not accept that as a reason: "the neon target feature
+/// being enabled in the build configuration does not remove the requirement to list it in
+/// `#[target_feature]`". This function was written without the attribute and would not have
+/// compiled for any ARM host — `cargo clippy --target aarch64-unknown-linux-gnu` is what
+/// found that on an x86 development machine, and it is the only thing that can.
 #[cfg(target_arch = "aarch64")]
-fn neon(cur: &[u64], prev: &[u64], floor: u64) -> Reduction {
+#[target_feature(enable = "neon")]
+unsafe fn neon(cur: &[u64], prev: &[u64], floor: u64) -> Reduction {
     use core::arch::aarch64::{
         vaddq_u64, vandq_u64, vbslq_u64, vcgeq_u64, vcgtq_u64, vdupq_n_u64, vgetq_lane_u64,
         vld1q_u64, vsubq_u64,
@@ -307,11 +311,12 @@ fn neon(cur: &[u64], prev: &[u64], floor: u64) -> Reduction {
         hot = vbslq_u64(vcgtq_u64(d, hot), d, hot);
     }
 
-    let lane_sum = |v| vgetq_lane_u64::<0>(v).wrapping_add(vgetq_lane_u64::<1>(v));
+    // Extracted lane by lane rather than through a closure: a closure inside a
+    // `#[target_feature]` function does not inherit the feature.
     let mut out = Reduction {
-        active: lane_sum(active) as u32,
+        active: vgetq_lane_u64::<0>(active).wrapping_add(vgetq_lane_u64::<1>(active)) as u32,
         hottest: vgetq_lane_u64::<0>(hot).max(vgetq_lane_u64::<1>(hot)),
-        total: lane_sum(total),
+        total: vgetq_lane_u64::<0>(total).wrapping_add(vgetq_lane_u64::<1>(total)),
     };
     let done = chunks * LANES;
     fold(&mut out, &cur[done..], &prev[done..], floor);
@@ -342,10 +347,12 @@ fn avx512_reduce(cur: &[u64], prev: &[u64], floor: u64) -> Option<Reduction> {
 
 fn neon_reduce(cur: &[u64], prev: &[u64], floor: u64) -> Option<Reduction> {
     #[cfg(target_arch = "aarch64")]
-    return Some(neon(cur, prev, floor));
-    #[cfg(not(target_arch = "aarch64"))]
-    {
-        let _ = (cur, prev, floor);
-        None
+    if std::arch::is_aarch64_feature_detected!("neon") {
+        // SAFETY: the branch is the precondition. `neon` is the only feature the function
+        // enables, and it was just detected — detected rather than assumed from the target,
+        // so this reads the same as the two x86 paths above.
+        return Some(unsafe { neon(cur, prev, floor) });
     }
+    let _ = (cur, prev, floor);
+    None
 }
