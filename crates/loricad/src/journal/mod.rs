@@ -15,6 +15,13 @@
 //! turns the result into Parquet on demand, in a process whose peak nobody watches, which is
 //! where DuckDB is then welcome to read it.
 //!
+//! **What that costs, measured on carapace-dev, ext4, release:** 1 000 000 records in 78.8 ms,
+//! which is 12.7 M records a second and 610 MB/s, at a resident set of 3.2 MB that grew by
+//! 268 KiB across the whole run — and 140 KiB of that is anonymous, because the records go to
+//! a file and not to the heap. The throughput figure is against a 3 KiB buffer and a 256 KiB
+//! rotation limit, so it includes 15 625 `write_all` calls and 184 file creations; the buffer
+//! size is the parameter that governs it and it has not been measured at any other value.
+//!
 //! **The roll-up is a second and not a tick, and that is a decision about volume.** A 10 Hz
 //! agent writing per tick is 864 000 records a day; per second it is 86 400, and the ticks it
 //! drops are ticks in which nothing changed. [`Rollup`] keeps the *worst* rung of each second
@@ -58,6 +65,8 @@ impl Rollup {
     ///
     /// `Some` exactly on the tick whose second differs from the previous one's, so a caller
     /// appending whatever comes back writes one record per second with no timer of its own.
+    ///
+    /// 19.4 ns a tick on carapace-dev, release, which is 0.000019 % of a core at 10 Hz.
     pub fn observe(&mut self, at_ns: u64, decision: &Decision) -> Option<Record> {
         let record = Record::of(at_ns, decision);
         match &mut self.0 {

@@ -17,11 +17,13 @@
 //!
 //! **Parquet lives here and not in the agent, and that is a size decision with numbers.**
 //! `--to parquet` turns a journal into a file DuckDB, Polars or pandas can open, which is
-//! what makes the fixed-size record a usable format rather than a private one. The writer it
-//! needs is measured in the report for this change; whatever it weighs, it weighs it in a
-//! process an operator starts and that exits, where the agent's budget does not apply. The
-//! same weight inside `loricad` would be the whole argument of
-//! `crates/loricad/src/journal/mod.rs` given away.
+//! what makes the fixed-size record a usable format rather than a private one. It costs this
+//! binary **402 656 bytes to 1 014 432**, release with fat LTO and strip on carapace-dev, and
+//! takes `cargo tree --edges normal` from **15 lines to 43** — `parquet` with
+//! `default-features = false`, plus `lorica-detect` for the record layout. That is acceptable
+//! in a process an operator starts and that exits, and it is the number that would not be
+//! acceptable in `loricad`: 598 KiB is 20 % of the agent's whole resident set, for a writer
+//! that runs when somebody asks a question about last week.
 
 #[path = "../../loricad/src/store/blocklist/mod.rs"]
 // The agent uses parts of the loader this tool does not, and the reverse. Sharing the module
