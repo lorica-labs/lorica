@@ -94,7 +94,7 @@ exercise() {
     export LORICA_PERF=$PERF
 
     exc_file=$(mktemp)
-    { sudo -n "$PERF" stat -e xdp:xdp_exception -a -- bash "$STAGE/target-run.sh"; } \
+    { sudo -n --preserve-env=LORICA_PERF "$PERF" stat -e xdp:xdp_exception -a -- bash "$STAGE/target-run.sh"; } \
         2>"$exc_file" || status=1
     cat "$exc_file" >&2
     exc=$(awk '/xdp:xdp_exception/ {gsub(/,/, "", $1); print $1; exit}' "$exc_file")
@@ -159,8 +159,16 @@ for spec in "${VERSIONS[@]}"; do
     else
         boot=${given:-v$want}
         printf '\n=== booting %s under virtme-ng\n' "$boot"
-        vng --run "$boot" --exec "bash $PWD/scripts/lab/kernel-matrix.sh --ebpf-features $EBPF_FEATURES --exercise $want"
-        rc=$?
+        guest=$(mktemp)
+        vng --run "$boot" --exec "bash $PWD/scripts/lab/kernel-matrix.sh --ebpf-features $EBPF_FEATURES --exercise $want" 2>&1 | tee "$guest"
+        rc=${PIPESTATUS[0]}
+        # The exercise prints one marker line before it does anything else, so its absence
+        # means the guest never ran and there was no kernel to boot. That is unobtained and
+        # not a failure, and until now the two were reported the same because virtme-ng exits
+        # nonzero for both. v7.0 on a hosted runner is the case that showed it: the archive
+        # has no such build, and the matrix called it a failed kernel.
+        grep -q "=== $want on " "$guest" || { rc=5; reason="virtme-ng obtained no kernel for $boot"; }
+        rm -f "$guest"
         # virtme-ng exits nonzero both when the guest command failed and when it had no
         # kernel to boot, so a failure here is reported as a failure, never as a pass.
     fi

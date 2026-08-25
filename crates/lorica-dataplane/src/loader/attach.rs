@@ -95,11 +95,21 @@ pub fn attach_native(program: &mut Xdp, iface: &str) -> Result<XdpLinkId, Attach
     }
 }
 
-/// How long to wait for the kernel to actually let go of the hook. Fifty milliseconds is
-/// two orders of magnitude above what was observed and still well inside the ~7 ms window
-/// a hot attach was measured to open, so a detach that needs longer than this is a fault
-/// and not a slow machine.
-const RELEASE_TIMEOUT: Duration = Duration::from_millis(50);
+/// How long to wait for the kernel to actually let go of the hook.
+///
+/// It was fifty milliseconds, on the argument that this was two orders of magnitude above
+/// what had been observed, so anything slower was a fault and not a slow machine. **A shared
+/// CI runner disproved that**: the second round of the detach-and-reattach cycle exceeded it,
+/// with the hook still occupied. The observation was taken on a quiet four-vCPU lab VM, and
+/// the workqueue that finishes the teardown competes with everything else on a contended
+/// host.
+///
+/// So this is not a fault threshold and it should never have been described as one. It is how
+/// long a caller is willing to block on a path that is **not** the packet path — detach runs
+/// on a detection transition, not per packet. The failure it guards against is worse than the
+/// wait: returning success while the hook is still busy hands the next attach an `EBUSY` from
+/// the program that was just detached, intermittently and only under load.
+const RELEASE_TIMEOUT: Duration = Duration::from_millis(500);
 
 /// Detaches, and does not return until the hook is free.
 ///
