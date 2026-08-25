@@ -213,12 +213,6 @@ unsafe fn avx2(cur: &[u64], prev: &[u64], floor: u64) -> Reduction {
 /// `_mm512_max_epu64` is one instruction where AVX2 needs a compare and a blend.
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx512f")]
-#[expect(
-    clippy::incompatible_msrv,
-    reason = "clippy.toml pins the workspace MSRV at 1.85 and these intrinsics stabilised \
-              in 1.89. This crate's manifest declares 1.89 for exactly this reason; the \
-              lint is reading the workspace-wide number, which the other three paths hold."
-)]
 unsafe fn avx512(cur: &[u64], prev: &[u64], floor: u64) -> Reduction {
     use core::arch::x86_64::{
         _mm512_add_epi64, _mm512_cmpge_epu64_mask, _mm512_loadu_si512, _mm512_maskz_sub_epi64,

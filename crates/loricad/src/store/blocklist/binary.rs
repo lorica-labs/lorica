@@ -82,5 +82,5 @@ const _: () = assert!(ENTRY_BYTES == 8);
 // The whole point of the format is that the mapping can be cast in place, which needs the
 // entries to start aligned. A page-aligned base plus a header that is a multiple of the
 // alignment is what guarantees it, and both halves are asserted so neither can drift.
-const _: () = assert!(HEADER_BYTES % align_of::<Entry>() == 0);
+const _: () = assert!(HEADER_BYTES.is_multiple_of(align_of::<Entry>()));
 const _: () = assert!(align_of::<Header>() >= align_of::<Entry>());

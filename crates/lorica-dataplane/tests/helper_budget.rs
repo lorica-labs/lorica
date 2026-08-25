@@ -124,7 +124,7 @@ struct Calls {
 /// call it is.
 fn count(code: &[u8]) -> Calls {
     let mut calls = Calls::default();
-    for insn in code.chunks_exact(INSN_LEN) {
+    for insn in code.as_chunks::<INSN_LEN>().0 {
         if insn[0] != CALL_OPCODE {
             continue;
         }
@@ -148,7 +148,9 @@ fn count(code: &[u8]) -> Calls {
 /// offset field, so they are counted here too. The class check is what keeps the jumps out:
 /// `0x35` is `BPF_JGE` and shares the top nibble with a divide.
 fn divisions(code: &[u8]) -> usize {
-    code.chunks_exact(INSN_LEN)
+    code.as_chunks::<INSN_LEN>()
+        .0
+        .iter()
         .filter(|insn| {
             matches!(insn[0] & 0xf0, 0x30 | 0x90) && matches!(insn[0] & 0x07, 0x04 | 0x07)
         })

@@ -50,11 +50,9 @@ impl SipHasher24 {
         let mut v2 = self.k0 ^ 0x6c79_6765_6e65_7261;
         let mut v3 = self.k1 ^ 0x7465_6462_7974_6573;
 
-        let mut chunks = bytes.chunks_exact(8);
-        for chunk in &mut chunks {
-            let m = u64::from_le_bytes([
-                chunk[0], chunk[1], chunk[2], chunk[3], chunk[4], chunk[5], chunk[6], chunk[7],
-            ]);
+        let (words, tail) = bytes.as_chunks::<8>();
+        for chunk in words {
+            let m = u64::from_le_bytes(*chunk);
             v3 ^= m;
             sipround!(v0, v1, v2, v3);
             sipround!(v0, v1, v2, v3);
@@ -64,7 +62,6 @@ impl SipHasher24 {
         // The last word carries the trailing bytes in the low positions and the
         // total length in the top one. Without the length, "ab" and "ab\0" would
         // hash the same.
-        let tail = chunks.remainder();
         let mut b = (bytes.len() as u64) << 56;
         let mut i = 0;
         while i < tail.len() {

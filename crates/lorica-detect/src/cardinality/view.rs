@@ -54,10 +54,10 @@ impl<'a> CounterSlots<'a> {
     /// restated, because a counter added to `lorica-common` moves this boundary and a
     /// number copied here would move the whole entry region by one slot in silence.
     pub fn new(bytes: &'a [u8]) -> Result<Self, SlotsError> {
-        if bytes.as_ptr().addr() % align_of::<u64>() != 0 {
+        if !bytes.as_ptr().addr().is_multiple_of(align_of::<u64>()) {
             return Err(SlotsError::Misaligned);
         }
-        if bytes.len() % size_of::<u64>() != 0 {
+        if !bytes.len().is_multiple_of(size_of::<u64>()) {
             return Err(SlotsError::Ragged);
         }
         let slots = <[u64]>::ref_from_bytes(bytes).map_err(|_| SlotsError::Misaligned)?;

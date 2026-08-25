@@ -101,7 +101,7 @@ impl Sweep {
             Err(_) => self.failures += 1,
         }
 
-        if self.ticks % self.every == 0 {
+        if self.ticks.is_multiple_of(self.every) {
             self.full_sweeps += 1;
             match self.full.read() {
                 Ok(totals) => self.counted = totals.iter().sum(),

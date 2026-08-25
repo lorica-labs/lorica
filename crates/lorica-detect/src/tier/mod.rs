@@ -233,11 +233,11 @@ impl Engine {
             self.prev_total_units = s.buckets.total_units();
         }
 
-        if let Some(per_sec) = self.burst.observe(s.at_ns, over_total) {
-            if per_sec >= self.cfg.burst_per_sec {
-                self.metrics.bursts += 1;
-                self.burst_seen = true;
-            }
+        if let Some(per_sec) = self.burst.observe(s.at_ns, over_total)
+            && per_sec >= self.cfg.burst_per_sec
+        {
+            self.metrics.bursts += 1;
+            self.burst_seen = true;
         }
 
         // The net, applied before any arithmetic: an unrenewed decision is abandoned rather

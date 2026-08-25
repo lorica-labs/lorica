@@ -175,25 +175,25 @@ impl SignatureBackend for Branch {
         // Ordered cheapest-and-most-certain last: the two port families are the ones a
         // flood is made of, so they answer first and the coherence checks, which every
         // packet reaches, are the ones a matching packet never gets to.
-        if armed & AMP_MASK != 0 {
-            if let Some(vector) = amplification(view, armed) {
-                return Some(vector);
-            }
+        if armed & AMP_MASK != 0
+            && let Some(vector) = amplification(view, armed)
+        {
+            return Some(vector);
         }
-        if armed & VectorId::LoopyPortPair.bit() != 0 {
-            if let Some(vector) = loop_pair(view) {
-                return Some(vector);
-            }
+        if armed & VectorId::LoopyPortPair.bit() != 0
+            && let Some(vector) = loop_pair(view)
+        {
+            return Some(vector);
         }
-        if armed & VectorId::FragAbuse.bit() != 0 {
-            if let Some(vector) = fragment_abuse(view) {
-                return Some(vector);
-            }
+        if armed & VectorId::FragAbuse.bit() != 0
+            && let Some(vector) = fragment_abuse(view)
+        {
+            return Some(vector);
         }
-        if armed & VectorId::ImpossibleTcpFlags.bit() != 0 {
-            if let Some(vector) = impossible_flags(view) {
-                return Some(vector);
-            }
+        if armed & VectorId::ImpossibleTcpFlags.bit() != 0
+            && let Some(vector) = impossible_flags(view)
+        {
+            return Some(vector);
         }
         if armed & VectorId::LengthMismatch.bit() != 0 {
             return length_mismatch(view);
@@ -279,7 +279,7 @@ fn fragment_abuse(view: &PacketView) -> Option<VectorId> {
         return None;
     }
     let carried = stated_l4_len(view);
-    if carried < MIN_FIRST_FRAGMENT_L4 || carried % FRAGMENT_GRANULARITY != 0 {
+    if carried < MIN_FIRST_FRAGMENT_L4 || !carried.is_multiple_of(FRAGMENT_GRANULARITY) {
         return Some(VectorId::FragAbuse);
     }
     None
