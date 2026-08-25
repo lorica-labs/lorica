@@ -9,13 +9,15 @@
 //!
 //! **The alternative that was rejected, with its number.** Writing the scalar loop and
 //! letting LLVM vectorise it. [`fold`] *is* that loop, compiled at `opt-level = 3`, and
-//! `benches/scan.rs` measures it at **788.7 ns** over 1024 slots against **270.8 ns** for
-//! the hand-written AVX2 path and **160.1 ns** for AVX-512 — 2.9x and 4.9x. What the
-//! compiler will not do is the saturating subtract, the unsigned compare and the unsigned
-//! maximum in vector registers, because below AVX-512 `u64` has no unsigned compare at all:
-//! it sees `saturating_sub` and a `>` on `u64` and leaves both scalar. The bias trick the
-//! AVX2 path carries is a rewrite the compiler is not entitled to make. Measured on an AMD
-//! Ryzen 9 7900X, which is a development host and not this project's measurement machine.
+//! `benches/scan.rs` measures it over 1024 slots at **657.9 and 788.7 ns** across two runs,
+//! against **245.0 to 270.8 ns** for the hand-written AVX2 path and **132.5 to 160.1 ns**
+//! for AVX-512 — 2.7x to 2.9x, and 4.9x both times. What the compiler will not do is the
+//! saturating subtract, the unsigned compare and the unsigned maximum in vector registers,
+//! because below AVX-512 `u64` has no unsigned compare at all: it sees `saturating_sub` and
+//! a `>` on `u64` and leaves both scalar. The bias trick the AVX2 path carries is a rewrite
+//! the compiler is not entitled to make. Both runs are on an AMD Ryzen 9 7900X, which is a
+//! development host and not this project's measurement machine; the spread between them is
+//! why two runs are quoted rather than one.
 //!
 //! **Why a value and not a `cfg`.** [`Isa`] is a parameter of [`reduce_with`], so the
 //! fallback is a path a test can enter on the machine it is running on. A dispatch hidden
