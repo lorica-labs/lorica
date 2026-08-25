@@ -454,6 +454,8 @@ name = "lorica-detect"
 version = "0.1.0"
 dependencies = [
  "lorica-common",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

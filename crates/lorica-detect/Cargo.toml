@@ -8,3 +8,11 @@ rust-version.workspace = true
 
 [dependencies]
 lorica-common.workspace = true
+
+# Test-only. The fixtures in tests/fixtures are JSON and the replay reads them; the crate
+# itself performs no I/O and must not carry a serialization dependency into the agent.
+# serde is the workspace's; serde_json is declared here rather than in the workspace so the
+# root manifest stays untouched.
+[dev-dependencies]
+serde = { workspace = true }
+serde_json = "1.0"

@@ -1,0 +1,116 @@
+{
+  "name": "pulse_wave",
+  "about": "Five on/off cycles of two seconds each, the shape a pulse-wave botnet produces when it rotates its vector faster than a one-second loop can follow. Every burst carries real invalid packets and one unified-list entry taking hits, so the demand genuinely swings between rungs. The assertion is that the rung actually in force does not swing with it: the transition count is bounded.",
+  "magnitudes": "PARAMETERS. The on phase is set at 800 000 over-budget packets per second with 60 000 amplified-DNS signature matches and 40 000 reverse-path failures per second, and the entry at 203.0.113.7 taking 30 000 hits per second. The two-second period is the parameter that matters: it is chosen shorter than the descent this engine allows (fall_ticks defaults to 5 slow ticks), which is exactly the condition under which a naive threshold oscillates.",
+  "period_ms": 100,
+  "entry_v4": [203, 0, 113, 7],
+  "steps": [
+    {
+      "repeat": 20,
+      "note": "two seconds of quiet before the first pulse",
+      "loaded_buckets": 40,
+      "level_kib": 18,
+      "counters": { "bucket_over_budget": 6000 }
+    },
+    {
+      "repeat": 20,
+      "note": "pulse 1 on",
+      "loaded_buckets": 520,
+      "level_kib": 40,
+      "entry_per_sec": 30000,
+      "counters": {
+        "bucket_over_budget": 800000,
+        "signature_amp_dns": 60000,
+        "urpf_wrong_interface": 40000,
+        "lpm_drop_hit": 30000
+      }
+    },
+    {
+      "repeat": 20,
+      "note": "pulse 1 off",
+      "loaded_buckets": 40,
+      "level_kib": 18,
+      "counters": { "bucket_over_budget": 6000 }
+    },
+    {
+      "repeat": 20,
+      "note": "pulse 2 on",
+      "loaded_buckets": 520,
+      "level_kib": 40,
+      "entry_per_sec": 30000,
+      "counters": {
+        "bucket_over_budget": 800000,
+        "signature_amp_dns": 60000,
+        "urpf_wrong_interface": 40000,
+        "lpm_drop_hit": 30000
+      }
+    },
+    {
+      "repeat": 20,
+      "note": "pulse 2 off",
+      "loaded_buckets": 40,
+      "level_kib": 18,
+      "counters": { "bucket_over_budget": 6000 }
+    },
+    {
+      "repeat": 20,
+      "note": "pulse 3 on",
+      "loaded_buckets": 520,
+      "level_kib": 40,
+      "entry_per_sec": 30000,
+      "counters": {
+        "bucket_over_budget": 800000,
+        "signature_amp_dns": 60000,
+        "urpf_wrong_interface": 40000,
+        "lpm_drop_hit": 30000
+      }
+    },
+    {
+      "repeat": 20,
+      "note": "pulse 3 off",
+      "loaded_buckets": 40,
+      "level_kib": 18,
+      "counters": { "bucket_over_budget": 6000 }
+    },
+    {
+      "repeat": 20,
+      "note": "pulse 4 on",
+      "loaded_buckets": 520,
+      "level_kib": 40,
+      "entry_per_sec": 30000,
+      "counters": {
+        "bucket_over_budget": 800000,
+        "signature_amp_dns": 60000,
+        "urpf_wrong_interface": 40000,
+        "lpm_drop_hit": 30000
+      }
+    },
+    {
+      "repeat": 20,
+      "note": "pulse 4 off",
+      "loaded_buckets": 40,
+      "level_kib": 18,
+      "counters": { "bucket_over_budget": 6000 }
+    },
+    {
+      "repeat": 20,
+      "note": "pulse 5 on",
+      "loaded_buckets": 520,
+      "level_kib": 40,
+      "entry_per_sec": 30000,
+      "counters": {
+        "bucket_over_budget": 800000,
+        "signature_amp_dns": 60000,
+        "urpf_wrong_interface": 40000,
+        "lpm_drop_hit": 30000
+      }
+    },
+    {
+      "repeat": 20,
+      "note": "pulse 5 off, and quiet after",
+      "loaded_buckets": 40,
+      "level_kib": 18,
+      "counters": { "bucket_over_budget": 6000 }
+    }
+  ]
+}
