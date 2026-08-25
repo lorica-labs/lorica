@@ -352,10 +352,7 @@ pub fn oa_insert(table: &mut [OaSlot], key: u32, action: Action) -> Option<u8> {
                 return placed;
             }
             carried_key = slot.key;
-            carried_action = match oa_action(slot.tag) {
-                Some(action) => action,
-                None => return None,
-            };
+            carried_action = oa_action(slot.tag)?;
             distance = displace;
         }
         index = oa_step(index);
