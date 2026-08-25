@@ -7,7 +7,7 @@
 
 use lorica_common::blocklist::{
     CLASS24_BYTES, CLASS24_ENTRIES, Class24, OA_MAX_KEYS, OA_PROBES, OA_SLOTS, OaSlot, class24_get,
-    class24_index, class24_set, oa_action, oa_index, oa_lookup, oa_occupied, oa_psl, oa_step,
+    class24_index, class24_set, oa_action, oa_index, oa_insert, oa_lookup, oa_occupied, oa_psl,
     oa_tag,
 };
 use lorica_common::wire::Action;
@@ -93,42 +93,6 @@ fn an_empty_slot_and_the_zero_address_are_not_the_same_pattern() {
     assert!(!membership_only(&empty, v4(203, 0, 113, 1)));
 }
 
-/// Robin Hood insertion, written here and only here.
-///
-/// The builder owns the real one; this is what proves the frozen [`oa_lookup`] finds what a
-/// correct insertion placed. Returns the maximum probe sequence length reached.
-fn insert_all(table: &mut [OaSlot], keys: &[(u32, Action)]) -> u32 {
-    let mut worst = 0;
-    for &(key, action) in keys {
-        let mut index = oa_index(key);
-        let mut distance = 0u32;
-        let mut carried = OaSlot {
-            key,
-            tag: oa_tag(action, 0),
-        };
-        loop {
-            let slot = table[index as usize];
-            if !oa_occupied(slot.tag) {
-                carried.tag = oa_tag(oa_action(carried.tag).unwrap(), distance as u8);
-                table[index as usize] = carried;
-                worst = worst.max(distance);
-                break;
-            }
-            if (oa_psl(slot.tag) as u32) < distance {
-                carried.tag = oa_tag(oa_action(carried.tag).unwrap(), distance as u8);
-                table[index as usize] = carried;
-                worst = worst.max(distance);
-                carried = slot;
-                distance = oa_psl(slot.tag) as u32;
-            }
-            index = oa_step(index);
-            distance += 1;
-            assert!(distance < OA_SLOTS as u32, "the table is full");
-        }
-    }
-    worst
-}
-
 #[test]
 fn the_reference_lookup_finds_every_key_a_correct_insertion_placed() {
     // At the full permitted load, because the number this produces is what justifies the
@@ -151,14 +115,27 @@ fn the_reference_lookup_finds_every_key_a_correct_insertion_placed() {
     keys.dedup_by_key(|&mut (key, _)| key);
 
     let mut table = vec![OaSlot::default(); OA_SLOTS];
-    let worst = insert_all(&mut table, &keys);
+    for &(key, action) in &keys {
+        oa_insert(&mut table, key, action)
+            .unwrap_or_else(|| panic!("key {key:#010x} ran past the compiled probe count"));
+    }
+
+    // Read the maximum off the finished table and not off the return values. A key that gets
+    // displaced by a later insertion ends up further from home than the distance its own
+    // insertion reported, and that larger number is the one an unrolled lookup has to reach.
+    let worst = table
+        .iter()
+        .filter(|slot| oa_occupied(slot.tag))
+        .map(|slot| oa_psl(slot.tag))
+        .max()
+        .expect("the table is not empty");
     println!(
         "oa-psl keys={} slots={OA_SLOTS} load={:.3} worst_psl={worst} compiled_probes={OA_PROBES}",
         keys.len(),
         keys.len() as f64 / OA_SLOTS as f64
     );
     assert!(
-        worst < OA_PROBES,
+        (worst as u32) < OA_PROBES,
         "measured maximum probe sequence length {worst} against a compiled {OA_PROBES}"
     );
 

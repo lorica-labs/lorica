@@ -313,6 +313,56 @@ pub fn oa_lookup(table: &[OaSlot], key: u32) -> Option<Action> {
     None
 }
 
+/// The reference insertion, in the form both sides have to agree on.
+///
+/// Returns the probe sequence length the key ended up at, or `None` if the sequence ran past
+/// [`OA_PROBES`] — which is the builder's signal to refuse the snapshot rather than publish a
+/// table the unrolled lookup cannot read.
+///
+/// Robin Hood: a key that has walked further than the slot it lands on takes the slot and
+/// carries the evicted one onward. That is what bounds the *maximum* probe length instead of
+/// the average, and the maximum is the only thing an unrolled lookup can be compiled against.
+///
+/// **Here and not in the builder on purpose.** Insertion decides where a key lands, so a
+/// builder and a test harness that each wrote their own would agree on the format and
+/// disagree on the table. The builder wraps this with the policy — the load factor ceiling,
+/// the prefix expansion, the exhaustive round trip — and the dataplane tests fill their
+/// fixtures with it, so both read a table the other would have produced.
+pub fn oa_insert(table: &mut [OaSlot], key: u32, action: Action) -> Option<u8> {
+    let mut index = oa_index(key);
+    let mut distance = 0u32;
+    let mut carried_key = key;
+    let mut carried_action = action;
+    let mut placed = None;
+    loop {
+        if distance >= OA_PROBES {
+            return None;
+        }
+        let slot = table[(index & OA_INDEX_MASK) as usize];
+        let displace = oa_psl(slot.tag) as u32;
+        if !oa_occupied(slot.tag) || displace < distance {
+            table[(index & OA_INDEX_MASK) as usize] = OaSlot {
+                key: carried_key,
+                tag: oa_tag(carried_action, distance as u8),
+            };
+            if placed.is_none() {
+                placed = Some(distance as u8);
+            }
+            if !oa_occupied(slot.tag) {
+                return placed;
+            }
+            carried_key = slot.key;
+            carried_action = match oa_action(slot.tag) {
+                Some(action) => action,
+                None => return None,
+            };
+            distance = displace;
+        }
+        index = oa_step(index);
+        distance += 1;
+    }
+}
+
 // ---------------------------------------------------------------------------
 // The trie that survives
 // ---------------------------------------------------------------------------
