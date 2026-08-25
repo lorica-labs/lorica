@@ -27,12 +27,6 @@
 //! clients are behind. On the host it protects, it is essentially observational: it can
 //! reorder what this machine sends, and the packets that hurt have already arrived.
 
-// Nothing in the agent's loop calls this yet — the tick that will is a separate change,
-// and this module is reached from the tests by path. Without the allow, `mod enforce;` in
-// a binary crate makes both re-exports below unused and every function here dead, and the
-// build fails on -D warnings.
-#![allow(dead_code, unused_imports)]
-
 mod apply;
 mod withdraw;
 

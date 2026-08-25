@@ -90,6 +90,26 @@ pub enum Mode {
     Armed,
 }
 
+/// The same two words the configuration file uses, for the command line.
+///
+/// It restates what `rename_all = "lowercase"` already says, which is one duplication and
+/// the alternative is worse: the agent would either pull serde into its argument parsing to
+/// read one word, or grow a second vocabulary where `--mode armed` and `mode = "armed"` could
+/// drift apart. The test below fails if they ever do.
+impl core::str::FromStr for Mode {
+    type Err = String;
+
+    fn from_str(word: &str) -> Result<Self, Self::Err> {
+        match word {
+            "observe" => Ok(Self::Observe),
+            "armed" => Ok(Self::Armed),
+            other => Err(format!(
+                "unknown mode {other}: expected observe or armed, which are the two the agent has"
+            )),
+        }
+    }
+}
+
 #[derive(Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum ActionName {
@@ -149,5 +169,31 @@ mod tests {
         // nobody notices is off.
         Config::from_toml("profile = \"host\"\nmode = \"enforce\"")
             .expect_err("a spelling that is neither of the two must be refused");
+    }
+
+    /// The command line and the configuration file spell arming the same way.
+    ///
+    /// Two parsers read the same word — serde's `rename_all` and the `FromStr` above — and
+    /// nothing but this makes them agree. A drift would mean `--mode armed` arming an agent
+    /// that `mode = "armed"` would not, which is the failure nobody notices until an attack.
+    #[test]
+    fn the_command_line_and_the_file_spell_the_modes_alike() {
+        for (word, mode) in [("observe", Mode::Observe), ("armed", Mode::Armed)] {
+            assert_eq!(
+                word.parse::<Mode>().expect("the word is one of the two"),
+                mode
+            );
+            let toml = format!("profile = \"host\"\nmode = \"{word}\"");
+            assert_eq!(
+                Config::from_toml(&toml)
+                    .expect("the file spells it the same")
+                    .mode,
+                mode,
+                "{word} parses differently on the command line and in the file"
+            );
+        }
+        "enforce"
+            .parse::<Mode>()
+            .expect_err("a third spelling must be refused on the command line too");
     }
 }

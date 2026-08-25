@@ -27,7 +27,11 @@ use lorica_common::{
     SIGNATURE_VECTORS_SYMBOL, key_words,
 };
 use lorica_dataplane::{clock, loader, maps};
+use lorica_detect::{Config as Ladder, Engine};
+use lorica_policy::Mode;
 use tokio::{runtime::Builder, time::MissedTickBehavior};
+
+use crate::enforce::{Applied, apply, withdraw};
 
 #[global_allocator]
 static ALLOCATOR: alloc::Counting = alloc::Counting;
@@ -36,7 +40,7 @@ const DEFAULT_SOCKET: &str = "/run/lorica/control.sock";
 const PROGRAM: &str = "lorica_xdp";
 
 const USAGE: &str = "usage: loricad --object PATH [--socket PATH] [--counters N] \
-                     [--hz N] [--batch N] [--seconds N] [--metrics ADDR|off]";
+                     [--hz N] [--batch N] [--seconds N] [--metrics ADDR|off] [--mode observe|armed]";
 
 struct Options {
     object: PathBuf,
@@ -56,6 +60,10 @@ struct Options {
     /// Seconds to run before exiting. Zero runs until signalled, which is what a real
     /// agent does; a measurement wants a bound.
     seconds: u64,
+    /// Whether a refused rung is written into the list or only reported. `observe` by
+    /// default, and that default is what makes the repository publishable: a tool that
+    /// watches and reports cannot create the destructive false positive.
+    mode: Mode,
     /// Where `/metrics` listens, or `off`. Loopback by default: the endpoint serialises the
     /// whole registry per call, so exposing it off-host is an address somebody types.
     metrics: String,
@@ -80,6 +88,7 @@ fn parse_options() -> Result<Options> {
         batch: 1_000,
         sweep_every: 1,
         seconds: 0,
+        mode: Mode::default(),
         metrics: metrics::serve::DEFAULT_ADDR.to_owned(),
     };
     let mut args = std::env::args().skip(1);
@@ -94,6 +103,7 @@ fn parse_options() -> Result<Options> {
             "--sweep-every" => options.sweep_every = value()?.parse()?,
             "--seconds" => options.seconds = value()?.parse()?,
             "--metrics" => options.metrics = value()?,
+            "--mode" => options.mode = value()?.parse().map_err(anyhow::Error::msg)?,
             other => bail!("unknown argument {other}\n{USAGE}"),
         }
     }
@@ -108,6 +118,18 @@ fn parse_options() -> Result<Options> {
             "--counters {} is below the {} named counters",
             options.counter_slots,
             CounterId::COUNT
+        );
+    }
+    // Refused rather than aliased. Every entry the ladder writes points at a counter slot,
+    // and the slots below this belong to the named counters: an armed agent with no room
+    // above them would charge its own refusals to a stage counter and then read them back as
+    // evidence for the next rung.
+    if options.mode == Mode::Armed && options.counter_slots <= CounterId::COUNT {
+        bail!(
+            "--mode armed needs at least one slot above the {} named counters: pass \
+             --counters {} or more",
+            CounterId::COUNT,
+            CounterId::COUNT + 1
         );
     }
     Ok(options)
@@ -156,6 +178,23 @@ async fn serve(options: Options) -> Result<()> {
     // rather than left out because its bound is what the series count rests on.
     let talkers = metrics::Talkers::default();
 
+    // The ladder, and the file descriptor it writes an accepted rung into. Resolved here so
+    // an agent whose object has no list fails at startup rather than on the first refusal.
+    let mut engine = Engine::new(Ladder::default());
+    let list = maps::fd(ebpf, "UNIFIED_LIST").context("no UNIFIED_LIST map in the object")?;
+    // One slot for everything the ladder writes, the first one above the named counters.
+    // Not one per entry: a slot allocator is a thing to build when something reads the
+    // per-entry counters back, and nothing does yet.
+    let refusals = CounterId::COUNT;
+    let mut written = 0u64;
+    let mut withheld = 0u64;
+    let mut pulled = 0u64;
+    // The key the last applied rung wrote, so a descent can take it back out instead of
+    // waiting for the deadline. The deadline is the net for an agent that died; while the
+    // agent is alive, leaving a refusal standing for the ten minutes of its TTL after the
+    // traffic that justified it stopped is the policy being made by a timeout.
+    let mut standing: Option<lorica_common::LpmKey> = None;
+
     let period = Duration::from_micros(1_000_000 / u64::from(options.hz));
     let mut timer = tokio::time::interval(period);
     // Delay, never Burst. A late tick under attack must not be followed by a burst of
@@ -194,16 +233,50 @@ async fn serve(options: Options) -> Result<()> {
             _ = timer.tick() => {
                 sweep.run();
                 published.publish(&sweep, started.elapsed().as_nanos() as u64);
+                // Decide from the snapshot that was just published, not from the sweep: the
+                // published one is what every reader sees, so a decision taken off anything
+                // else could disagree with the metric an operator is looking at.
+                let decision = engine.observe(&published.read());
+                match apply(list, options.mode, &decision, refusals)
+                    .context("writing a refusal into the list failed")?
+                {
+                    Applied::Written(key) => {
+                        // A rung that moves to a different key leaves the previous one
+                        // behind, so it goes out before the new one goes in.
+                        if let Some(previous) = standing.replace(key).filter(|k| *k != key) {
+                            withdraw(list, previous)
+                                .context("withdrawing a superseded refusal failed")?;
+                            pulled += 1;
+                        }
+                        written += 1;
+                    }
+                    Applied::Withheld(_) => withheld += 1,
+                    Applied::Nothing => {
+                        // The descent. Nothing to refuse any more, so what was refused
+                        // comes back out now rather than at its deadline.
+                        if let Some(previous) = standing.take() {
+                            withdraw(list, previous)
+                                .context("withdrawing a refusal on the descent failed")?;
+                            pulled += 1;
+                        }
+                    }
+                }
                 if deadline.is_some_and(|at| tokio::time::Instant::now() >= at) {
                     eprintln!(
                         "loricad: {} ticks, {} full sweeps of {} slots, {} failed, \
-                         {} snapshot buffers reallocated, {} allocations after the first sweep",
+                         {} snapshot buffers reallocated, {} allocations after the first sweep, \
+                         rung {} in {:?} mode, {} entries written, {} withheld, {} withdrawn",
                         sweep.ticks(),
                         sweep.full_sweeps(),
                         sweep.slots(),
                         sweep.failures(),
                         published.reallocations(),
                         alloc::allocations().saturating_sub(settled),
+                        engine.current().rung(),
+                        options.mode,
+                        written,
+                        withheld,
+                        pulled,
                     );
                     return Ok(());
                 }
