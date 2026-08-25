@@ -246,7 +246,7 @@ pub fn read(path: &Path) -> Result<Vec<Record>> {
         );
     }
     let mut records = Vec::with_capacity(body.len() / RECORD_BYTES);
-    for chunk in body.chunks_exact(RECORD_BYTES) {
+    for chunk in body.as_chunks::<RECORD_BYTES>().0 {
         records.push(
             Record::read_from_bytes(chunk)
                 .map_err(|err| anyhow::anyhow!("{} holds a bad record: {err}", path.display()))?,
