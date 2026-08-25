@@ -10,6 +10,7 @@ mod alloc;
 mod control;
 mod metrics;
 mod state;
+mod store;
 mod tick;
 
 use std::{

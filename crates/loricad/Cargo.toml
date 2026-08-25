@@ -32,6 +32,8 @@ anyhow.workspace = true
 arc-swap.workspace = true
 aya.workspace = true
 crossbeam-utils.workspace = true
+memmap2.workspace = true
+redb.workspace = true
 # current_thread only. #[tokio::main] would spawn one worker per logical CPU and
 # steal cache lines from the application this is supposed to protect.
 tokio = { workspace = true, features = ["rt", "macros", "time", "net", "io-util", "signal"] }
@@ -44,3 +46,4 @@ prometheus-client = "0.25.0"
 sketches-ddsketch = "0.3.1"
 tracing.workspace = true
 tracing-subscriber.workspace = true
+zerocopy.workspace = true
