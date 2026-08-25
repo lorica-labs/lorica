@@ -40,8 +40,9 @@ static ALLOCATOR: alloc::Counting = alloc::Counting;
 const DEFAULT_SOCKET: &str = "/run/lorica/control.sock";
 const PROGRAM: &str = "lorica_xdp";
 
-const USAGE: &str = "usage: loricad --object PATH [--socket PATH] [--counters N] \
-                     [--hz N] [--batch N] [--seconds N] [--metrics ADDR|off] [--mode observe|armed]";
+const USAGE: &str = "usage: loricad --object PATH [--socket PATH] [--counters N] [--hz N] \
+                     [--batch N] [--sweep-every N] [--seconds N] [--metrics ADDR|off] \
+                     [--mode observe|armed]";
 
 struct Options {
     object: PathBuf,

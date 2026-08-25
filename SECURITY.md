@@ -53,11 +53,10 @@ Not a summary of it. It carries the counter slots, the tick and sweep accounting
 kernel release, and the capability table as the *agent* detected it — which describes the
 kernel the dataplane is loaded against rather than whichever machine ran the client.
 
-**3. The list as it stood.** The refused prefixes at the moment of the drop. TODO(human):
-this file was asked to name `lorica-ctl rules`, and the client in this tree implements
-`status` only. Either the command lands before this file is published, or this line names
-the substitute. Until it does, attach the agent's own stderr: its summary line reports the
-entries written, withheld and withdrawn.
+**3. The list as it stood — `lorica-ctl rules`.** The refused prefixes at the moment of the
+drop, each with its deadline. Every active entry has one; a report showing an entry without
+one is a finding in itself and not a false positive report, because no active rule is allowed
+to outlive a deadline.
 
 **4. The trace.** A capture of the refused traffic — `pcap` preferred — with enough of the
 surrounding flow to show that it was legitimate. Source addresses may be redacted as long
