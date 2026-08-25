@@ -14,12 +14,24 @@
 //!
 //! Both halves of the format are included by path rather than copied: one layout, one
 //! loader, two crates.
+//!
+//! **Parquet lives here and not in the agent, and that is a size decision with numbers.**
+//! `--to parquet` turns a journal into a file DuckDB, Polars or pandas can open, which is
+//! what makes the fixed-size record a usable format rather than a private one. It costs this
+//! binary **402 656 bytes to 1 014 432**, release with fat LTO and strip on carapace-dev, and
+//! takes `cargo tree --edges normal` from **15 lines to 43** — `parquet` with
+//! `default-features = false`, plus `lorica-detect` for the record layout. That is acceptable
+//! in a process an operator starts and that exits, and it is the number that would not be
+//! acceptable in `loricad`: 598 KiB is 20 % of the agent's whole resident set, for a writer
+//! that runs when somebody asks a question about last week.
 
 #[path = "../../loricad/src/store/blocklist/mod.rs"]
 // The agent uses parts of the loader this tool does not, and the reverse. Sharing the module
 // is the point; sharing it means each side leaves something unused.
 #[allow(dead_code)]
 mod blocklist;
+#[path = "../../loricad/src/journal/mod.rs"]
+mod journal;
 
 use std::{
     fs::File,
@@ -28,19 +40,30 @@ use std::{
     path::{Path, PathBuf},
     process::ExitCode,
     str::FromStr,
+    sync::Arc,
     time::Instant,
 };
 
 use anyhow::{Context, Result, bail};
 use lorica_common::Action;
+use parquet::{
+    data_type::{FixedLenByteArray, Int32Type, Int64Type},
+    file::{
+        properties::WriterProperties,
+        writer::{SerializedFileWriter, SerializedRowGroupWriter},
+    },
+    schema::parser::parse_message_type,
+};
 use zerocopy::IntoBytes;
 
 use blocklist::{
     Blocklist, Resident,
     binary::{Entry, Header, MAGIC, VERSION},
 };
+use journal::{record::Record, rotate};
 
 const USAGE: &str = "usage: lorica-export --in PATH --out PATH\n       \
+                     lorica-export --to parquet --in DIR --out PATH\n       \
                      lorica-export --verify PATH";
 
 fn main() -> ExitCode {
@@ -57,6 +80,7 @@ fn run() -> Result<()> {
     let mut input: Option<PathBuf> = None;
     let mut output: Option<PathBuf> = None;
     let mut verify: Option<PathBuf> = None;
+    let mut to: Option<String> = None;
 
     let mut args = std::env::args().skip(1);
     while let Some(flag) = args.next() {
@@ -65,15 +89,145 @@ fn run() -> Result<()> {
             "--in" => input = Some(PathBuf::from(value()?)),
             "--out" => output = Some(PathBuf::from(value()?)),
             "--verify" => verify = Some(PathBuf::from(value()?)),
+            "--to" => to = Some(value()?),
             other => bail!("unknown argument {other}\n{USAGE}"),
         }
     }
 
-    match (input, output, verify) {
-        (Some(input), Some(output), None) => export(&input, &output),
-        (None, None, Some(file)) => report(&file),
+    match (input, output, verify, to.as_deref()) {
+        (Some(input), Some(output), None, None) => export(&input, &output),
+        (Some(input), Some(output), None, Some("parquet")) => parquet(&input, &output),
+        (_, _, _, Some(other)) => bail!("--to {other} is not a format this tool writes\n{USAGE}"),
+        (None, None, Some(file), None) => report(&file),
         _ => bail!("either --in and --out, or --verify, and not a mixture\n{USAGE}"),
     }
+}
+
+/// The Parquet schema, and the reason every integer carries an unsigned annotation.
+///
+/// A journal record is unsigned throughout, and `deadline` reaches `u64::MAX` — that is
+/// `Deadline::never()`, which rung zero writes on every quiet second, so it is the common
+/// value and not an edge case. Written as a plain `int64` it would read as `-1` in every
+/// query engine that opens the file. `INTEGER(64,false)` is the annotation that makes the
+/// same bits read back as what they are.
+///
+/// The column order is the order the row groups are written in below, and Parquet has no
+/// other way to match them up.
+const SCHEMA: &str = "message journal_second {
+  required int64 at_ns (INTEGER(64,false));
+  required int32 tier (INTEGER(8,false));
+  required int32 reason (INTEGER(8,false));
+  required int32 prefix_len (INTEGER(8,false));
+  required fixed_len_byte_array(16) addr;
+  required int64 rate (INTEGER(64,false));
+  required int64 deadline (INTEGER(64,false));
+}";
+
+/// Converts a journal directory into one Parquet file.
+///
+/// **One row group per journal file, which is what rotation already bounds.** A row group is
+/// held in memory until it is written, so its size has to be bounded by something; the
+/// alternative is a row count chosen here, which would be a second bound competing with the
+/// rotation limit the writer was given. The seven columns are built as seven vectors of one
+/// journal file's records, which is a few megabytes at any sane limit.
+fn parquet(input: &Path, output: &Path) -> Result<()> {
+    let paths = rotate::files(input)?;
+    if paths.is_empty() {
+        bail!(
+            "{} holds no journal file; the agent names them journal-NNNNNN.bin",
+            input.display()
+        );
+    }
+    let schema = Arc::new(parse_message_type(SCHEMA).context("the schema does not parse")?);
+    let file =
+        File::create(output).with_context(|| format!("cannot create {}", output.display()))?;
+    let mut writer = SerializedFileWriter::new(file, schema, Arc::new(WriterProperties::new()))
+        .context("cannot start the Parquet file")?;
+
+    let mut rows = 0u64;
+    let mut groups = 0u64;
+    for path in &paths {
+        let records = rotate::read(path)?;
+        // A file that holds only its header is the one a rotation opened and nothing reached
+        // yet. An empty row group is legal and useless, and some readers refuse it.
+        if records.is_empty() {
+            continue;
+        }
+        let mut group = writer
+            .next_row_group()
+            .context("cannot start a row group")?;
+        columns(&mut group, &records)?;
+        group.close().context("cannot close a row group")?;
+        rows += records.len() as u64;
+        groups += 1;
+    }
+    let metadata = writer.close().context("cannot close the Parquet file")?;
+
+    println!(
+        "{} rows, {} row groups, {} journal files, {} bytes, {}",
+        metadata.file_metadata().num_rows(),
+        groups,
+        paths.len(),
+        std::fs::metadata(output)
+            .with_context(|| format!("cannot stat {}", output.display()))?
+            .len(),
+        output.display()
+    );
+    if metadata.file_metadata().num_rows() != rows as i64 {
+        bail!(
+            "the footer claims {} rows and {rows} were written",
+            metadata.file_metadata().num_rows()
+        );
+    }
+    Ok(())
+}
+
+/// The seven columns of one row group, in the order [`SCHEMA`] declares them.
+///
+/// The unsigned-to-signed casts are the bit pattern and not a conversion, which is what the
+/// `INTEGER(n,false)` annotations in the schema tell the reader to expect.
+fn columns(group: &mut SerializedRowGroupWriter<'_, File>, records: &[Record]) -> Result<()> {
+    let addresses: Vec<FixedLenByteArray> = records
+        .iter()
+        .map(|record| FixedLenByteArray::from(record.addr.to_vec()))
+        .collect();
+    let int64s = [
+        records.iter().map(|r| r.at_ns as i64).collect::<Vec<_>>(),
+        records.iter().map(|r| r.rate as i64).collect(),
+        records.iter().map(|r| r.deadline as i64).collect(),
+    ];
+    let int32s = [
+        records
+            .iter()
+            .map(|r| i32::from(r.tier))
+            .collect::<Vec<_>>(),
+        records.iter().map(|r| i32::from(r.reason)).collect(),
+        records.iter().map(|r| i32::from(r.prefix_len)).collect(),
+    ];
+
+    write_column::<Int64Type>(group, &int64s[0])?;
+    write_column::<Int32Type>(group, &int32s[0])?;
+    write_column::<Int32Type>(group, &int32s[1])?;
+    write_column::<Int32Type>(group, &int32s[2])?;
+    write_column::<parquet::data_type::FixedLenByteArrayType>(group, &addresses)?;
+    write_column::<Int64Type>(group, &int64s[1])?;
+    write_column::<Int64Type>(group, &int64s[2])?;
+    Ok(())
+}
+
+fn write_column<T: parquet::data_type::DataType>(
+    group: &mut SerializedRowGroupWriter<'_, File>,
+    values: &[T::T],
+) -> Result<()> {
+    let mut column = group
+        .next_column()
+        .context("cannot open a column")?
+        .context("the row group has fewer columns than the schema declares")?;
+    column
+        .typed::<T>()
+        .write_batch(values, None, None)
+        .context("cannot write a column")?;
+    column.close().context("cannot close a column")
 }
 
 /// Converts a text list into the binary form.
