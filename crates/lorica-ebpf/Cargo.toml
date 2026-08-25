@@ -1,0 +1,52 @@
+[package]
+name = "lorica-ebpf"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0 OR MIT"
+repository = "https://github.com/lorica-labs/lorica"
+
+# Its own workspace: this crate builds for bpfel-unknown-none on nightly with
+# -Z build-std=core, and cargo cannot select a toolchain per member of the root
+# workspace.
+[workspace]
+
+[features]
+# Mirror of the userspace feature. Counts the helper calls actually executed for one
+# packet, so a test can assert the per-packet budget of the spec.
+count-helpers = []
+# Publishes the parsed view into a map. Parsing has to be verifiable before any stage
+# exists to act on it.
+parse-probe = []
+# Selects the jump-table backend of stage 6 instead of the branch cascade. A feature and
+# not a run-time choice because eBPF has no method table to dispatch through, so there is
+# nothing to select at run time. Off until `gotox` is on a kernel floor this project can
+# ask for.
+signature-dfa = []
+# Stops the pipeline after a chosen stage, so the cost of one stage is the difference
+# between two whole-path measurements. It measures whole paths and not symbols, which is
+# why it needs no subprogram boundary and works on the inlined object: a profile
+# attributes cycles to four symbols all named `run` and to a dispatcher trampoline that
+# absorbs a third of the samples, while a difference of nanoseconds needs no denominator.
+stage-cutoff = []
+# Puts each parser back in a subprogram of its own, so it has a JIT symbol a `perf`
+# campaign can attribute cycles to. Instrumentation, not a property of the program: the
+# object that ships inlines the parsers and pays for none of their boundaries. The stages
+# keep theirs either way, for the measured reason stated at the first of them.
+profiling = []
+
+[dependencies]
+lorica-common = { path = "../lorica-common" }
+aya-ebpf = "0.2.1"
+
+[[bin]]
+name = "lorica-ebpf"
+path = "src/main.rs"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+# bpf-linker derives BTF from DWARF, so --btf emits nothing without debug info.
+debug = 2
+overflow-checks = false

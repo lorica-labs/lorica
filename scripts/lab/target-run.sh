@@ -15,12 +15,22 @@ root=$PWD
 sudo -n true 2>/dev/null \
     || { echo "FAIL  sudo needs a password; loading an XDP program needs CAP_BPF and CAP_NET_ADMIN" >&2; exit 1; }
 
+# Every knob the caller set travels. sudo would otherwise reset it and the test would read
+# its default, report on something else, and still go green — which is the worst failure
+# mode on offer. The three paths below are passed after these on purpose: they are computed
+# from where the tar landed on this machine, so they have to win over any namesake that
+# came along for the ride.
+keep=()
+for name in $(env | cut -d= -f1 | grep '^LORICA_'); do
+    keep+=("$name=${!name}")
+done
+
 status=0
 for binary in bin/*; do
     printf '\n--- %s on %s\n' "$(basename "$binary")" "$(uname -r)"
-    sudo -n env "CARAPACE_EBPF_OBJ=$root/ebpf/instrumented" \
-                "CARAPACE_EBPF_PLAIN_OBJ=$root/ebpf/plain" \
-                "CARAPACE_BENCH_PROGS=$root/progs" \
+    sudo -n env "${keep[@]}" "LORICA_EBPF_OBJ=$root/ebpf/instrumented" \
+                "LORICA_EBPF_PLAIN_OBJ=$root/ebpf/plain" \
+                "LORICA_BENCH_PROGS=$root/progs" \
         "$binary" "$@" || status=1
 done
 exit $status

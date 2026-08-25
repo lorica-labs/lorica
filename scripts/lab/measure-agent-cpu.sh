@@ -81,7 +81,7 @@ POSSIBLE=$(cat /sys/devices/system/cpu/possible)
 [ -n "$(command -v sudo)" ] && sudo -n true 2>/dev/null \
     || die "loading a BPF program needs CAP_BPF, and sudo asks for a password"
 
-SOCKET=/run/carapace/measure-$$.sock
+SOCKET=/run/lorica/measure-$$.sock
 LOG=$OUT/agent-$STAMP.log
 
 sudo -n "$AGENT" --object "$OBJECT" --socket "$SOCKET" \
@@ -95,7 +95,7 @@ launcher=$!
 # first sample is taken after the map is loaded and sized, never during it.
 pid=""
 for _ in $(seq 1 100); do
-    pid=$(pgrep -x -P "$launcher" carapaced 2>/dev/null | head -1)
+    pid=$(pgrep -x -P "$launcher" loricad 2>/dev/null | head -1)
     [ -n "$pid" ] && [ -S "$SOCKET" ] && break
     sleep 0.2
 done
@@ -103,8 +103,21 @@ done
 # The agent prints the cadence it was actually given. Checked rather than trusted: a
 # missing flag in the line above would leave every configuration measuring the same
 # thing, and three identical numbers look like a flat curve rather than like a bug.
-grep -qE "full sweep every $SWEEP_EVERY ticks, +$SLOT_READS slot reads" "$LOG" \
+grep -qF "full sweep every $SWEEP_EVERY ticks," "$LOG" \
     || { cat "$LOG" >&2; die "the agent did not take --sweep-every $SWEEP_EVERY"; }
+# The other flags it was given, each checked against its own echo rather than against a
+# number derived from all of them at once.
+grep -qF "$COUNTERS counter slots" "$LOG" || { cat "$LOG" >&2; die "the agent did not take --counters $COUNTERS"; }
+grep -qF "batch $BATCH" "$LOG" || { cat "$LOG" >&2; die "the agent did not take --batch $BATCH"; }
+grep -qF "$HZ Hz" "$LOG" || { cat "$LOG" >&2; die "the agent did not take --hz $HZ"; }
+
+# The agent states its own figure; this reads it back. Extracted with grep -o and tr rather
+# than a sed capture group, which is the house rule after a back-reference was eaten by the
+# tooling and left a pattern that matched and produced nothing.
+SLOT_READS=$(grep -o "ticks, *[0-9]* slot reads" "$LOG" | tail -1 | tr -dc "0-9")
+case $SLOT_READS in
+    ''|*[!0-9]*) cat "$LOG" >&2; die "the agent did not state its slot reads per second" ;;
+esac
 [ -S "$SOCKET" ] || { cat "$LOG" >&2; die "the agent never opened its control socket"; }
 
 cpu_ticks() {

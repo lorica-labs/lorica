@@ -1,0 +1,42 @@
+name: bpf-linker
+description: Put the pinned bpf-linker release binary on PATH.
+
+# `cargo install bpf-linker` does not work on a hosted runner and upstream says so in a
+# build-script warning: the crate links against one specific LLVM, and the runner image has
+# no `llvm-config` on PATH at all. The failure is `could not find llvm-config in directories
+# specified by environment variable PATH`, at the build script, before anything is compiled.
+#
+# The published release binaries are musl-static and carry their own LLVM, which removes the
+# dependency rather than pinning a second one: installing LLVM 21 from apt.llvm.org would
+# work and would also mean CI tracks an apt repository for a version the runner image does
+# not ship. The lab machine that produces every measurement runs a binary from this same
+# release family — both report `bpf-linker 0.0.0`, which is upstream not setting the string —
+# so this is also what keeps the object CI builds and the object the numbers come from the
+# same artefact.
+#
+# The version is an input with a default rather than three copies of a URL, because a pinned
+# version written in three jobs is a pinned version that drifts in two of them.
+
+inputs:
+  version:
+    description: Release tag to install, without the leading v.
+    required: false
+    default: "0.11.0"
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        set -euo pipefail
+        version='${{ inputs.version }}'
+        dir="$RUNNER_TEMP/bpf-linker"
+        base=https://github.com/aya-rs/bpf-linker/releases/download
+        mkdir -p "$dir"
+        curl -fsSL -o "$dir/bpf-linker.tar.zst" "$base/v$version/bpf-linker-x86_64-unknown-linux-musl.tar.zst"
+        tar -xpf "$dir/bpf-linker.tar.zst" -C "$dir"
+        rm -f "$dir/bpf-linker.tar.zst"
+        echo "$dir" >> "$GITHUB_PATH"
+        # Runs it here rather than trusting the unpack: a tarball that changed shape would
+        # otherwise fail later, in a build step, as a missing linker.
+        "$dir/bpf-linker" --version

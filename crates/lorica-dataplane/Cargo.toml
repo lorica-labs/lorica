@@ -1,0 +1,46 @@
+[package]
+name = "lorica-dataplane"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[features]
+# Tests that need a live kernel: loading, attaching, BPF_PROG_TEST_RUN. Off by
+# default so `cargo test --workspace` stays green on Windows.
+kernel-tests = []
+# Counts helper calls actually executed for one packet. Distinct from the static ELF
+# budget: this one measures the per-packet budget of the spec.
+count-helpers = []
+# Mirror of the eBPF feature of the same name. The per-stage cost sweep needs an object
+# that can be told where to stop, so it does not belong to the default suite.
+stage-cutoff = []
+
+# A measurement is not a test: it takes parameters, prints a record and asserts
+# nothing. libtest has no way to pass `--entries` through, so this one owns its main.
+# It stays a test target because a test target is what the build VM packs and ships to
+# the measurement VM, and a bin would need a second shipping path for one file.
+[[test]]
+name = "measure_batch"
+harness = false
+
+# Same reason as measure_batch: it takes parameters and prints a record. The depth of a
+# full LPM trie is a number the end of the phase decides the blocklist shape on.
+[[test]]
+name = "measure_lpm_depth"
+harness = false
+
+[dev-dependencies]
+# Reads the compiled eBPF object. Portable and already in the tree through aya, so
+# the static guard adds nothing to the dependency surface.
+object.workspace = true
+# The memlock budget is computed there and honoured here, so the test that compares the
+# two needs both. No kernel dependency comes with it.
+lorica-policy.workspace = true
+
+[dependencies]
+lorica-common.workspace = true
+aya.workspace = true
+libc.workspace = true
+thiserror.workspace = true

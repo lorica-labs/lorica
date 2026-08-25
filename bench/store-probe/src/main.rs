@@ -358,7 +358,7 @@ fn cold_load(a: &ColdLoadArgs) -> Result<(), Box<dyn Error>> {
     let path = a
         .file
         .clone()
-        .unwrap_or_else(|| std::env::temp_dir().join("carapace-cold-load.bin"));
+        .unwrap_or_else(|| std::env::temp_dir().join("lorica-cold-load.bin"));
     write_incompressible(&path, a.size)?;
 
     let eviction = evict(&path)?;

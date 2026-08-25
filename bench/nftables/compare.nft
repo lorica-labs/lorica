@@ -13,14 +13,14 @@
 #    silently passing traffic.
 #
 # What it does NOT do, on purpose: no hashlimit, no set-based source tracking, no
-# SYN handling. Those are policies Carapace also implements and would move the
+# SYN handling. Those are policies Lorica also implements and would move the
 # comparison away from "the same drop, two datapaths" toward "two different
 # policies". The point of the measurement is where the drop happens, not how
 # clever it is.
 #
-# Load with:  nft -f compare.nft        Flush with:  nft delete table ip carapace_cmp
+# Load with:  nft -f compare.nft        Flush with:  nft delete table ip lorica_cmp
 
-table ip carapace_cmp {
+table ip lorica_cmp {
 	chain drop_flood {
 		type filter hook prerouting priority raw; policy accept;
 

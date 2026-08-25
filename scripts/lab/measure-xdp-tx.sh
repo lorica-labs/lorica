@@ -14,7 +14,7 @@
 set -uo pipefail
 
 OUT=bench/results/xdp-tx
-DEV=${CARAPACE_IFACE:-enp6s19}
+DEV=${LORICA_IFACE:-enp6s19}
 GEN_HOST=lab-gen
 SELF_IP=
 SECONDS_PER=10
@@ -83,7 +83,7 @@ measure_at_queues() {
         # timeout caps it so a slow rep cannot bleed into the next.
         local flood_secs=$(( SECONDS_PER + 5 ))
         ssh -o BatchMode=yes "$GEN_HOST" \
-            "timeout -s INT $(( flood_secs + 3 ))s ~/carapace/scripts/lab/gen-udp-flood.sh --dst-ip $SELF_IP --dst-mac $self_mac --rate 400000pps --duration ${flood_secs}s --cpus 2 >/dev/null 2>&1" &
+            "timeout -s INT $(( flood_secs + 3 ))s ~/lorica/scripts/lab/gen-udp-flood.sh --dst-ip $SELF_IP --dst-mac $self_mac --rate 400000pps --duration ${flood_secs}s --cpus 2 >/dev/null 2>&1" &
         local gen_pid=$!
         sleep 2   # let the flood ramp before the measurement window opens
         tx0=$(tx_packets); rx0=$(rx_packets)

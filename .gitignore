@@ -1,7 +1,13 @@
 /target/
-/crates/carapace-ebpf/target/
+/crates/lorica-ebpf/target/
 /bench/latency-probe/target/
 /bench/store-probe/target/
 /bench/progs/*.o
 /bench/data/
 /.idea/
+
+# Design and conduct documents live outside this repository, in the agent tree. The
+# frontier is the inventory §1.1, and it is guarded here because a `git add -A` swept a
+# design spec in once already: the product repository holds code and what a third party
+# needs to use it or reproduce a figure, and nothing else.
+/docs/

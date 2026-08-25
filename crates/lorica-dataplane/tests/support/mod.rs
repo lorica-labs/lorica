@@ -1,0 +1,39 @@
+//! Shared surface of the kernel tests. Cited by every stage test of every phase, so
+//! it changes by addition.
+
+// Every test target compiles this module and uses a part of its surface, so whatever
+// another target uses looks dead from here.
+#![allow(dead_code, unused_imports)]
+
+pub mod net;
+pub mod pkt;
+pub mod run;
+
+pub use pkt::PktBuilder;
+pub use run::{BucketGlobals, TestProg, XdpAction};
+
+/// The name of the program under test, as it appears in the ELF.
+pub const PROGRAM: &str = "lorica_xdp";
+
+pub fn program() -> TestProg {
+    TestProg::load(PROGRAM)
+}
+
+pub fn program_with(settings: u32) -> TestProg {
+    TestProg::load_with(PROGRAM, settings)
+}
+
+pub fn program_with_buckets(settings: u32, buckets: BucketGlobals) -> TestProg {
+    TestProg::load_buckets(PROGRAM, settings, buckets)
+}
+
+/// The bucket load with the read-modify-write window of the bank widened by `stall` dead
+/// reads. Only the contention measurement wants this; everything else wants zero, which is
+/// the program's own initialiser and no loop at all.
+pub fn program_with_stalled_buckets(settings: u32, buckets: BucketGlobals, stall: u32) -> TestProg {
+    TestProg::load_buckets_stalled(PROGRAM, settings, buckets, stall)
+}
+
+pub fn program_with_vectors(settings: u32, vectors: u32) -> TestProg {
+    TestProg::load_vectors(PROGRAM, settings, vectors)
+}

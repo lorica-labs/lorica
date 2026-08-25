@@ -11,7 +11,7 @@
 set -u
 
 outdir=${1:?usage: capture-env.sh <outdir> [iface]}
-iface=${2:-${CARAPACE_IFACE:-enp6s19}}
+iface=${2:-${LORICA_IFACE:-enp6s19}}
 
 mkdir -p "$outdir"
 out="$outdir/env-$(date -u +%Y%m%dT%H%M%SZ).txt"

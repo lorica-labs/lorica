@@ -1,4 +1,4 @@
-//! Application-level latency for the two workloads Carapace claims to protect.
+//! Application-level latency for the two workloads Lorica claims to protect.
 //!
 //! The measurement chain the whitepaper will rest on: a calibrated TSC, kernel
 //! software receive timestamps, HdrHistogram percentiles, and an explicit record

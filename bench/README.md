@@ -1,4 +1,4 @@
-# Carapace benchmarks — reproduction recipe
+# Lorica benchmarks — reproduction recipe
 
 This is a recipe, not documentation: what you need, in what order, how long it takes, and for every
 published number the line `result → script → raw data → environment`. Everything here runs from this
@@ -95,7 +95,7 @@ Every script writes a timestamped environment record next to its result via `scr
 
 ## What is excluded, and why the numbers are honest
 
-- The lab tops out near 290 kpps: above it the figures describe the hypervisor, not Carapace. Every pps
+- The lab tops out near 290 kpps: above it the figures describe the hypervisor, not Lorica. Every pps
   result cites this ceiling.
 - virtio has no hardware packet timestamping; latency is TSC plus kernel software timestamps, declared
   as a validity threat in each report.

@@ -24,8 +24,8 @@ set -uo pipefail
 
 cd "$(dirname "$0")/../.." || exit 1
 
-EBPF_FEATURES=${CARAPACE_EBPF_FEATURES:-parse-probe,count-helpers}
-FLOOR=${CARAPACE_KERNEL_FLOOR:-6.8}
+EBPF_FEATURES=${LORICA_EBPF_FEATURES:-parse-probe,count-helpers}
+FLOOR=${LORICA_KERNEL_FLOOR:-6.8}
 STAGE=$PWD/target/target-tests
 EXERCISE=""
 VERSIONS=()
@@ -60,8 +60,14 @@ exercise() {
     # download that silently did nothing would report a pass for a kernel never booted.
     matches "$release" "$want" \
         || { printf 'FAIL  asked for %s, running on %s\n' "$want" "$release" >&2; return 1; }
-    [ -x "$STAGE/target-run.sh" ] \
-        || { printf 'FAIL  nothing staged in %s\n' "$STAGE" >&2; return 1; }
+    # Readable and not executable, because the line below runs it with bash and never
+    # needed the bit. It used to test -x, which passed in the lab and failed on a Linux
+    # checkout: this tree is developed on Windows, where git does not track the mode, so
+    # twelve of these scripts sit at 644 in the index and cp carries that into the staged
+    # copy. The message said nothing staged, which was false — the staging was fine and a
+    # permission bit was not.
+    [ -r "$STAGE/target-run.sh" ] \
+        || { printf 'FAIL  %s/target-run.sh is missing or unreadable\n' "$STAGE" >&2; return 1; }
 
     printf '\n=== %s on %s\n' "$want" "$release"
 
@@ -70,8 +76,25 @@ exercise() {
     # perf's own stderr rather than perf --output: given an existing file, perf refuses
     # it with "Permission denied" even as root, and mktemp's whole point is that the
     # file already exists.
+    # Ubuntu's /usr/bin/perf is a wrapper that dispatches on `uname -r` to
+    # /usr/lib/linux-tools/<version>/perf. Under virtme-ng the booted kernel has no
+    # linux-tools of its own, so the wrapper prints "perf not found for kernel ..." and
+    # counts nothing — which this script then reported as a missing count, blaming the
+    # measurement for a dispatch that never happened.
+    #
+    # Counting a tracepoint does not depend on the kernel build: perf_event_open takes the
+    # id out of tracefs. So the host's binary is used directly, and its absence is a refusal
+    # rather than a silent zero. LORICA_PERF carries the same choice to the Rust test that
+    # counts the same tracepoint, which would otherwise hit the same wrapper.
+    PERF=""
+    for candidate in /usr/lib/linux-tools/*/perf; do
+        [ -x "$candidate" ] && PERF=$candidate
+    done
+    [ -n "$PERF" ] || { echo "FAIL  no perf binary under /usr/lib/linux-tools" >&2; return 1; }
+    export LORICA_PERF=$PERF
+
     exc_file=$(mktemp)
-    { sudo -n perf stat -e xdp:xdp_exception -a -- bash "$STAGE/target-run.sh"; } \
+    { sudo -n --preserve-env=LORICA_PERF "$PERF" stat -e xdp:xdp_exception -a -- bash "$STAGE/target-run.sh"; } \
         2>"$exc_file" || status=1
     cat "$exc_file" >&2
     exc=$(awk '/xdp:xdp_exception/ {gsub(/,/, "", $1); print $1; exit}' "$exc_file")
@@ -94,9 +117,9 @@ exercise() {
     # that nothing aborted a packet, not that the program survived a real hook. The
     # plan puts that attach in tests/attach.rs, which target-build.sh stages as soon as
     # it exists; until then the kernel is reported incomplete rather than green.
-    if [ ! -r crates/carapace-dataplane/tests/attach.rs ]; then
+    if [ ! -r crates/lorica-dataplane/tests/attach.rs ]; then
         printf 'INCOMPLETE  %s: no attach on a veth, %s\n' "$want" \
-            "crates/carapace-dataplane/tests/attach.rs does not exist yet, so xdp:xdp_exception was counted over a run where nothing was attached" >&2
+            "crates/lorica-dataplane/tests/attach.rs does not exist yet, so xdp:xdp_exception was counted over a run where nothing was attached" >&2
         [ $status -eq 0 ] && status=4
     fi
     return $status
@@ -136,8 +159,16 @@ for spec in "${VERSIONS[@]}"; do
     else
         boot=${given:-v$want}
         printf '\n=== booting %s under virtme-ng\n' "$boot"
-        vng --run "$boot" --exec "bash $PWD/scripts/lab/kernel-matrix.sh --ebpf-features $EBPF_FEATURES --exercise $want"
-        rc=$?
+        guest=$(mktemp)
+        vng --run "$boot" --exec "bash $PWD/scripts/lab/kernel-matrix.sh --ebpf-features $EBPF_FEATURES --exercise $want" 2>&1 | tee "$guest"
+        rc=${PIPESTATUS[0]}
+        # The exercise prints one marker line before it does anything else, so its absence
+        # means the guest never ran and there was no kernel to boot. That is unobtained and
+        # not a failure, and until now the two were reported the same because virtme-ng exits
+        # nonzero for both. v7.0 on a hosted runner is the case that showed it: the archive
+        # has no such build, and the matrix called it a failed kernel.
+        grep -q "=== $want on " "$guest" || { rc=5; reason="virtme-ng obtained no kernel for $boot"; }
+        rm -f "$guest"
         # virtme-ng exits nonzero both when the guest command failed and when it had no
         # kernel to boot, so a failure here is reported as a failure, never as a pass.
     fi

@@ -18,10 +18,10 @@ set -uo pipefail
 
 cd "$(dirname "$0")/../.." || exit 1
 
-TRIPLE=${CARAPACE_TARGET_TRIPLE:-x86_64-unknown-linux-musl}
-CRATE=carapace-dataplane
+TRIPLE=${LORICA_TARGET_TRIPLE:-x86_64-unknown-linux-musl}
+CRATE=lorica-dataplane
 FEATURES=kernel-tests
-EBPF_FEATURES=${CARAPACE_EBPF_FEATURES:-parse-probe,count-helpers}
+EBPF_FEATURES=${LORICA_EBPF_FEATURES:-parse-probe,count-helpers}
 WANT_EBPF=1
 TEST=""
 
@@ -62,6 +62,9 @@ fi
 case $EBPF_FEATURES in
     *count-helpers*) [ "$WANT_EBPF" -eq 1 ] && FEATURES=$FEATURES,count-helpers ;;
 esac
+case $EBPF_FEATURES in
+    *stage-cutoff*) [ "$WANT_EBPF" -eq 1 ] && FEATURES=$FEATURES,stage-cutoff ;;
+esac
 
 args=(test -p "$CRATE" --target "$TRIPLE" --no-run
       --message-format=json-render-diagnostics)
@@ -71,7 +74,17 @@ args=(test -p "$CRATE" --target "$TRIPLE" --no-run
 # The executables come out of the cargo metadata rather than a guessed target path: the
 # hash in the file name changes on every rebuild, and shipping a stale binary would
 # report a pass for code that is no longer there.
-mapfile -t binaries < <(cargo "${args[@]}" | python3 -c '
+#
+# The metadata goes to a file first, because a process substitution discards the exit
+# status of what is inside it. A build that linked some binaries and failed on others
+# left a non-empty list, and this script then shipped and ran the subset as if it were
+# the suite. It happened on a full disk, and the harness that measures the target is the
+# last place a partial build may pass for a whole one.
+manifest=$(mktemp)
+trap 'rm -f "$manifest"' EXIT
+cargo "${args[@]}" > "$manifest" || die "the test build for $TRIPLE failed"
+
+mapfile -t binaries < <(python3 -c '
 import json, sys
 for line in sys.stdin:
     try:
@@ -81,7 +94,7 @@ for line in sys.stdin:
     if msg.get("reason") == "compiler-artifact" and msg.get("profile", {}).get("test"):
         if msg.get("executable"):
             print(msg["executable"])
-')
+' < "$manifest")
 [ "${#binaries[@]}" -gt 0 ] || die "cargo produced no test executable for $TRIPLE"
 
 for binary in "${binaries[@]}"; do

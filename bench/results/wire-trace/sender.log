@@ -1,0 +1,2 @@
+replay-legit: trace=legit-ref.pcap engine=tcpreplay dev=enp6s19 packets=44 span=28.000000s mean=2pps sent=44 tx_dropped=0 tx_errors=0 -> sent-whole
+/tmp/wire-trace/legit-replay.csv

@@ -1,8 +1,13 @@
 name: ci
 
+# No branch filter on purpose. This project carries one integration branch per phase —
+# lab/measurements, core/foundation, core/deterministic-defenses, and so on — so the
+# default branch is renamed at every phase boundary. A branch name written here goes
+# stale silently: the filter said `master`, that branch was deleted once the phase-1
+# integration branch became the default, and the whole workflow simply stopped running.
+# A workflow that never fires looks exactly like a workflow that always passes.
 on:
   push:
-    branches: [master]
   pull_request:
 
 env:
@@ -19,26 +24,30 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+      # Components are per toolchain, and a missing one fails at the step that needs it
+      # rather than at setup — so nightly declares rustfmt and clippy of its own, because
+      # the eBPF crate is linted with nightly and installing them on stable does nothing
+      # for it. rust-src is what build-std needs.
       - uses: dtolnay/rust-toolchain@nightly
         with:
-          components: rust-src
+          components: rust-src, rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
-      - run: cargo install bpf-linker --locked
+      - uses: ./.github/actions/bpf-linker
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - name: build the eBPF program
         run: cargo +nightly build --release
-        working-directory: crates/carapace-ebpf
+        working-directory: crates/lorica-ebpf
       - name: lint the eBPF program
         run: |
           cargo +nightly fmt --check
           cargo +nightly clippy --release -- -D warnings
-        working-directory: crates/carapace-ebpf
+        working-directory: crates/lorica-ebpf
       - run: cargo test --workspace
       # Assertions 1 and 6 need the crate that cannot be built here, so they live in
       # the integration job. The table in mesure-et-outillage.md marks both as
       # runnable on Windows; that rests on a premise the code disproved. aya uses
-      # std::os::fd, so carapace-dataplane and carapaced do not build on Windows at
+      # std::os::fd, so lorica-dataplane and loricad do not build on Windows at
       # all, and both assertions need one of them.
       #
       # Assertion 7, the Prometheus series ceiling, arrives with /metrics in a later
@@ -50,16 +59,23 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
+      # clippy on stable, because this job lints the workspace with the kernel-tests
+      # feature; the action installs a minimal profile, so anything not named here is
+      # absent.
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
       - uses: dtolnay/rust-toolchain@nightly
         with:
           components: rust-src
       - uses: Swatinem/rust-cache@v2
-      - run: cargo install bpf-linker --locked
-      # clang builds the bench objects the attach test takes the hook with, perf
-      # counts the xdp_exception tracepoint.
-      - run: sudo apt-get update && sudo apt-get install -y clang linux-tools-common linux-tools-generic
-      - run: cargo clippy --workspace --all-targets --features carapace-dataplane/kernel-tests -- -D warnings
+      - uses: ./.github/actions/bpf-linker
+      # clang builds the bench objects the attach test takes the hook with, libbpf-dev
+      # carries the two headers they include that are not UAPI — bpf/bpf_helpers.h and
+      # bpf/bpf_endian.h, which the runner image does not ship — and perf counts the
+      # xdp_exception tracepoint. The five linux/* includes are UAPI and already present.
+      - run: sudo apt-get update && sudo apt-get install -y clang libbpf-dev linux-tools-common linux-tools-generic
+      - run: cargo clippy --workspace --all-targets --features lorica-dataplane/kernel-tests -- -D warnings
       # Loading an XDP program needs CAP_BPF and CAP_NET_ADMIN, so the test
       # binaries run under sudo while the build stays unprivileged. This is the
       # same script the lab runs, and it builds both eBPF objects: the one that
@@ -80,7 +96,7 @@ jobs:
       # Assertion 6: no allocation inside the tick. A separate step because the run
       # above tests the dataplane crate and this assertion lives in the agent.
       - name: no allocation in the tick
-        run: bash scripts/lab/kernel-tests.sh --crate carapaced --test no_alloc_in_tick
+        run: bash scripts/lab/kernel-tests.sh --crate loricad --test no_alloc_in_tick
       # Assertion 5: the agent's RSS, and its CPU while it is at it. Both come from
       # the same run, because measuring them separately would measure two agents.
       #
@@ -93,10 +109,41 @@ jobs:
       # the CPU budget is looser here than the 0.74 % measured there: this step
       # catches a regression of an order of magnitude, and the number that stands is
       # the one from the target.
-      - name: agent RSS and CPU
-        run: |
-          cargo build --release -p carapaced
-          scripts/lab/measure-agent-cpu.sh             --agent target/release/carapaced             --object crates/carapace-ebpf/target/bpfel-unknown-none/release/carapace-ebpf             --counters 50000 --hz 10 --sweep-every 20             --duration 70 --settle 30 --cpu-budget 3.0 --rss-max 51200             --out bench/results/agent-cpu
+      - name: build the agent
+        run: cargo build --release -p loricad
+      - name: measure the agent RSS and CPU
+        run: >
+          scripts/lab/measure-agent-cpu.sh
+          --agent target/release/loricad
+          --object crates/lorica-ebpf/target/bpfel-unknown-none/release/lorica-ebpf
+          --counters 50000
+          --hz 10
+          --sweep-every 20
+          --duration 70
+          --settle 30
+          --cpu-budget 3.0
+          --rss-max 51200
+          --out bench/results/agent-cpu
+
+  # Assertion 3, the per-packet cost, is deliberately not a step here.
+  #
+  # It is armed, and it is armed on the measurement VM: `measure-stage-cost.sh
+  # --max-instructions 1325 --max-cycles 545 --max-ns 144`. Three ceilings, because they fail
+  # for different reasons: the instruction count is deterministic to 0.09 %, the cycle count
+  # to 0.4 % and needs no clock the guest cannot read, and the nanoseconds are what the
+  # promise is about even though they come from a field measured at half the CPU time. The
+  # script says out loud when any of the three is missing, since a ceiling of 765 stood
+  # against a program of 1317 and the silence was the whole problem.
+  # Two reasons it cannot be a runner step. The script drives
+  # two lab machines over SSH, one to build a static musl binary and one to run it,
+  # because the machine with the target kernel has no toolchain. And the quantity is
+  # machine-specific: it is the instruction count of the whole pipeline with the count of
+  # the program returning immediately subtracted, which reproduces to 0.2 % on one machine
+  # and means something else on another.
+  #
+  # It is named here rather than left out so that its absence is visible, the same reason
+  # assertion 7 is named before `/metrics` exists. The ceiling and the figure behind it are
+  # in the phase measurement report.
 
   # 6.8 is the core floor, 6.12 the floor of the SYN cookie module, plus the
   # newest LTS. A failure on 6.8 is blocking: it is the audience.
@@ -106,7 +153,15 @@ jobs:
   # archive. A runner without /dev/kvm makes those versions declared unobtained
   # rather than silently skipped, which is why this job is allowed to report amber.
   kernel-matrix:
-    if: github.ref == 'refs/heads/master'
+    # On the default branch and on every pull request, and no branch name spelled out here.
+    #
+    # The default branch carries only closed phases, so a phase in progress lives on its own
+    # integration branch and this job would never see it. A pull request is how that work
+    # reaches the default branch, which makes the merge the moment the three-kernel guarantee
+    # actually has to hold. During a phase the matrix is run by hand — it is a line of the
+    # phase verification sequence — and that is where it has caught things: twice in phase 1,
+    # once a JITed ceiling and once a test that assumed the machine had a routing table.
+    if: github.event_name == 'pull_request' || github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
     runs-on: ubuntu-24.04
     continue-on-error: true
     steps:
@@ -116,11 +171,13 @@ jobs:
         with:
           components: rust-src
       - uses: Swatinem/rust-cache@v2
-      - run: cargo install bpf-linker --locked
+      - uses: ./.github/actions/bpf-linker
       # The test binaries are static musl: a virtme-ng guest has the host filesystem
       # read-only and no toolchain, so nothing can be built on the kernel under test.
       - run: rustup target add x86_64-unknown-linux-musl
       # clang builds the bench objects that travel with the tests, perf counts
       # xdp:xdp_exception, virtme-ng supplies the kernels the runner is not running.
-      - run: sudo apt-get update && sudo apt-get install -y clang virtme-ng linux-tools-common linux-tools-generic
+      # libbpf-dev for the same reason as the integration job: this one runs the same
+      # kernel tests, so it compiles the same bench objects.
+      - run: sudo apt-get update && sudo apt-get install -y clang libbpf-dev virtme-ng linux-tools-common linux-tools-generic
       - run: scripts/lab/kernel-matrix.sh v6.8 v6.12 v7.0

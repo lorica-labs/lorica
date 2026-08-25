@@ -13,14 +13,14 @@
 set -uo pipefail
 
 OUT=bench/results/attach-tax
-DEV=${CARAPACE_IFACE:-enp6s19}
+DEV=${LORICA_IFACE:-enp6s19}
 GEN_HOST=lab-gen
 PEER_IP=
 SELF_IP=
 REPEAT=3
 SECONDS_PER=10
 OBJ=bench/progs/xdp_pass.o
-PROBE=${CARAPACE_PROBE:-/tmp/latency-probe}
+PROBE=${LORICA_PROBE:-/tmp/latency-probe}
 
 while [ $# -gt 0 ]; do
     case $1 in
@@ -48,7 +48,7 @@ env_file=$("$here/capture-env.sh" "$OUT" "$DEV")
 csv="$OUT/attach-tax.csv"
 echo "arm,direction,rep,throughput_mbps,guest_cpu_busy_pct,legit_p99_us,legit_jitter_us" > "$csv"
 
-pin=/sys/fs/bpf/carapace-attach-tax
+pin=/sys/fs/bpf/lorica-attach-tax
 cleanup() { sudo -n ip link set dev "$DEV" xdpdrv off 2>/dev/null; ssh -o BatchMode=yes "$GEN_HOST" 'pkill -x iperf3' 2>/dev/null; }
 trap cleanup EXIT
 

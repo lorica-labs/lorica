@@ -1,0 +1,24 @@
+
+--- stage_cost-fcfc0bd571ee3a33 on 6.8.0-138-generic
+
+running 2 tests
+CARAPACE_STAGE_CUTOFF unset, nothing to profile
+floor subtracted: 15 ns, repeat = 1000000, 7 interleaved passes
+test one_level_of_the_pipeline_under_a_profiler ... ok
+cumulative through    median ns  above floor   this level     spread
+parse                    163 ns       148 ns       148 ns      12 ns
+clock read               217 ns       202 ns        54 ns      10 ns
+stage 1 sanity           230 ns       215 ns        13 ns      16 ns
+stage 2 ICMP             237 ns       222 ns         7 ns      22 ns
+stage 3 LPM list         251 ns       236 ns        14 ns      16 ns
+stage 4 fragments        261 ns       246 ns        10 ns      10 ns
+stage 5 uRPF             260 ns       245 ns        -1 ns      17 ns
+stage 6 signatures       261 ns       246 ns         1 ns      20 ns
+stage 7 buckets          268 ns       253 ns         7 ns      21 ns
+
+plain object             243 ns above the floor, spread 15 ns over 7 passes
+cutoff compares cost      10 ns
+test each_stage_of_the_pipeline_costs_what_it_costs ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 33.87s
+
