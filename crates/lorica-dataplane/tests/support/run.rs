@@ -16,9 +16,12 @@ use aya::{
     programs::{TestRun, TestRunOptions, Xdp},
 };
 use lorica_common::{
-    BUCKET_KEY_SYMBOLS, BUCKET_RATE_SYMBOLS, BUCKET_STALL_SYMBOL, Bucket, Clock, CounterId,
-    DEFAULT_SETTINGS, LpmKey, LpmValue, MultiplyShift, PacketView, Rate, SETTINGS_SYMBOL,
-    SIGNATURE_VECTORS_ALL, SIGNATURE_VECTORS_SYMBOL, key_words,
+    Action, BLOCKLIST_TRIE_SYMBOL, BUCKET_KEY_SYMBOLS, BUCKET_RATE_SYMBOLS, BUCKET_STALL_SYMBOL,
+    Bucket, CLASS24_BYTES, CLASS24_SYMBOL, Class24, Clock, CounterId, DEFAULT_SETTINGS, LpmKey,
+    LpmValue, MultiplyShift, OA_SLOTS, OA_TABLE_SYMBOL, OaSlot, PacketView, Rate, SETTINGS_SYMBOL,
+    SIGNATURE_VECTORS_ALL, SIGNATURE_VECTORS_SYMBOL,
+    blocklist::{class24_set, oa_insert},
+    key_words,
 };
 use lorica_dataplane::clock;
 
@@ -108,6 +111,75 @@ impl BucketGlobals {
     }
 }
 
+/// The two blocklist tables a load writes into the program's `.bss`, and whether the trie
+/// stays in the program beside them.
+///
+/// **Built with `class24_set` and `oa_insert` and never by hand.** Insertion decides where a
+/// key lands, so a fixture that wrote its own slots would agree with the format and disagree
+/// with the table: it would be testing a snapshot the builder cannot produce. These are the
+/// same two functions the policy compiler calls.
+///
+/// A different snapshot is a different load, like the policy word and the two budgets.
+/// Nothing carries over between cases, and the tables are patched before verification rather
+/// than written afterwards because `aya` creates a `.bss` section as one `ARRAY` entry
+/// holding the whole section, which `EbpfLoader` can splice a symbol into by name.
+#[derive(Clone)]
+pub struct Blocklist {
+    class24: Vec<u8>,
+    table: Vec<OaSlot>,
+    trie: bool,
+}
+
+impl Blocklist {
+    /// Both tables empty, and the trie still in the program — which is the program's own
+    /// initialiser, so this is the load that changes nothing but the tables.
+    pub fn empty() -> Self {
+        Self {
+            class24: vec![0; CLASS24_BYTES],
+            table: vec![OaSlot::default(); OA_SLOTS],
+            trie: true,
+        }
+    }
+
+    /// Drops the `LPM_TRIE` stage out of the program, the way a configuration carrying no
+    /// IPv6 entry and no armed agent does.
+    pub fn without_trie(mut self) -> Self {
+        self.trie = false;
+        self
+    }
+
+    /// Marks the `/24` an address falls in.
+    pub fn class(mut self, addr: [u8; 4], class: Class24) -> Self {
+        class24_set(&mut self.class24, u32::from_be_bytes(addr), class);
+        self
+    }
+
+    /// Places one `/32` in the open-addressed table.
+    ///
+    /// Panics when the probe sequence runs past `OA_PROBES`, which is what the builder does:
+    /// a fixture that quietly failed to insert would assert a verdict against a key that is
+    /// not in the table and read the miss as a pass.
+    pub fn key(mut self, addr: [u8; 4], action: Action) -> Self {
+        let key = u32::from_be_bytes(addr);
+        oa_insert(&mut self.table, key, action).unwrap_or_else(|| {
+            panic!("{addr:?} ran past OA_PROBES, so the fixture is not loadable")
+        });
+        self
+    }
+
+    /// The slot bytes as the map value holds them.
+    fn table_bytes(&self) -> &[u8] {
+        // SAFETY: `OaSlot` is `repr(C)`, eight bytes and no padding — asserted in
+        // `lorica_common::blocklist` — so the vector is exactly its own bytes.
+        unsafe {
+            std::slice::from_raw_parts(
+                self.table.as_ptr().cast::<u8>(),
+                std::mem::size_of_val(self.table.as_slice()),
+            )
+        }
+    }
+}
+
 /// A local wrapper so `Pod` can be implemented for a foreign type. Sound because
 /// every byte pattern of `PacketView` is a valid value, which is the property the
 /// trait requires and the reason the family and fragment fields are stored raw.
@@ -187,13 +259,28 @@ impl TestProg {
             Some(buckets),
             stall,
             SIGNATURE_VECTORS_ALL,
+            None,
         )
     }
 
     /// Loads a named object rather than the one the environment points at, for the one
     /// measurement that has to compare two builds of the same program in one process.
     pub fn load_object(path: &std::path::Path, name: &str, settings: u32) -> Self {
-        Self::load_full(path, name, settings, None, 0, SIGNATURE_VECTORS_ALL)
+        Self::load_full(path, name, settings, None, 0, SIGNATURE_VECTORS_ALL, None)
+    }
+
+    /// Loads with the two blocklist tables written into the program's `.bss` before
+    /// verification, and with the trie kept or dropped as the snapshot asks.
+    pub fn load_blocklist(name: &str, settings: u32, blocklist: &Blocklist) -> Self {
+        Self::load_full(
+            &object_path(),
+            name,
+            settings,
+            None,
+            0,
+            SIGNATURE_VECTORS_ALL,
+            Some(blocklist),
+        )
     }
 
     /// Loads with only the named signature vectors in the program at all.
@@ -203,7 +290,7 @@ impl TestProg {
     /// measured rather than the cost of the catalogue, and the two differ by more than the
     /// gates that survive.
     pub fn load_vectors(name: &str, settings: u32, vectors: u32) -> Self {
-        Self::load_full(&object_path(), name, settings, None, 0, vectors)
+        Self::load_full(&object_path(), name, settings, None, 0, vectors, None)
     }
 
     fn load_full(
@@ -213,6 +300,7 @@ impl TestProg {
         buckets: Option<BucketGlobals>,
         stall: u32,
         vectors: u32,
+        blocklist: Option<&Blocklist>,
     ) -> Self {
         let object = fs::read(path).unwrap_or_else(|err| {
             panic!(
@@ -253,6 +341,15 @@ impl TestProg {
             loader.override_global(BUCKET_RATE_SYMBOLS[0][1], &words[3], true);
             loader.override_global(BUCKET_RATE_SYMBOLS[1][0], &words[4], true);
             loader.override_global(BUCKET_RATE_SYMBOLS[1][1], &words[5], true);
+        }
+        // Twenty mebibytes of `.bss` spliced in by symbol name, so no test has to know where
+        // one table sits relative to the other. The trie word rides with them because a
+        // snapshot and the stage it makes redundant are one decision.
+        let trie_armed = u32::from(blocklist.is_none_or(|b| b.trie));
+        if let Some(blocklist) = blocklist {
+            loader.override_global(CLASS24_SYMBOL, &blocklist.class24[..], true);
+            loader.override_global(OA_TABLE_SYMBOL, blocklist.table_bytes(), true);
+            loader.override_global(BLOCKLIST_TRIE_SYMBOL, &trie_armed, true);
         }
         let mut ebpf = loader
             .load(&object)
@@ -343,6 +440,20 @@ impl TestProg {
             .info()
             .expect("reading the program info failed")
             .size_jitted()
+    }
+
+    /// Bytes of BPF bytecode the verifier left in the program, `bpf_prog_info.xlated_len`.
+    ///
+    /// The number that shows whether a `.rodata` word *removed* a branch or merely skips it:
+    /// the JITed length also moves with the x86 encoding of whatever survived, and the
+    /// translated length is instructions the verifier kept. Zero would be a false pass, so it
+    /// is reported as such rather than as a small program.
+    pub fn translated_len(&self) -> u32 {
+        self.program()
+            .info()
+            .expect("reading the program info failed")
+            .size_translated()
+            .expect("the kernel did not report xlated_len")
     }
 
     pub fn counter(&self, name: &str) -> u64 {

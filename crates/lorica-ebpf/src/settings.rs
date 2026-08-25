@@ -53,6 +53,21 @@ static BUCKET_SUSPECT_BURST: u64 = BURST_MAX;
 #[unsafe(no_mangle)]
 static SIGNATURE_VECTORS: u32 = 0;
 
+/// Whether the `LPM_TRIE` stage stays in the program at all.
+///
+/// The two flat tables answer every IPv4 prefix, so what is left for the trie is IPv6 and
+/// the exact keys the detection loop writes with a deadline. A configuration carrying
+/// neither needs no trie, and this word is what removes it: the verifier reads `.rodata` as
+/// constant and takes the branch out before the JIT, the same way it takes out an unarmed
+/// signature vector. The legitimate path then pays one access and nothing else.
+///
+/// **One, and not zero like the two words above.** Their unconfigured value enforces
+/// nothing, which is the safe direction for a budget. Here zero would mean *ignoring*
+/// entries an operator listed, so an unpatched load has to keep the trie: a loader that
+/// forgot this word must fail loud in the size assertion rather than quiet in the verdict.
+#[unsafe(no_mangle)]
+static BLOCKLIST_TRIE: u32 = 1;
+
 /// Dead words the bucket update reads while it holds the bucket open, so the leak of the
 /// bank can be measured against the width of its read-modify-write window.
 ///
@@ -126,6 +141,15 @@ pub fn mark_over_budget() -> bool {
 pub fn signature_vectors() -> u32 {
     // SAFETY: a plain aligned read of a static in this program own read-only data.
     unsafe { core::ptr::read_volatile(&SIGNATURE_VECTORS) }
+}
+
+/// `read_volatile` for the same reason as the policy word, and the reason it matters more
+/// here: a folded read would compile the initialiser into the branch the loader is patching
+/// precisely in order to delete it.
+#[inline(always)]
+pub fn blocklist_trie() -> bool {
+    // SAFETY: a plain aligned read of a static in this program own read-only data.
+    unsafe { core::ptr::read_volatile(&BLOCKLIST_TRIE) != 0 }
 }
 
 /// One read of the stall word. Volatile, and every iteration of the window takes its own:

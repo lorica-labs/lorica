@@ -5,13 +5,29 @@
 //! scope lives in the value rather than in the key because an LPM_TRIE matches only
 //! the leading bits of its key, so a protocol and a port in the key would forbid any
 //! generic entry.
+//!
+//! **What is left for it now that `blocklist` runs first.** The two flat tables next door
+//! resolve every IPv4 prefix, at 4 MiB and 16 MiB fixed and one access for the common case;
+//! the trie is 198 MiB and 414 ns at a million entries, which is what moved the operator
+//! blocklist out of it. What the trie still does better than any snapshot is the thing a
+//! snapshot cannot do at all: a per-entry deadline and a single-entry update. So this stage
+//! now serves IPv6, and the exact keys the detection loop writes with a TTL — and a
+//! configuration carrying neither loses the stage entirely, because
+//! [`settings::blocklist_trie`] is a `.rodata` word the verifier folds and the branch below
+//! is then not in the JITed program at all.
 
 use lorica_common::{Action, CounterId, PacketView};
 
-use crate::{helpers, stage::Outcome};
+use crate::{helpers, settings, stage::Outcome};
 
 #[inline(never)]
 pub fn run(view: &PacketView, now: u64) -> Outcome {
+    // First, and before the lookup, because that is the point: a cleared word takes
+    // everything below out of the program rather than skipping it at run time.
+    if !settings::blocklist_trie() {
+        return Outcome::Continue;
+    }
+
     let Some(value) = helpers::list_lookup(&view.src) else {
         return Outcome::Continue;
     };

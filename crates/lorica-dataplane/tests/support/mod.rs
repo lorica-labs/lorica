@@ -10,7 +10,7 @@ pub mod pkt;
 pub mod run;
 
 pub use pkt::PktBuilder;
-pub use run::{BucketGlobals, TestProg, XdpAction};
+pub use run::{Blocklist, BucketGlobals, TestProg, XdpAction};
 
 /// The name of the program under test, as it appears in the ELF.
 pub const PROGRAM: &str = "lorica_xdp";
@@ -32,6 +32,11 @@ pub fn program_with_buckets(settings: u32, buckets: BucketGlobals) -> TestProg {
 /// the program's own initialiser and no loop at all.
 pub fn program_with_stalled_buckets(settings: u32, buckets: BucketGlobals, stall: u32) -> TestProg {
     TestProg::load_buckets_stalled(PROGRAM, settings, buckets, stall)
+}
+
+/// The load that carries a blocklist snapshot. A different snapshot is a different load.
+pub fn program_with_blocklist(settings: u32, blocklist: &Blocklist) -> TestProg {
+    TestProg::load_blocklist(PROGRAM, settings, blocklist)
 }
 
 pub fn program_with_vectors(settings: u32, vectors: u32) -> TestProg {
