@@ -52,7 +52,10 @@ fn scan(c: &mut Criterion) {
             if !isa.available() {
                 continue;
             }
-            group.bench_function(format!("{}/{slots}", isa.name()), |b| {
+            // An underscore and not a slash. criterion rewrites a slash inside a function
+            // id into an underscore on its way to the results directory, so an id written
+            // with one is an id the campaign script would have to guess the spelling of.
+            group.bench_function(format!("{}_{slots}", isa.name()), |b| {
                 b.iter(|| reduce_with(isa, black_box(&cur), black_box(&prev), 1))
             });
         }
