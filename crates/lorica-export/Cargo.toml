@@ -10,6 +10,16 @@ rust-version.workspace = true
 # exists at all is to keep the 249 MiB peak of parsing ten million lines out of the agent.
 [dependencies]
 lorica-common.workspace = true
+# For the journal record layout, which is built from a `Decision`. Included by path like the
+# blocklist's, so this crate compiles the definition rather than restating it.
+lorica-detect.workspace = true
 anyhow.workspace = true
 memmap2.workspace = true
 zerocopy.workspace = true
+# `default-features = false` drops arrow, async, and every compression codec: 39 features
+# off. What is left is the low-level `SerializedFileWriter`, which is all a converter with
+# seven fixed columns needs — the arrow feature would buy a RecordBatch builder to feed it
+# rows this tool already has as a `#[repr(C)]` slice. The weight it does add is measured, and
+# the reason it is acceptable here and would not be in `loricad` is that this process runs
+# when an operator asks and the agent runs all the time.
+parquet = { version = "59.2.0", default-features = false }
