@@ -39,6 +39,14 @@ tokio = { version = "1.53.1", default-features = false }
 toml = "1.1.4"
 tracing = "0.1.44"
 tracing-subscriber = "0.3.23"
+# A checked cast from a batch-read buffer to `[u64]`, which is what the alternative
+# — `slice::from_raw_parts` on a pointer whose alignment comes from a syscall — cannot be.
+# `default-features = false` because `derive` is what would pull a proc-macro into the
+# build graph and nothing here derives: the whole use is one call, and
+# `cargo tree -e no-dev` shows the crate arriving with zero transitive dependencies. The
+# dev graph does build `zerocopy-derive`, and not on this crate's account: criterion pulls
+# `half`, which asks for the feature.
+zerocopy = { version = "0.8", default-features = false }
 
 [profile.release]
 opt-level = 3

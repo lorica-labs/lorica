@@ -468,9 +468,11 @@ dependencies = [
 name = "lorica-detect"
 version = "0.1.0"
 dependencies = [
+ "criterion",
  "lorica-common",
  "serde",
  "serde_json",
+ "zerocopy",
 ]
 
 [[package]]
