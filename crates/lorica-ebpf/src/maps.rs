@@ -8,7 +8,7 @@ use aya_ebpf::{
     macros::map,
     maps::{Array, LpmTrie, PerCpuArray, lpm_trie::Key},
 };
-use lorica_common::{Bucket, CounterId, LpmKey, LpmValue};
+use lorica_common::{Bucket, CLASS24_BYTES, CounterId, LpmKey, LpmValue, OA_SLOTS, OaSlot};
 
 /// Entries of the unified list, and the per-entry counter slots that go with them.
 const DEFAULT_LIST_ENTRIES: u32 = 1024;
@@ -35,6 +35,33 @@ pub static UNIFIED_LIST: LpmTrie<[u8; 16], LpmValue> =
 // and neither crate can see the other type: one is packed, one is not, and only their
 // layouts have to agree.
 const _: () = assert!(core::mem::size_of::<Key<[u8; 16]>>() == core::mem::size_of::<LpmKey>());
+
+/// The two blocklist tables, and the reason they are globals and not maps.
+///
+/// A `.bss` global is reached by one `LDX` off a pointer the verifier materialises with
+/// `ld_imm64` / `BPF_PSEUDO_MAP_VALUE`, so a lookup costs no `bpf_map_lookup_elem` — not
+/// even the eight instructions the verifier inlines an `ARRAY` lookup into. That is the
+/// whole reason the blocklist stage fits inside a per-packet budget already spending two
+/// lookups: it adds none.
+///
+/// **What it costs, measured before it was written.** `aya` turns a data section into an
+/// `ARRAY` map of one entry whose value is the whole section, so these two are 4 MiB and
+/// 16 MiB of `value_size`. `bpftool map create ... type array key 4 value 20971520
+/// entries 1` is accepted on 7.0.0-30 and reports `memlock 20971824B`, which is what
+/// dismissed the fear that `array_map_alloc_check` would answer `-E2BIG` past
+/// `KMALLOC_MAX_SIZE`.
+///
+/// No `link_section`: both land in `.bss`, which is one map, and the loader writes each
+/// one by symbol name through `EbpfLoader::set_global`. `aya` materialises a `.bss`
+/// section as a zero vector of its declared size and splices a patched symbol into it at
+/// the symbol's own address, so nothing here has to agree with the other table's offset.
+#[unsafe(no_mangle)]
+pub static mut CLASS24: [u8; CLASS24_BYTES] = [0; CLASS24_BYTES];
+
+/// The open-addressed table. Zeroed, and zero is *free* rather than
+/// `0.0.0.0`: [`lorica_common::blocklist::OA_TAG_OCCUPIED`] is what separates the two.
+#[unsafe(no_mangle)]
+pub static mut OA_TABLE: [OaSlot; OA_SLOTS] = [OaSlot { key: 0, tag: 0 }; OA_SLOTS];
 
 /// Where the clock probe leaves the jiffy it read.
 ///

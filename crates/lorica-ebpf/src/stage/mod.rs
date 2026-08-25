@@ -36,6 +36,7 @@
 //! could implement: `lorica-dataplane/tests/candidate_verdicts.rs` fails if bucket state
 //! alone ever decides a verdict, in either direction.
 
+pub mod blocklist;
 pub mod bucket;
 pub mod fragment;
 pub mod icmp;
@@ -163,6 +164,15 @@ pub fn run(ctx: &XdpContext) -> u32 {
     cut!(3);
     decide!(icmp::run(&view));
     cut!(4);
+    // Both halves of stage 3, flat tables first. The order is the precedence: an address the
+    // operator's snapshot has a verdict for is answered without touching the trie, and an
+    // address it has nothing to say about falls through to the entries that carry deadlines.
+    //
+    // No `cut!` between the two, so the level `stage_cost` labels "stage 3 LPM list" is now
+    // the cost of both. Adding a level would renumber every label after it, and a stage
+    // whose whole claim is that it costs one memory access is not the one to spend a
+    // renumbering on.
+    decide!(blocklist::run(&view));
     decide!(lpm::run(&view, now));
     cut!(5);
     decide!(fragment::run(&view));
