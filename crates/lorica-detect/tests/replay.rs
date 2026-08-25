@@ -11,7 +11,7 @@
 //! ```
 //!
 //! That line is the point of the non-oscillation case. The ceiling asserted against it is
-//! deliberately loose — see [`TRANSITION_CEILING`].
+//! per fixture — see [`transition_ceiling`].
 
 use std::collections::BTreeMap;
 
@@ -20,14 +20,39 @@ use lorica_detect::snapshot::NAMED_SLOTS;
 use lorica_detect::{BucketView, Config, CounterView, Engine, EntryCounter, Snapshot, Tier};
 use serde::Deserialize;
 
-/// Ceiling on the number of rung changes a replay may produce.
+/// Ceiling on the number of rung changes each replay may produce, one per fixture.
 ///
-/// **Provisional.** A number picked to make the test that was just written go green proves
-/// nothing, so this one is set far above every value observed so far and the definitive
-/// figure will be re-baselined from the `LORICA_TRANSITIONS` lines once the fixtures are
-/// backed by captures. What the assertion buys today is a bound that a genuinely
-/// oscillating ladder — one transition every slow tick, hundreds of them — fails.
-const TRANSITION_CEILING: u64 = 12;
+/// **Re-baselined from the `LORICA_TRANSITIONS` lines, per fixture rather than globally.** A
+/// single loose bound across four fixtures is only as tight as the fixture that legitimately
+/// moves most: `attack_end` climbs four rungs and comes back down, so one shared ceiling that
+/// admits its eight admits four times what `pulse_wave` should ever produce, and `pulse_wave`
+/// is the fixture the non-oscillation criterion is about.
+///
+/// The margin is not absorbing variance — a replay is deterministic and these counts are a
+/// pure function of the fixture and the [`Config`]. It absorbs re-tuning the ladder's timing
+/// constants, which are parameters and will move. Measured, then rounded up:
+///
+/// | fixture | measured | ceiling |
+/// |---|---:|---:|
+/// | `flash_crowd` | 2 | 4 |
+/// | `pulse_wave` | 2 | 4 |
+/// | `attack_end` | 8 | 10 |
+/// | `sub_second_burst` | 0 | 2 |
+///
+/// `tests` proves it discriminates: with `hold_ticks` and `fall_ticks` cut to let the ladder
+/// chase every slow tick, `pulse_wave` produces 20 transitions against this 4. The previous
+/// shared ceiling of 12 had never seen an oscillation — the one break that had been run
+/// against it tripped the peak-rung assertion first, so the transition bound itself was
+/// unproven.
+fn transition_ceiling(fixture: &str) -> u64 {
+    match fixture {
+        "flash_crowd" => 4,
+        "pulse_wave" => 4,
+        "attack_end" => 10,
+        "sub_second_burst" => 2,
+        other => panic!("no re-baselined transition ceiling for fixture {other}"),
+    }
+}
 
 #[derive(Deserialize)]
 struct Fixture {
@@ -185,7 +210,7 @@ fn flash_crowd() {
          confirmed key",
         run.peak_tier
     );
-    assert!(run.transitions <= TRANSITION_CEILING);
+    assert!(run.transitions <= transition_ceiling(&f.name));
 }
 
 /// Rungs 0 to 2 chain on the same timing whether or not `bpf_qdisc` exists. Without it rung
@@ -249,9 +274,36 @@ fn pulse_wave() {
     let run = replay(&f, Config::default(), 1);
 
     assert!(
-        run.transitions <= TRANSITION_CEILING,
+        run.transitions <= transition_ceiling(&f.name),
         "{} rung changes over {} ticks: the ladder is following the pulse instead of \
          resisting it",
+        run.transitions,
+        run.ticks
+    );
+}
+
+/// The transition ceiling, shown catching what it exists to catch.
+///
+/// A bound nothing has ever exceeded is not a bound. The break is the smallest one that
+/// produces an oscillation rather than a wrong verdict: hysteresis reduced to nothing, so the
+/// ladder re-decides from scratch on every slow tick and follows the pulse instead of
+/// resisting it. Every other assertion in `pulse_wave` still passes under this break — no
+/// drop, no rung above Limit — which is exactly why the transition count has to be asserted
+/// separately.
+#[test]
+fn a_ladder_without_hysteresis_blows_the_ceiling() {
+    let f = fixture("pulse_wave");
+    let cfg = Config {
+        rise_ticks: 1,
+        hold_ticks: 0,
+        fall_ticks: 1,
+        ..Config::default()
+    };
+    let run = replay(&f, cfg, 1);
+
+    assert!(
+        run.transitions > transition_ceiling(&f.name),
+        "the ladder was stripped of its hysteresis and still made only {} rung changes over          {} ticks: either the fixture no longer pulses or the ceiling is measuring nothing",
         run.transitions,
         run.ticks
     );
@@ -272,7 +324,7 @@ fn attack_end() {
         "the flood stopped and the ladder stayed at rung {}",
         run.final_tier
     );
-    assert!(run.transitions <= TRANSITION_CEILING);
+    assert!(run.transitions <= transition_ceiling(&f.name));
 }
 
 /// The invariant, asserted directly rather than only through the fixtures: there is no way
