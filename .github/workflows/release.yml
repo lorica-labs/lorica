@@ -1,0 +1,72 @@
+name: release
+
+# Tag-triggered, and no branch name anywhere. A release is a tag, and this repository
+# renames its default branch at every integration boundary — ci.yml records what a branch
+# name written into a workflow costs when that happens.
+on:
+  push:
+    tags:
+      - "v*"
+
+# Only what creating the release needs.
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  # Static musl, so a published binary carries no glibc floor of its own and the kernel
+  # release stays the only version an operator has to check.
+  TARGET: x86_64-unknown-linux-musl
+
+jobs:
+  binaries:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      # The eBPF object is built by nightly with build-std, so the toolchain that builds it
+      # declares rust-src of its own; components are per toolchain.
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rust-src
+      - uses: Swatinem/rust-cache@v2
+      - uses: ./.github/actions/bpf-linker
+      - run: rustup target add "$TARGET"
+
+      # No test step. Everything that can be checked without a tag is checked by ci.yml on
+      # the commit this tag points at, and a second copy of it here would drift.
+
+      # The agent takes --object and cannot build one, so the object ships with the
+      # binaries. Built without features: the instrumented object exists for the tests to
+      # read counters out of and is not what a deployment should load.
+      - name: build the eBPF object
+        run: cargo +nightly build --release
+        working-directory: crates/lorica-ebpf
+
+      - name: build the userspace binaries
+        run: >
+          cargo build --release --target "$TARGET"
+          -p loricad -p lorica-ctl -p lorica-export
+
+      # One directory, named like the archive, so an operator who extracts it lands
+      # somewhere recognisable. docs/install.md names this layout.
+      - name: assemble the archive
+        run: |
+          name="lorica-${GITHUB_REF_NAME}-${TARGET}"
+          mkdir -p "dist/$name"
+          cp "target/$TARGET/release/loricad" "dist/$name/"
+          cp "target/$TARGET/release/lorica-ctl" "dist/$name/"
+          cp "target/$TARGET/release/lorica-export" "dist/$name/"
+          cp crates/lorica-ebpf/target/bpfel-unknown-none/release/lorica-ebpf "dist/$name/"
+          cp LICENSE-APACHE LICENSE-MIT "dist/$name/"
+          cd "dist/$name"
+          sha256sum loricad lorica-ctl lorica-export lorica-ebpf > SHA256SUMS
+          cd ..
+          tar -czf "../$name.tar.gz" "$name"
+
+      - name: publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >
+          gh release create "$GITHUB_REF_NAME" --generate-notes
+          "lorica-${GITHUB_REF_NAME}-${TARGET}.tar.gz"
