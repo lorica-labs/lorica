@@ -136,9 +136,9 @@ impl Reason {
 #[non_exhaustive]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Decision {
-    pub tier: Tier,
-    pub reason: Reason,
-    pub deadline: Deadline,
+    tier: Tier,
+    reason: Reason,
+    deadline: Deadline,
 }
 
 impl Decision {
@@ -152,6 +152,18 @@ impl Decision {
             reason,
             deadline,
         })
+    }
+
+    pub fn tier(&self) -> Tier {
+        self.tier
+    }
+
+    pub fn reason(&self) -> &Reason {
+        &self.reason
+    }
+
+    pub fn deadline(&self) -> Deadline {
+        self.deadline
     }
 
     /// Rung zero. `Deadline::never()` because nothing is being applied, so there is nothing

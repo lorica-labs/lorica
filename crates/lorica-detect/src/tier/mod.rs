@@ -243,8 +243,8 @@ impl Engine {
         // The net, applied before any arithmetic: an unrenewed decision is abandoned rather
         // than reconsidered, because the reason it went unrenewed is that the ticks that
         // would reconsider it stopped arriving.
-        if self.standing.tier != Tier::Observe
-            && self.standing.deadline.expired(s.jiffies(self.cfg.hz))
+        if self.standing.tier() != Tier::Observe
+            && self.standing.deadline().expired(s.jiffies(self.cfg.hz))
         {
             self.hyst.expire();
             self.keyed = None;

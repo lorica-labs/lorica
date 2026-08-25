@@ -164,13 +164,13 @@ fn replay(f: &Fixture, cfg: Config, stride: usize) -> Run {
     for snap in snaps.iter().step_by(stride) {
         let decision = engine.observe(snap);
         ticks += 1;
-        if decision.tier.drops() {
+        if decision.tier().drops() {
             drops += 1;
             assert!(
-                decision.reason.exact_key().is_some(),
+                decision.reason().exact_key().is_some(),
                 "{}: rung {:?} refuses packets without naming an exact key",
                 f.name,
-                decision.tier
+                decision.tier()
             );
         }
     }

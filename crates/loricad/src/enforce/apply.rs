@@ -45,27 +45,27 @@ pub fn apply(
     decision: &Decision,
     slot: u32,
 ) -> io::Result<Applied> {
-    if !decision.tier.drops() {
+    if !decision.tier().drops() {
         return Ok(Applied::Nothing);
     }
 
     // Read rather than unwrapped. `Decision::new` cannot build this combination, but the
     // fields of a decision are public, so one already built can be raised to a refusing
     // rung afterwards — and the whole invariant is that a refusal names its key.
-    let key = decision.reason.exact_key().ok_or_else(|| {
+    let key = decision.reason().exact_key().ok_or_else(|| {
         io::Error::other(format!(
             "rung {} refuses packets and its reason names no exact key: {:?}",
-            decision.tier.rung(),
-            decision.reason
+            decision.tier().rung(),
+            decision.reason()
         ))
     })?;
 
-    if decision.deadline.is_never() {
+    if decision.deadline().is_never() {
         return Err(io::Error::other(format!(
             "rung {} on {key:?} carries no deadline; an entry the detection writes has to \
              expire on its own, because the agent that would remove it is the thing that \
              can die",
-            decision.tier.rung()
+            decision.tier().rung()
         )));
     }
 
@@ -83,7 +83,7 @@ pub fn apply(
 
     let mut value = LpmValue::zeroed();
     value.action = Action::Drop;
-    value.deadline = decision.deadline;
+    value.deadline = decision.deadline();
     value.counter_idx = slot;
     lpm::load(list, &[(key, value)], 1)?;
     Ok(Applied::Written(key))

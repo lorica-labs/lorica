@@ -368,14 +368,22 @@ fn a_rung_that_refuses_without_an_exact_key_cannot_be_built() {
         }
     }
 
+    // The back door this test used to walk through is closed. `Decision`'s fields were `pub`,
+    // so a decision built at rung zero could be raised to a refusing rung afterwards while
+    // keeping `Reason::Quiet`, and the constructor's check was worth nothing. They are private
+    // now, and the two lines below no longer compile:
+    //
+    //     let mut forged = Decision::quiet();
+    //     forged.tier = Tier::DropSurgical;
+    //
+    // `error[E0616]: field `tier` of struct `Decision` is private`. `apply` still re-reads the
+    // key rather than trusting the rung, because a guard on one side of a crate boundary
+    // should not rest on the other side having kept its promise.
     let before = memlock(&ebpf);
-    let mut forged = Decision::quiet();
-    forged.tier = Tier::DropSurgical;
-    let err = apply(fd, Mode::Armed, &forged, SLOT)
-        .expect_err("a refusal naming no key has to be refused here too");
-    assert!(
-        err.to_string().contains("exact key"),
-        "the message has to name what is missing, got: {err}"
+    let quiet = Decision::quiet();
+    assert_eq!(
+        apply(fd, Mode::Armed, &quiet, SLOT).expect("rung zero applies as a no-op"),
+        Applied::Nothing
     );
     assert_eq!(
         memlock(&ebpf),
