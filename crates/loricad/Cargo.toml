@@ -14,6 +14,14 @@ rust-version.workspace = true
 [features]
 kernel-tests = []
 
+# Native histograms divide the cardinality of a latency distribution by about twenty, and
+# the Prometheus text format has no field for them: prometheus-client's text encoder falls
+# back to the classic buckets and rejects a native-only histogram outright. The text
+# endpoint is what this project ships to a VPS, so this is a feature and never the default;
+# with it on the histogram carries both representations and only a protobuf scraper sees
+# the difference.
+native-histograms = []
+
 [dependencies]
 lorica-common.workspace = true
 lorica-dataplane.workspace = true
@@ -25,5 +33,12 @@ aya.workspace = true
 # current_thread only. #[tokio::main] would spawn one worker per logical CPU and
 # steal cache lines from the application this is supposed to protect.
 tokio = { workspace = true, features = ["rt", "macros", "time", "net", "io-util", "signal"] }
+# Allocates nothing per series and renders from handles the agent resolves at startup. No
+# HTTP framework alongside it: /metrics is a GET that returns text, and the response is
+# written by hand onto the tokio TcpStream this crate already has.
+prometheus-client = "0.25.0"
+# Quantiles at 9.5 ns per insertion and mergeable across agents. Three gauges come out of
+# it; a summary would invite averaging a q99, which is not a number.
+sketches-ddsketch = "0.3.1"
 tracing.workspace = true
 tracing-subscriber.workspace = true
