@@ -33,7 +33,10 @@
 
 use lorica_common::{
     Action, CLASS24_BYTES, Class24, Family, OA_PROBES, OaSlot, PacketView,
-    blocklist::{OA_INDEX_MASK, class24_get, oa_action, oa_index, oa_occupied, oa_psl, oa_step},
+    blocklist::{
+        OA_INDEX_MASK, class24_get, oa_action, oa_fingerprint, oa_index, oa_occupied, oa_psl,
+        oa_step, oa_tag_fingerprint,
+    },
 };
 
 use crate::{
@@ -133,6 +136,12 @@ fn probe(key: u32) -> Option<Action> {
     // SAFETY: a volatile read of a live local of this frame.
     let mut index = unsafe { core::ptr::read_volatile(&home) } & OA_INDEX_MASK;
 
+    // The low byte of the same hash, so it is free to obtain. What it costs is one comparison
+    // per step below, and what it buys is that a slot torn by a snapshot copy answers "no
+    // verdict" instead of the previous snapshot's verdict —
+    // `lorica_common::blocklist::oa_fingerprint` carries the whole argument.
+    let fingerprint = oa_fingerprint(key);
+
     // One step per literal, and the count checked against the constant the builder
     // enforces: a sequence shorter than OA_PROBES would silently miss keys the builder
     // placed at the far end of a probe run it was allowed to produce.
@@ -150,7 +159,11 @@ fn probe(key: u32) -> Option<Action> {
                 if !oa_occupied(slot.tag) {
                     return None;
                 }
-                if slot.key == key {
+                // The fingerprint gates the key comparison, in that order, for the two reasons
+                // the shared `oa_lookup` states: 255 of 256 occupied slots stop here without
+                // reading the key, and a slot whose tag came from a different snapshot than its
+                // key reads as somebody else's rather than as a verdict.
+                if fingerprint == oa_tag_fingerprint(slot.tag) && slot.key == key {
                     return oa_action(slot.tag);
                 }
                 // The Robin Hood invariant: a slot sitting closer to its home than we have

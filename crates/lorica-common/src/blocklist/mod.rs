@@ -280,7 +280,69 @@ pub const OA_TAG_PSL_SHIFT: u32 = 8;
 /// Mask of the probe sequence length field, before shifting.
 pub const OA_TAG_PSL_MASK: u32 = 0xff;
 
-/// Builds a tag.
+/// Shift of the key fingerprint.
+pub const OA_TAG_FINGERPRINT_SHIFT: u32 = 16;
+
+/// Mask of the key fingerprint, before shifting.
+pub const OA_TAG_FINGERPRINT_MASK: u32 = 0xff;
+
+/// Eight bits of the key's own hash, stored in the tag beside the verdict.
+///
+/// # What it is for: a torn slot that answers "no verdict" instead of "drop"
+///
+/// Publishing a snapshot is one `bpf_map_update_elem` over a live 20 MiB `.bss` value, and the
+/// packet path can read that value halfway through the copy. An eight-byte slot split across
+/// the copy boundary then carries the **new key beside the old tag** — a pair neither snapshot
+/// ever held. The old tag's verdict may be `Drop` for a key the new snapshot allows, so the
+/// window is a *false positive*: traffic dropped because nobody decided to drop it, which is
+/// the one failure mode this whole design refuses to have.
+///
+/// With the fingerprint, a torn slot is detected instead of believed: the tag holds the
+/// fingerprint of the key it was written with, so a key from one snapshot beside a tag from
+/// another disagrees with probability 255/256 and [`oa_lookup`] reads the slot as holding
+/// somebody else. The probe carries on, the lookup ends in `None`, and `None` under a `Table`
+/// code is *no verdict* — the address is treated exactly as it was before any rule existed.
+/// **The failure direction is inverted: a wrongly dropped packet becomes a wrongly passed
+/// one**, which is the direction the rest of this module already accepts and documents.
+///
+/// The remaining 1/256 is not a hole this design pretends to close. It is a torn slot whose two
+/// keys share a fingerprint, during a copy, for one snapshot — and what closes it completely is
+/// re-attaching a second program instance, which is a decision to take with a cycle count
+/// rather than with a byte of tag.
+///
+/// # Why the eight bits are free to compute and not free to check
+///
+/// It is the **low byte of the hash [`oa_index`] already computed**: the index takes the top
+/// [`OA_INDEX_BITS`] of `fmix32(key * OA_MULTIPLIER)` and the low bits were being thrown away.
+/// So neither the builder nor the packet path computes anything new — the querier holds the
+/// fingerprint of the key it is looking for before the first probe.
+///
+/// What is not free is the comparison. The tag was already loaded and two of its fields were
+/// already tested, but a third test is a third test: one compare and one branch per unrolled
+/// step. It is cheaper than it looks on the *executed* path, because a fingerprint that does
+/// not match makes the key comparison unnecessary and 255 of 256 occupied slots on a probe run
+/// therefore stop before the key is read at all — but the *static* count goes up, and
+/// `lorica-dataplane/tests/jited_size.rs` is what says by how much. The design note this came
+/// from estimated zero; that was optimistic, and the correction belongs here rather than in a
+/// document nobody compiles.
+///
+/// # It composes with the signature of the cuckoo design
+///
+/// The candidate cuckoo replacement compares an eight-bit *signature* before it reads a key, and
+/// that signature is this same byte with zero forced away, because there a zero marks a free
+/// lane. If that variant ever replaces this table, the self-validating slot arrives
+/// with it rather than being ported to it: comparing a signature before the key is what that
+/// design does for speed, and detecting a torn bucket is the same comparison.
+pub const fn oa_fingerprint(key: u32) -> u8 {
+    fmix32(key.wrapping_mul(OA_MULTIPLIER)) as u8
+}
+
+/// The fingerprint a tag carries.
+pub const fn oa_tag_fingerprint(tag: u32) -> u8 {
+    ((tag >> OA_TAG_FINGERPRINT_SHIFT) & OA_TAG_FINGERPRINT_MASK) as u8
+}
+
+/// Builds a tag for a key.
 ///
 /// **The tag carries a verdict, not membership.** If the configuration denies `10.0.0.0/8`
 /// and allows `10.1.2.3/32`, the `/32` has to win *with the opposite verdict*, and the table
@@ -288,10 +350,15 @@ pub const OA_TAG_PSL_MASK: u32 = 0xff;
 /// equivalent bug exists in production elsewhere (Cilium issue #41121). The general rule: do
 /// not split the decision across two structures, split the storage. "Longest prefix wins" is
 /// resolved at construction, in the agent; the packet path only reads.
-pub const fn oa_tag(action: Action, psl: u8) -> u32 {
+///
+/// It takes the key rather than a fingerprint, so a caller cannot write a tag whose fingerprint
+/// belongs to another key — which is the exact corruption [`oa_fingerprint`] exists to detect,
+/// and a builder able to create it deliberately is a builder able to create it by accident.
+pub const fn oa_tag(key: u32, action: Action, psl: u8) -> u32 {
     OA_TAG_OCCUPIED
         | ((action as u32) & OA_TAG_ACTION_MASK) << OA_TAG_ACTION_SHIFT
         | (psl as u32) << OA_TAG_PSL_SHIFT
+        | (oa_fingerprint(key) as u32) << OA_TAG_FINGERPRINT_SHIFT
 }
 
 /// Whether a tag marks an occupied slot.
@@ -362,12 +429,20 @@ pub const fn fmix32(mut h: u32) -> u32 {
 pub fn oa_lookup(table: &[OaSlot], key: u32) -> Option<Action> {
     let mut index = oa_index(key);
     let mut distance = 0u32;
+    // Bits of the same hash the index came from, so obtaining it costs nothing. See
+    // [`oa_fingerprint`] for what it buys and what the comparison below costs.
+    let fingerprint = oa_fingerprint(key);
     while distance < OA_PROBES {
         let slot = table[(index & OA_INDEX_MASK) as usize];
         if !oa_occupied(slot.tag) {
             return None;
         }
-        if slot.key == key {
+        // The fingerprint first and the key second, which is the order the cost argument
+        // depends on: 255 of 256 occupied slots on a probe run are rejected before the key is
+        // compared at all. And a slot whose fingerprint disagrees with its own key is a slot
+        // torn by a snapshot copy, so reading it as somebody else's is what makes that window
+        // fail open instead of dropping traffic nobody decided to drop.
+        if fingerprint == oa_tag_fingerprint(slot.tag) && slot.key == key {
             return oa_action(slot.tag);
         }
         if (oa_psl(slot.tag) as u32) < distance {
@@ -409,7 +484,7 @@ pub fn oa_insert(table: &mut [OaSlot], key: u32, action: Action) -> Option<u8> {
         if !oa_occupied(slot.tag) || displace < distance {
             table[(index & OA_INDEX_MASK) as usize] = OaSlot {
                 key: carried_key,
-                tag: oa_tag(carried_action, distance as u8),
+                tag: oa_tag(carried_key, carried_action, distance as u8),
             };
             if placed.is_none() {
                 placed = Some(distance as u8);
@@ -448,3 +523,18 @@ const _: () = assert!(CLASS24_BYTES == 4 * 1024 * 1024);
 const _: () = assert!(OA_BYTES == 16 * 1024 * 1024);
 const _: () = assert!(OA_MAX_KEYS * 2 == OA_SLOTS);
 const _: () = assert!(OA_PROBES <= OA_TAG_PSL_MASK);
+// The four tag fields do not overlap. A fingerprint sharing a bit with the probe length would
+// hide a displaced key and a torn slot at the same time, and the two failures would look like
+// one.
+const _: () = assert!(
+    OA_TAG_OCCUPIED
+        & (OA_TAG_ACTION_MASK << OA_TAG_ACTION_SHIFT
+            | OA_TAG_PSL_MASK << OA_TAG_PSL_SHIFT
+            | OA_TAG_FINGERPRINT_MASK << OA_TAG_FINGERPRINT_SHIFT)
+        == 0
+);
+const _: () =
+    assert!(OA_TAG_ACTION_MASK << OA_TAG_ACTION_SHIFT & OA_TAG_PSL_MASK << OA_TAG_PSL_SHIFT == 0);
+const _: () = assert!(
+    OA_TAG_PSL_MASK << OA_TAG_PSL_SHIFT & OA_TAG_FINGERPRINT_MASK << OA_TAG_FINGERPRINT_SHIFT == 0
+);
