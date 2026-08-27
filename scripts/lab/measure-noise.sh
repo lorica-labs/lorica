@@ -478,7 +478,9 @@ if [ "$cfg" = B ] || [ "$cfg" = C ]; then
     i=0
     latency=
     while [ $i -lt 20 ]; do
-        latency=$(od -An -tu4 -N4 /dev/cpu_dma_latency 2>/dev/null | tr -dc 0-9)
+        # Under $E: the device is 0600 root on the lab machines, so an unprivileged read
+        # back reports the constraint as unreadable and fails a run that worked.
+        latency=$($E od -An -tu4 -N4 /dev/cpu_dma_latency 2>/dev/null | tr -dc 0-9)
         [ "$latency" = 0 ] && break
         i=$((i + 1))
         sleep 0.1
