@@ -12,8 +12,17 @@ root=$PWD
 
 [ -d bin ] || { echo "FAIL  no bin/ beside $0" >&2; exit 1; }
 
-sudo -n true 2>/dev/null \
-    || { echo "FAIL  sudo needs a password; loading an XDP program needs CAP_BPF and CAP_NET_ADMIN" >&2; exit 1; }
+# Loading an XDP program needs CAP_BPF and CAP_NET_ADMIN, and on the lab VMs that means
+# passwordless sudo. It does not mean sudo has to exist: a machine where this already runs as
+# root has the capabilities and may have no sudo at all — a Proxmox host is one, and that is
+# where this refused to run while holding every privilege it was asking for.
+if [ "$(id -u)" -eq 0 ]; then
+    elevate=()
+else
+    sudo -n true 2>/dev/null \
+        || { echo "FAIL  sudo needs a password; loading an XDP program needs CAP_BPF and CAP_NET_ADMIN" >&2; exit 1; }
+    elevate=(sudo -n)
+fi
 
 # Every knob the caller set travels. sudo would otherwise reset it and the test would read
 # its default, report on something else, and still go green — which is the worst failure
@@ -28,7 +37,7 @@ done
 status=0
 for binary in bin/*; do
     printf '\n--- %s on %s\n' "$(basename "$binary")" "$(uname -r)"
-    sudo -n env "${keep[@]}" "LORICA_EBPF_OBJ=$root/ebpf/instrumented" \
+    "${elevate[@]}" env "${keep[@]}" "LORICA_EBPF_OBJ=$root/ebpf/instrumented" \
                 "LORICA_EBPF_PLAIN_OBJ=$root/ebpf/plain" \
                 "LORICA_BENCH_PROGS=$root/progs" \
         "$binary" "$@" || status=1
