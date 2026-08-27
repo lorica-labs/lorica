@@ -68,9 +68,27 @@ cat > "$conf" <<EOF
 EOF
 
 cmd=(trafgen --dev "$DEV" --conf "$conf" --cpus "$CPUS" --no-sock-mem)
-[ -n "$RATE" ] && cmd+=(--rate "$RATE")
+# The unit is not optional, and leaving it off does not mean packets per second: trafgen
+# answers `Invalid unit type for rate` and exits. That refusal was invisible here for two
+# campaigns because the caller starts this detached and never reads its status, so the flood
+# simply never happened and every phase downstream measured an idle link. A rate that already
+# carries a unit is passed through, so `--rate 10Mbps` still works.
+if [ -n "$RATE" ]; then
+    case $RATE in
+        *[!0-9]*) cmd+=(--rate "$RATE") ;;
+        *)        cmd+=(--rate "${RATE}pps") ;;
+    esac
+fi
 [ "$NUM" != 0 ] && cmd+=(--num "$NUM")
-[ -n "$DURATION" ] && cmd+=(--duration "$DURATION")
 
-echo "gen-syn-flood: dev=$DEV dst=$DST_IP:$DST_PORT rate=${RATE:-max} cpus=$CPUS" >&2
+# `--duration` is not a trafgen option on this version -- it answers `unrecognized option` and
+# exits -- so the bound is `timeout` around it. A killed run exits 124, which is this script
+# succeeding at exactly what it was asked to do, so it is translated rather than propagated.
+echo "gen-syn-flood: dev=$DEV dst=$DST_IP:$DST_PORT rate=${RATE:-max} cpus=$CPUS duration=${DURATION:-unbounded}" >&2
+if [ -n "$DURATION" ]; then
+    sudo -n timeout --signal=INT "${DURATION}s" "${cmd[@]}"
+    code=$?
+    [ "$code" -eq 124 ] && exit 0
+    exit "$code"
+fi
 exec sudo -n "${cmd[@]}"

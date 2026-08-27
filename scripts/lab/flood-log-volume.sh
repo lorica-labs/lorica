@@ -3,7 +3,7 @@
 #
 #   flood-log-volume.sh [--duration S] [--out DIR] [--agent PATH] [--object PATH]
 #                       [--gen-host HOST] [--dst-ip IP] [--dst-port PORT]
-#                       [--rate PPS] [--hz N] [--counters N] [--no-flood]
+#                       [--rate PPS] [--hz N] [--counters N] [--iface NAME] [--no-flood]
 #
 # Runs on VM 901 (the target). It drives VM 902 over SSH for the flood, because the claim
 # is that the line count does not move with the packet rate and only a real flood can
@@ -32,6 +32,11 @@ AGENT=target/release/loricad
 OBJECT=crates/lorica-ebpf/target/bpfel-unknown-none/release/lorica-ebpf
 GEN_HOST=lab-gen
 GEN_SCRIPT='~/src/scripts/lab/gen-syn-flood.sh'
+# The interface the agent attaches to, and the one the flood must arrive on. This run used to
+# refuse with `the flood did not reach it` for a reason that had nothing to do with the flood:
+# the agent had no way to attach at all, so its counters stayed at zero whatever the wire
+# carried and the load phase measured nothing. The refusal was right; the cause was here.
+IFACE=${LORICA_IFACE:-enp6s19}
 DST_IP=
 DST_PORT=443
 RATE=1000000
@@ -52,6 +57,7 @@ while [ $# -gt 0 ]; do
         --gen-host)  GEN_HOST=$2; shift 2 ;;
         --gen-script) GEN_SCRIPT=$2; shift 2 ;;
         --dst-ip)    DST_IP=$2; shift 2 ;;
+        --iface)     IFACE=$2; shift 2 ;;
         --dst-port)  DST_PORT=$2; shift 2 ;;
         --rate)      RATE=$2; shift 2 ;;
         --hz)        HZ=$2; shift 2 ;;
@@ -102,6 +108,7 @@ sudo -n systemctl reset-failed "$UNIT.service" 2>/dev/null
 sudo -n systemd-run --unit="$UNIT" --collect --quiet \
     "$PWD/$AGENT" --object "$PWD/$OBJECT" --counters "$COUNTERS" --hz "$HZ" \
     --seconds $((DURATION + 10)) --metrics off --socket "/run/$UNIT.sock" \
+    --iface "$IFACE" \
     || die "the agent did not start as a unit"
 
 # The first tick and the eBPF load are startup and belong to neither phase.
@@ -119,9 +126,15 @@ if [ "$FLOOD" = yes ]; then
     sleep 2
 fi
 
+rx_path=/sys/class/net/$IFACE/statistics/rx_packets
+[ -r "$rx_path" ] || refuse "cannot read $rx_path, so nothing here can say whether the flood arrived"
+
 load_from=$(date +%s)
+rx_before=$(cat "$rx_path")
 sleep "$half"
+rx_after=$(cat "$rx_path")
 load_to=$(date +%s)
+load_rx=$((rx_after - rx_before))
 
 # Let journald settle, then read each window once into a file. Read from the file and never
 # through a pipe into grep -q: grep exits at the first match, the upstream dies of SIGPIPE,
@@ -146,15 +159,21 @@ lost=$(awk '{for (i = 1; i <= NF; i++) if (index($i, "lost=") == 1) { split($i, 
     echo "journal_dir=$journal_dir  free_kib=$free_kib"
     echo "duration=$DURATION  half=$half  hz=$HZ  counters=$COUNTERS  rate=$RATE  flood=$FLOOD"
     echo "rest_window=$rest_from..$rest_to  lines=$rest_lines  events=$rest_events"
-    echo "load_window=$load_from..$load_to  lines=$load_lines  events=$load_events"
+    echo "load_window=$load_from..$load_to  lines=$load_lines  events=$load_events  rx_packets=$load_rx"
     echo "suppressed=$suppressed  lost_reported_by_agent=$lost"
 } | tee "$report"
 
 [ "$rest_lines" -gt 0 ] \
     || refuse "the unit wrote no line in the rest window: the agent was not logging, so there is no denominator"
 if [ "$FLOOD" = yes ]; then
-    [ "$load_events" -gt 0 ] \
-        || refuse "the agent accounted no event in the load window: the flood did not reach it, so the load phase was not measured"
+    # The witness is the interface, not the agent's own digest, and getting that wrong cost two
+    # runs. Every one of the 34 counters counts an *exception* -- counting accepted packets
+    # would put a lookup on the steady-state path -- so a flood of well-formed SYNs crosses all
+    # seven stages and increments nothing. `events=0` under load is the correct answer to a
+    # question this script was not asking. What it needs to know is whether packets arrived,
+    # and rx_packets is the only thing here that says so.
+    [ "$load_rx" -gt 0 ] \
+        || refuse "the interface received nothing in the load window: the flood did not reach $IFACE, so the load phase was not measured"
 else
     refuse "--no-flood was passed: the rest phase above is real and the load phase does not exist, so no ratio is reported"
 fi
