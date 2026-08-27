@@ -10,6 +10,25 @@ use lorica_common::{BURST_MAX, Drain, MultiplyShift, Rate, setting};
 #[unsafe(no_mangle)]
 static SETTINGS: u32 = 0;
 
+/// Slots between the start of one processor's counter stripe and the next.
+///
+/// The counter map is one flat `ARRAY` striped by processor rather than a `PERCPU_ARRAY`, so
+/// the agent can read it through a mapping instead of a syscall — see [`crate::maps::COUNTERS`]
+/// for why the kernel leaves no other option. The stripe width is a load-time number because
+/// the slot count is: it comes from the deployment profile, which derives it from a memlock
+/// budget.
+///
+/// **Zero is the unpatched value and it is the safe direction, not a trap.** With a stripe of
+/// zero every processor writes the same block, so the counters lose their per-processor
+/// separation — a shared non-atomic counter, which under-counts under contention — and the
+/// agent's sum over stripes still reads the right total out of the first one. The failure is
+/// therefore a lost optimisation and a slow leak, never a wrong verdict; the loader cannot
+/// forget it anyway, because `lorica_common::CounterLayout` is what computes both this word
+/// and the map size and `lorica_dataplane::maps::size_counters` is what applies them
+/// together.
+#[unsafe(no_mangle)]
+static COUNTER_STRIPE: u32 = 0;
+
 /// The two multipliers the bucket index is hashed with, in two globals because `u64` is
 /// unambiguously `aya::Pod` and a patched struct would need a layout both sides agree on
 /// for no gain. The loader draws them from `/dev/urandom` at every load: two source
@@ -133,6 +152,17 @@ pub fn enforce_buckets() -> bool {
 #[inline(always)]
 pub fn mark_over_budget() -> bool {
     flags() & setting::MARK_OVER_BUDGET != 0
+}
+
+/// The stripe width, read once per counter bump.
+///
+/// `read_volatile` for the same reason as every word here: the loader rewrites it after the
+/// compiler has seen the initialiser, and a folded read would compile the zero in. It is a
+/// `.rodata` load and not a map read, so it costs one instruction rather than a helper call.
+#[inline(always)]
+pub fn counter_stripe() -> u32 {
+    // SAFETY: a plain aligned read of a static in this program own read-only data.
+    unsafe { core::ptr::read_volatile(&COUNTER_STRIPE) }
 }
 
 /// `read_volatile` for the same reason as the policy word: the loader rewrites this after

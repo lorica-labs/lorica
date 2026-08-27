@@ -31,12 +31,12 @@ use std::{
 use anyhow::{Context, Result, bail};
 use aya::{Ebpf, EbpfLoader};
 use lorica_common::{
-    BUCKET_KEY_SYMBOLS, Clock, CounterId, DEFAULT_SETTINGS, SETTINGS_SYMBOL, SIGNATURE_VECTORS_ALL,
-    SIGNATURE_VECTORS_SYMBOL, key_words,
+    BUCKET_KEY_SYMBOLS, Clock, CounterId, CounterLayout, DEFAULT_SETTINGS, SETTINGS_SYMBOL,
+    SIGNATURE_VECTORS_ALL, SIGNATURE_VECTORS_SYMBOL, key_words,
 };
 use lorica_dataplane::{
     clock, loader,
-    maps::{self, batch::PerCpuU64Reader},
+    maps::{self, Counters},
 };
 use lorica_detect::{Config as Ladder, Engine};
 use lorica_policy::Mode;
@@ -181,16 +181,28 @@ fn run(options: Options) -> Result<()> {
 }
 
 async fn serve(mut options: Options) -> Result<()> {
-    let (ebpf, clock) = load(&options.object, options.counter_slots)?;
+    // Computed before the load, because the load needs it: the counter map's entry count and
+    // the stripe width the program indexes it with both come from here.
+    let layout = maps::counter_layout(options.counter_slots).with_context(|| {
+        format!(
+            "no counter layout for {} slots on this machine",
+            options.counter_slots
+        )
+    })?;
+    let (ebpf, clock) = load(&options.object, &layout)?;
     // The descriptors below are duplicates and not borrows of the loaded program, and that
     // is what makes attaching possible at all: attaching needs the program mutably, at any
     // moment for as long as the agent runs, and a borrow of its maps that lives that long
     // would freeze it. A `dup` costs one syscall at startup and names the same kernel object,
     // so nothing about what is read changes.
-    let counters = duplicate(ebpf, "COUNTERS")?;
+    let counters = duplicate(ebpf, maps::COUNTERS)?;
     let list = duplicate(ebpf, "UNIFIED_LIST")?;
     // Two readers over the same map: one stops at the named counters, one covers every
     // slot. Each owns its buffers, sized once, so neither allocates again.
+    //
+    // Both try the mapping first and fall back to the batch walk. The failure is reported once
+    // and only for the full sweep: it is the same map and the same flag, so a second line
+    // would say the same thing twice, and it is the full sweep whose cost the fallback changes.
     let named = reader(
         counters,
         CounterId::COUNT,
@@ -198,8 +210,11 @@ async fn serve(mut options: Options) -> Result<()> {
     )
     .context("building the named-counter reader failed")?;
     let full = reader(counters, options.counter_slots, options.batch)
-        .context("building the full-sweep reader failed")?
-        .with_stride(options.sweep_stride);
+        .context("building the full-sweep reader failed")?;
+    // Read before the reader is moved into the sweep, and kept as a string: the sweep answers
+    // *which* path it got and this is *why*, which is only interesting once, at startup.
+    let unmapped = full.unmapped().map(ToString::to_string);
+    let full = full.with_stride(options.sweep_stride);
     let mut sweep = tick::Sweep::new(
         named,
         full,
@@ -291,8 +306,15 @@ async fn serve(mut options: Options) -> Result<()> {
     // afterwards is measurable by difference.
     let settled = alloc::allocations();
     eprintln!(
-        "loricad: {} counter slots, batch {}, {} Hz, full sweep every {} ticks over {} reads, {} slot reads per second, socket {}, kernel clock {} Hz at jiffy {}",
+        "loricad: {} counter slots striped over {} processors ({} map entries), read by {}, batch {}, {} Hz, full sweep every {} ticks over {} reads, {} slot reads per second, socket {}, kernel clock {} Hz at jiffy {}",
         options.counter_slots,
+        layout.cpus,
+        layout.entries(),
+        if sweep.is_mapped() {
+            "mmap"
+        } else {
+            "BPF_MAP_LOOKUP_BATCH"
+        },
         options.batch,
         options.hz,
         sweep.every(),
@@ -302,6 +324,14 @@ async fn serve(mut options: Options) -> Result<()> {
         clock.hz,
         clock.jiffies,
     );
+    // The fallback, named with the reason the kernel gave. It is a tenfold difference in the
+    // cost of the sweep, so an agent that quietly took the slow path would be an agent whose
+    // CPU figure nobody can explain.
+    if let Some(err) = unmapped {
+        eprintln!(
+            "loricad: the counter array could not be mapped, so the sweep is reading it through              BPF_MAP_LOOKUP_BATCH at about a hundred times the cost: {err}"
+        );
+    }
     // Said once, at startup, and not counted as a metric: it is a property of how the guest
     // was booted, so it cannot change while the agent runs and nobody can act on it from a
     // dashboard.
@@ -469,15 +499,13 @@ fn duplicate(ebpf: &Ebpf, name: &str) -> Result<BorrowedFd<'static>> {
 /// [`maps::counters`] is this same call and takes the program, which is the one thing that
 /// cannot be borrowed here for as long as the reader lives. So the invariant it exists to
 /// state once is restated once more, here, and nowhere else in this crate.
-fn reader(
-    fd: BorrowedFd<'static>,
-    entries: u32,
-    batch: u32,
-) -> io::Result<PerCpuU64Reader<'static>> {
-    // SAFETY: `fd` is a duplicate of the descriptor of COUNTERS, declared
-    // `PerCpuArray<u64>` in lorica-ebpf, which is the map type and the eight-byte value
-    // width PerCpuU64Reader requires.
-    unsafe { PerCpuU64Reader::new(fd, entries, batch) }
+fn reader(fd: BorrowedFd<'static>, slots: u32, batch: u32) -> io::Result<Counters<'static>> {
+    let layout = maps::counter_layout(slots)?;
+    // SAFETY: `fd` is a duplicate of the descriptor of COUNTERS, declared `Array<u64>` with
+    // BPF_F_MMAPABLE in lorica-ebpf and created by `load` above from a layout computed the
+    // same way, which is the map type, the value width and the entry count both readers
+    // require.
+    Ok(unsafe { Counters::open(fd, layout, batch) })
 }
 
 /// What the agent knows about itself, for whichever of the two listeners asked.
@@ -530,7 +558,7 @@ fn snapshot(
 /// The calibration happens here because it needs the program mutable, which it only is
 /// before the leak, and because it sleeps: a few hundred milliseconds at startup, once,
 /// where no tick is waiting on it.
-fn load(object: &Path, slots: u32) -> Result<(&'static mut Ebpf, Clock)> {
+fn load(object: &Path, layout: &CounterLayout) -> Result<(&'static mut Ebpf, Clock)> {
     let bytes = std::fs::read(object)
         .with_context(|| format!("cannot read the eBPF object at {}", object.display()))?;
     // Drawn here and never written down. The bucket index is chosen by whoever sends the
@@ -539,7 +567,11 @@ fn load(object: &Path, slots: u32) -> Result<(&'static mut Ebpf, Clock)> {
     // from a configuration file is not this phase.
     let key =
         key_words(loader::draw_index_key().context("cannot draw the key of the bucket index")?);
-    let mut ebpf = EbpfLoader::new()
+    // The counter map is one flat array striped by processor, so its entry count and the
+    // stripe width the program indexes it with are one decision. `maps::size_counters` is what
+    // applies both, and it is the only thing allowed to size that map.
+    let mut loader = EbpfLoader::new();
+    let mut ebpf = maps::size_counters(&mut loader, layout)
         .override_global(SETTINGS_SYMBOL, &DEFAULT_SETTINGS, true)
         // The whole catalogue, because no configuration is read here yet and the program's
         // own initialiser is none of it. `Compiled::signature_vectors` is what goes here
@@ -548,7 +580,6 @@ fn load(object: &Path, slots: u32) -> Result<(&'static mut Ebpf, Clock)> {
         .override_global(SIGNATURE_VECTORS_SYMBOL, &SIGNATURE_VECTORS_ALL, true)
         .override_global(BUCKET_KEY_SYMBOLS[0], &key[0], true)
         .override_global(BUCKET_KEY_SYMBOLS[1], &key[1], true)
-        .map_max_entries("COUNTERS", slots)
         .load(&bytes)
         .with_context(|| format!("loading {} failed", object.display()))?;
 

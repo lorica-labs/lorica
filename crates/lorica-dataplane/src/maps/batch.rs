@@ -12,6 +12,7 @@ use std::{
 };
 
 use aya::util::nr_cpus;
+use lorica_common::CounterLayout;
 
 /// Commands of the `bpf` syscall. libc carries no `bpf_cmd` enum, and only the two this
 /// crate uses are named here. The numbers are ABI: a wrong one is a different operation
@@ -59,80 +60,88 @@ unsafe fn command(cmd: libc::c_long, attr: &mut Attr) -> io::Result<()> {
     Ok(())
 }
 
-/// A reusable reader over a per-CPU array of `u64`.
+/// A reusable reader over the striped counter array.
 ///
 /// It allocates its buffers once, at construction, and **nothing** per read. That is not
-/// a micro-optimisation. aya's `PerCpuArray::get` returns a boxed slice per slot, so
-/// reading fifty thousand counters ten times a second is half a million allocations a
-/// second before a single syscall is counted, and the agent's tick is asserted to
-/// allocate nothing at all.
+/// a micro-optimisation. aya's typed lookups box a value per slot, so reading fifty thousand
+/// counters ten times a second is half a million allocations a second before a single syscall
+/// is counted, and the agent's tick is asserted to allocate nothing at all.
 ///
-/// **The per-processor layout stays inside.** The kernel writes `count ×
-/// num_possible_cpus` values per call, grouped by key and in processor order;
-/// [`Self::read`] hands back one **sum per slot, in slot order** — `entries` values,
-/// whatever the batch size and whatever the machine's processor count. A caller never
-/// sizes a per-CPU buffer and never has to know the grouping, which is the one thing
-/// here that is an out-of-bounds write when it is guessed.
+/// **The stripe layout stays inside.** The map is `stripe × cpus` flat `u64` laid out
+/// CPU-major, so each processor owns a contiguous region —
+/// [`CounterLayout`](lorica_common::CounterLayout) is where that arithmetic lives.
+/// [`Self::read`] hands back one **sum per slot, in slot order**, `slots` values, whatever the
+/// batch size and whatever the machine's processor count. A caller never indexes a stripe and
+/// never has to know its width, which is the one thing here that reads the wrong counter when
+/// it is guessed.
 ///
-/// **A read is not a coherent snapshot, and never was.** `generic_map_lookup_batch`
-/// calls `cond_resched()` between elements, so the slots of one read are sampled at
-/// times that differ by whatever the scheduler did in between; two slots of the same
-/// read already belong to two different instants. That is what makes [`Self::with_stride`]
-/// free rather than a trade: reading a fraction of the map per call widens a staleness
-/// that is not zero to begin with, and it widens it on quantities that only ever grow.
-pub struct PerCpuU64Reader<'fd> {
+/// **This is the fallback path.** The map carries `BPF_F_MMAPABLE`, so the agent normally
+/// reads the same bytes through [`super::mmap::Mapped`] with no syscall at all. This exists
+/// for the case where the mapping is refused — and it is what the mapping is checked against,
+/// which is the other reason to keep it.
+///
+/// **A read is not a coherent snapshot, and never was.** `generic_map_lookup_batch` calls
+/// `cond_resched()` between elements, so the elements of one pass are sampled at times that
+/// differ by whatever the scheduler did in between; two of them already belong to two
+/// instants. That is what makes [`Self::with_stride`] free rather than a trade: spreading a
+/// pass over several reads widens a staleness that is not zero to begin with, and it widens it
+/// on quantities that only ever grow.
+pub struct StripedU64Reader<'fd> {
     fd: BorrowedFd<'fd>,
-    cpus: usize,
+    layout: CounterLayout,
     batch: u32,
-    /// Fraction of the map one read covers, as a divisor. One reads all of it.
+    /// Reads one pass over the map is spread across. One reads all of it.
     stride: u32,
-    /// The slot the next read starts at. Zero means a pass is about to begin, which is
-    /// also the state in which no resume token is sent.
+    /// The flat index the next read starts at, inside the pass in progress.
     next: usize,
-    /// The key the kernel wrote back at the end of the last call, which is where the next
-    /// one resumes from. Held across reads and not only across the calls of one read: that
-    /// is the whole of the incremental sweep.
+    /// The key the kernel wrote back at the end of the last call, which is where the next one
+    /// resumes from. Held across reads and not only across the calls of one read: that is the
+    /// whole of the incremental sweep.
     token: u32,
     /// The keys one call returns, at most `batch` of them.
     keys: Vec<u32>,
-    /// `batch × cpus` values: the most one call can write.
+    /// One value per key. A flat `ARRAY` and not a `PERCPU_ARRAY`, so the kernel writes one
+    /// eight-byte value per element rather than one per possible processor — which is also
+    /// why a machine with phantom processors no longer pays a copy per element for them, only
+    /// the elements of their stripes.
     values: Vec<u64>,
-    /// The result, one sum per slot.
+    /// Sums the pass in progress has accumulated, over the stripes it has reached so far.
+    pending: Vec<u64>,
+    /// The last completed pass, which is what a caller reads. Published whole: a pass that has
+    /// covered three stripes of eight holds three eighths of every slot, and handing that out
+    /// would report a collapse that did not happen.
     sums: Vec<u64>,
     /// Elements the last read asked the kernel for. See [`Self::walked`].
     walked: usize,
 }
 
-impl<'fd> PerCpuU64Reader<'fd> {
+impl<'fd> StripedU64Reader<'fd> {
     /// # Safety
     ///
-    /// `fd` must be a `BPF_MAP_TYPE_PERCPU_ARRAY` of eight-byte values. The kernel
-    /// writes one value per possible processor for every key it returns, so a map with a
-    /// wider value writes past the buffer sized here.
-    pub unsafe fn new(fd: BorrowedFd<'fd>, entries: u32, batch: u32) -> io::Result<Self> {
-        let cpus = nr_cpus()
-            .map_err(|(path, err)| io::Error::new(err.kind(), format!("{path}: {err}")))?;
+    /// `fd` must be a `BPF_MAP_TYPE_ARRAY` of eight-byte values. The kernel strides the value
+    /// buffer by its own value size, so a map with a wider value writes past the buffer sized
+    /// here. A map with fewer entries than `layout.entries()` is merely a walk that ends
+    /// early.
+    pub unsafe fn new(fd: BorrowedFd<'fd>, layout: CounterLayout, batch: u32) -> Self {
         // A batch of zero would ask for nothing forever; one larger than the map only
         // wastes the buffer.
-        let batch = batch.clamp(1, entries.max(1));
-        Ok(Self {
+        let batch = batch.clamp(1, layout.entries().max(1));
+        Self {
             fd,
-            cpus,
+            layout,
             batch,
             stride: 1,
             next: 0,
             token: 0,
             keys: vec![0; batch as usize],
-            // The length that makes the syscall sound. Taking the processor count from
-            // anywhere but the possible-CPU mask — which is what `nr_cpus` reads, not
-            // the online count — is an out-of-bounds write.
-            values: vec![0; batch as usize * cpus],
-            sums: vec![0; entries as usize],
+            values: vec![0; batch as usize],
+            pending: vec![0; layout.slots as usize],
+            sums: vec![0; layout.slots as usize],
             walked: 0,
-        })
+        }
     }
 
-    /// How many slots one syscall asks for. Never how many it gets: the last call of a
+    /// How many elements one syscall asks for. Never how many it gets: the last call of a
     /// walk is short, and the count the kernel writes back is the only length that may
     /// be read.
     pub const fn batch(&self) -> u32 {
@@ -143,26 +152,26 @@ impl<'fd> PerCpuU64Reader<'fd> {
     ///
     /// **What it buys and what it costs.** The cost of a read is exactly linear in the
     /// elements it asks the kernel for, and the kernel is preemptible between them, so the
-    /// worst read of a sweep is divided by `stride` and the mean CPU is unchanged. What
-    /// widens is freshness: a given slot is now refreshed once every `stride` reads instead
-    /// of every read.
+    /// worst read of a pass is divided by `stride` and the mean CPU is unchanged. What widens
+    /// is freshness: the sums a caller reads are refreshed once per pass, so once every
+    /// `stride` reads.
     ///
     /// **Why that is sound here and would not be for an arbitrary map.** These slots are
-    /// counters the data path only ever increments, so a slot this read did not visit keeps
-    /// the value the last one left — which is a lower bound on the truth, never a drop.
-    /// Detection compares a snapshot against an earlier snapshot, and a lower bound on both
-    /// ends of a difference is a difference that under-reports rather than one that invents
-    /// an attack. A map whose values could decrease would need the whole pass.
+    /// counters the data path only ever increments, so a pass that has not finished leaves the
+    /// previous pass's totals standing — a lower bound on the truth, never a drop. Detection
+    /// compares a snapshot against an earlier snapshot, and a lower bound on both ends of a
+    /// difference is a difference that under-reports rather than one that invents an attack. A
+    /// map whose values could decrease would need the whole pass.
     ///
     /// One is the whole map per read, which is what the reader does without this call.
     pub const fn with_stride(mut self, stride: u32) -> Self {
-        // A stride of zero would claim no slots and finish no pass, and the reader is the
+        // A stride of zero would claim no elements and finish no pass, and the reader is the
         // wrong place to refuse a number: the caller that parsed it says so instead.
         self.stride = if stride == 0 { 1 } else { stride };
         self
     }
 
-    /// The divisor [`Self::with_stride`] set. The slots one read asks for are
+    /// The divisor [`Self::with_stride`] set. The elements one read asks for are
     /// `entries / stride`, rounded up, which is the number a cost is computed from.
     pub const fn stride(&self) -> u32 {
         self.stride
@@ -170,43 +179,37 @@ impl<'fd> PerCpuU64Reader<'fd> {
 
     /// How many elements the last read actually asked the kernel for.
     ///
-    /// The cost of a read is exactly linear in this and in nothing else — 264 ns an
-    /// element on the target, measured — so it is the number to look at when a reader
-    /// costs more than expected, and the number a test asserts on to prove that a reader
-    /// built for the named counters is not quietly walking fifty thousand slots.
+    /// The cost of a read is exactly linear in this and in nothing else, so it is the number
+    /// to look at when a reader costs more than expected, and the number a test asserts on to
+    /// prove that a reader built for the named counters is not quietly walking fifty thousand
+    /// slots.
     pub const fn walked(&self) -> usize {
         self.walked
     }
 
-    /// Walks the slots this read is due and returns one sum per slot, for every slot the
-    /// reader was built for. Allocates nothing.
+    pub const fn layout(&self) -> CounterLayout {
+        self.layout
+    }
+
+    /// Walks the elements this read is due and returns one sum per slot.
     ///
-    /// It stops at `entries` rather than at the end of the map. An array map is walked in
-    /// index order from zero, so a bound on the count is a bound on the slots, and without
-    /// it a reader built for the eighteen named counters would read every per-entry slot
-    /// above them and throw the answers away — paying the full cost for a fraction of the
-    /// data, which is the whole cost this reader exists to control.
-    ///
-    /// At the default stride of one, "the slots this read is due" is every slot and the
-    /// returned values are all fresh. Above it, this read refreshes its window and the
-    /// slots outside it carry what the read that last covered them found — see
-    /// [`Self::with_stride`] for why that is a lower bound and not a lie.
+    /// Allocates nothing. It stops at `layout.entries()` rather than at the end of the map: an
+    /// array map is walked in index order from zero, so a bound on the count is a bound on the
+    /// elements, and without it a reader built for a small map would read every element above
+    /// it and throw the answers away — paying the full cost for a fraction of the data, which
+    /// is the whole cost this reader exists to control.
     pub fn read(&mut self) -> io::Result<&[u64]> {
-        // The window this read claims. Rounded up, so a stride that does not divide the
-        // map still finishes a pass in `stride` reads rather than in one more.
-        let window = self.sums.len().div_ceil(self.stride as usize);
-        let start = self.next.min(self.sums.len());
-        let end = (start + window).min(self.sums.len());
-        // Cleared, because a slot inside the window that the walk does not reach — the map
-        // is smaller than this reader was built for — must read zero and not the number
-        // some earlier read left. Only the window: outside it, the previous value standing
-        // is the point.
-        self.sums[start..end].fill(0);
+        let entries = self.layout.entries() as usize;
+        // The window this read claims. Rounded up, so a stride that does not divide the map
+        // still finishes a pass in `stride` reads rather than in one more.
+        let window = entries.div_ceil(self.stride as usize);
+        let start = self.next.min(entries);
+        let end = (start + window).min(entries);
         self.walked = 0;
 
-        // in_batch and out_batch are pointers to one key: the kernel resumes the walk from
-        // the key it left off at, exclusive, and for an array map that key is the index. So
-        // `next` and `token` say the same thing twice — `token` to the kernel, `next` to the
+        // in_batch and out_batch are pointers to one key: the kernel resumes the walk from the
+        // key it left off at, exclusive, and for an array map that key is the index. So `next`
+        // and `token` say the same thing twice — `token` to the kernel, `next` to the
         // arithmetic above — and they are only correct together.
         while self.walked < end - start {
             let remaining = end - start - self.walked;
@@ -225,9 +228,9 @@ impl<'fd> PerCpuU64Reader<'fd> {
                 ..Attr::default()
             };
 
-            // SAFETY: keys holds `batch` four-byte keys and values `batch * cpus`
-            // eight-byte values, which is `count` keys and `count` per-processor values
-            // for the per-CPU array of u64 this type's constructor requires.
+            // SAFETY: keys holds `batch` four-byte keys and values `batch` eight-byte values,
+            // which is `count` keys and `count` values for the flat array of u64 this type's
+            // constructor requires.
             let done = match unsafe { command(BPF_MAP_LOOKUP_BATCH, &mut attr) } {
                 Ok(()) => false,
                 // ENOENT is how the walk ends. The elements this call returned are valid
@@ -238,8 +241,16 @@ impl<'fd> PerCpuU64Reader<'fd> {
 
             let n = (attr.count as usize).min(self.keys.len());
             for (i, key) in self.keys[..n].iter().enumerate() {
-                if let Some(slot) = self.sums.get_mut(*key as usize) {
-                    *slot = self.values[i * self.cpus..(i + 1) * self.cpus].iter().sum();
+                // The slot a flat index belongs to. The top of a stripe belongs to none:
+                // the width is rounded up to a cache line, so the last few indices of a
+                // stripe are padding nobody counts.
+                let slot = (*key % self.layout.stripe) as usize;
+                if slot < self.pending.len() {
+                    // Accumulated and not assigned: one slot's total is the sum over every
+                    // processor's stripe, and the stripes are reached at different points of
+                    // the walk. Wrapping, because a counter that overflowed in the kernel
+                    // wrapped there too and the sum should say the same thing.
+                    self.pending[slot] = self.pending[slot].wrapping_add(self.values[i]);
                 }
             }
             self.walked += n;
@@ -249,12 +260,10 @@ impl<'fd> PerCpuU64Reader<'fd> {
             self.next = start + self.walked;
 
             if done {
-                // The map ends here, so every slot above what this call returned does not
-                // exist and has to read zero rather than an older number — and the next
-                // read starts a fresh pass from the beginning.
-                let above = self.next.min(self.sums.len());
-                self.sums[above..].fill(0);
-                self.next = 0;
+                // The map ends here, so the pass is over — early, which means the map is
+                // smaller than this reader was built for. Publishing is what makes the slots
+                // it never reached read zero instead of some older number.
+                self.publish();
                 return Ok(&self.sums);
             }
             if n == 0 {
@@ -263,22 +272,30 @@ impl<'fd> PerCpuU64Reader<'fd> {
                 ));
             }
         }
-        if self.next >= self.sums.len() {
-            self.next = 0;
+        if self.next >= entries {
+            self.publish();
         }
         Ok(&self.sums)
     }
+
+    /// Ends a pass: what it accumulated becomes what callers read, and the next pass starts
+    /// from the beginning with nothing carried over.
+    fn publish(&mut self) {
+        self.sums.copy_from_slice(&self.pending);
+        self.pending.fill(0);
+        self.next = 0;
+    }
 }
 
-/// Processors the kernel sizes a per-CPU value for against processors that can run code,
-/// when the first is larger — which is a cost multiplier nobody chose.
+/// Processors the kernel sizes the counter map for against processors that can run code, when
+/// the first is larger — which is a cost multiplier nobody chose.
 ///
-/// `bpf_map_value_size` multiplies a per-CPU value by `num_possible_cpus()`, and
-/// `bpf_percpu_array_copy` walks `for_each_possible_cpu`, so a guest booted with more
-/// possible processors than online ones pays a copy per phantom processor on every element
-/// of every batch read. The measured cost of this read is about 130 ns fixed plus 34 ns per
-/// processor, so four phantom processors are a third of the read spent on slots that are
-/// permanently zero.
+/// `bpf_get_smp_processor_id` can return any *possible* processor, so the map is striped for
+/// all of them and both read paths sum all of them. A guest booted with more possible
+/// processors than online ones therefore carries stripes that can never be written and pays to
+/// read them: `stripe × 8` bytes of kernel memory each, and one element per stripe slot on the
+/// batch path. It is fixed at boot — `maxcpus=`, or the hypervisor's hotplug window — and
+/// nothing the agent does can change it, so it is said once and not exported.
 ///
 /// `None` when there is nothing to say, so the caller has nothing to decide.
 pub fn phantom_cpus() -> Option<(usize, usize)> {

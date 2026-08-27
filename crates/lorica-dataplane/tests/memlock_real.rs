@@ -28,9 +28,13 @@ fn maps_sized(list: u32, counters: u32) -> Ebpf {
     let path = object_path();
     let object = std::fs::read(&path)
         .unwrap_or_else(|err| panic!("cannot read the eBPF object at {}: {err}", path.display()));
-    EbpfLoader::new()
+    // The counter map's entry count and the stripe width the program indexes it with are one
+    // decision, and `size_counters` is the only thing allowed to make it. What this file
+    // measures is the memlock of the map that decision creates, so it has to be that map.
+    let layout = maps::counter_layout(counters).expect("no counter layout for this machine");
+    let mut loader = EbpfLoader::new();
+    maps::size_counters(&mut loader, &layout)
         .map_max_entries("UNIFIED_LIST", list)
-        .map_max_entries("COUNTERS", counters)
         .load(&object)
         .unwrap_or_else(|err| panic!("creating the maps failed: {err}"))
 }

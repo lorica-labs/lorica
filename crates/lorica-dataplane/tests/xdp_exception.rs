@@ -121,15 +121,8 @@ fn exception_count(report: &str) -> u64 {
 }
 
 fn read_counter(ebpf: &aya::Ebpf, name: &str) -> u64 {
-    use aya::maps::{MapData, PerCpuArray};
     let id = lorica_common::CounterId::from_name(name)
         .unwrap_or_else(|| panic!("no counter named {name}"));
-    let map = ebpf.map("COUNTERS").expect("no COUNTERS map");
-    let counters: PerCpuArray<&MapData, u64> =
-        PerCpuArray::try_from(map).expect("COUNTERS is not a per-CPU array");
-    counters
-        .get(&id.index(), 0)
+    lorica_dataplane::maps::counter_at(ebpf, support::run::COUNTER_SLOTS, id.index())
         .expect("reading a counter failed")
-        .iter()
-        .sum()
 }

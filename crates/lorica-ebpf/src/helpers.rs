@@ -13,7 +13,7 @@
 use aya_ebpf::{
     EbpfContext,
     bindings::{BPF_FIB_LOOKUP_SKIP_NEIGH, bpf_fib_lookup as FibParams},
-    helpers::{bpf_fib_lookup, bpf_jiffies64, bpf_ktime_get_ns},
+    helpers::{bpf_fib_lookup, bpf_get_smp_processor_id, bpf_jiffies64, bpf_ktime_get_ns},
     maps::lpm_trie::Key,
     programs::XdpContext,
 };
@@ -99,13 +99,39 @@ pub fn now_ns() -> u64 {
 /// Takes an index rather than a [`CounterId`] because the slots above the named ones
 /// belong to individual entries of the unified list, and an entry knows its own index
 /// and not a name.
+///
+/// **Why a processor id is read here.** The counter map is a flat `ARRAY` striped by
+/// processor and not a `PERCPU_ARRAY`, because the kernel refuses `BPF_F_MMAPABLE` on
+/// per-CPU maps and mapping the counters is what took the agent's sweep from milliseconds to
+/// microseconds — [`crate::maps::COUNTERS`] carries the whole argument. The flat layout means
+/// the program has to name the stripe itself, and `bpf_get_smp_processor_id` is what names
+/// it. That call is **not inlined by the verifier before 6.10**, so on the 6.8 floor of this
+/// project it is a real call: it is the one slot of headroom the static call budget was
+/// keeping, and the cost is on the packet path of every counted packet.
+///
+/// The add stays non-atomic, and the stripe is what earns that: a processor only ever writes
+/// inside its own region, and the region is a whole number of cache lines, so nothing here
+/// races with another processor. That was the per-CPU map's guarantee and it is the layout's
+/// now.
 #[inline(never)]
 pub fn bump_at(index: u32) {
     #[cfg(feature = "count-helpers")]
     observe(HelperKind::MapLookup);
-    if let Some(slot) = COUNTERS.get_ptr_mut(index) {
-        // SAFETY: the pointer comes from a successful per-CPU lookup, so it is valid
-        // for the duration of this program run and not shared with another CPU.
+    // SAFETY: no argument, no pointer, and the helper has existed since 4.1 — far below the
+    // 6.8 floor.
+    let cpu = unsafe { bpf_get_smp_processor_id() };
+    // Wrapping, and it is not a hazard: the product of a processor id and a stripe cannot
+    // reach 2^32 for any layout `CounterLayout::new` accepts, and an index past the end is
+    // refused by the lookup itself rather than by arithmetic here. The `ARRAY` lookup the
+    // verifier inlines *is* the bound check, which is the same reason the bucket bank is one
+    // entry per bucket.
+    let striped = cpu
+        .wrapping_mul(crate::settings::counter_stripe())
+        .wrapping_add(index);
+    if let Some(slot) = COUNTERS.get_ptr_mut(striped) {
+        // SAFETY: the pointer comes from a successful lookup, so it is valid for the
+        // duration of this program run, and the index is inside this processor's stripe,
+        // which no other processor writes.
         unsafe { *slot += 1 }
     }
 }

@@ -36,10 +36,9 @@ use std::{
 
 use aya::{
     Ebpf, EbpfLoader,
-    maps::{PerCpuArray, PerCpuValues},
-    util::nr_cpus,
+    maps::{Array, MapData},
 };
-use lorica_common::{CounterId, DEFAULT_SETTINGS, SETTINGS_SYMBOL};
+use lorica_common::{CounterId, CounterLayout, DEFAULT_SETTINGS, SETTINGS_SYMBOL};
 use lorica_dataplane::maps;
 
 thread_local! {
@@ -98,12 +97,21 @@ fn object_path() -> PathBuf {
 /// maps have to outlive every reader of them, which is the same reason the agent leaks it.
 fn load() -> &'static Ebpf {
     let bytes = std::fs::read(object_path()).expect("cannot read the eBPF object");
-    let ebpf = EbpfLoader::new()
+    let layout = layout();
+    let mut loader = EbpfLoader::new();
+    // The counter map's entry count and the stripe width the program indexes it with are one
+    // decision, and `size_counters` is what makes it. Setting only the size would load a
+    // program counting into slot zero of every stripe.
+    let ebpf = maps::size_counters(&mut loader, &layout)
         .override_global(SETTINGS_SYMBOL, &DEFAULT_SETTINGS, true)
-        .map_max_entries("COUNTERS", SLOTS)
         .load(&bytes)
         .expect("loading the object failed");
     Box::leak(Box::new(ebpf))
+}
+
+/// The counter layout the sweep under test reads, on this machine.
+fn layout() -> CounterLayout {
+    maps::counter_layout(SLOTS).expect("no counter layout for this machine")
 }
 
 fn sweep_over(ebpf: &'static Ebpf) -> tick::Sweep {
@@ -191,30 +199,25 @@ fn a_thousand_whole_ticks_allocate_nothing_and_fit_the_budget() {
 #[test]
 fn the_snapshot_carries_one_total_per_named_counter() {
     let bytes = std::fs::read(object_path()).expect("cannot read the eBPF object");
-    let mut ebpf = EbpfLoader::new()
+    let layout = layout();
+    let mut loader = EbpfLoader::new();
+    let mut ebpf = maps::size_counters(&mut loader, &layout)
         .override_global(SETTINGS_SYMBOL, &DEFAULT_SETTINGS, true)
-        .map_max_entries("COUNTERS", SLOTS)
         .load(&bytes)
         .expect("loading the object failed");
 
-    let cpus = nr_cpus().expect("cannot read the possible-CPU count");
     {
-        let mut counters: PerCpuArray<_, u64> = ebpf
+        let mut counters: Array<&mut MapData, u64> = ebpf
             .map_mut("COUNTERS")
             .expect("no COUNTERS map")
             .try_into()
-            .expect("COUNTERS is not a per-CPU array");
+            .expect("COUNTERS is not a flat array");
         for index in 0..CounterId::ALL.len() {
-            // Everything on processor zero: the reader sums across processors, so one slot
-            // per key is enough to tell the slots apart and the sum is the value written.
-            let mut values = vec![0u64; cpus];
-            values[0] = expected(index);
+            // Everything in processor zero's stripe: the reader sums the stripes, so one is
+            // enough to tell the slots apart and the sum is the value written.
+            let slot = u32::try_from(index).expect("the counter count fits a u32");
             counters
-                .set(
-                    u32::try_from(index).expect("the counter count fits a u32"),
-                    PerCpuValues::try_from(values).expect("one value per possible processor"),
-                    0,
-                )
+                .set(layout.index(0, slot), expected(index), 0)
                 .expect("writing the counter slot failed");
         }
     }

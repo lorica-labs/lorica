@@ -5,14 +5,21 @@
 //! spec. Nothing here is inferred from behaviour, because a floor guessed one release too
 //! low announces a capability the kernel does not have.
 //!
-//! **One requirement is not in the table below, because it has no fallback.** The object is
-//! compiled for BPF ISA v3 (`-C target-cpu=v3` in the eBPF crate's cargo config), so it
-//! needs a kernel with JMP32, which is **5.1**. Every row here is an optional capability:
-//! absent, the program takes another path to the same response tier. The ISA level is not
-//! optional — an older kernel does not fall back, it refuses the program at load. It is
-//! recorded here anyway because this is the file someone reads to find out which kernel
-//! release buys what, and 5.1 sits well under this project's 6.8 floor, which is exactly
-//! why the requirement is affordable and exactly why it would otherwise go unwritten.
+//! **Two requirements are not in the table below, because they have no fallback.** Every row
+//! here is an optional capability: absent, the program takes another path to the same response
+//! tier. These two are not optional — an older kernel does not fall back, it refuses. They are
+//! recorded here anyway because this is the file someone reads to find out which kernel release
+//! buys what, and both sit well under this project's 6.8 floor, which is exactly why they are
+//! affordable and exactly why they would otherwise go unwritten.
+//!
+//! - The object is compiled for BPF ISA v3 (`-C target-cpu=v3` in the eBPF crate's cargo
+//!   config), so it needs a kernel with JMP32: **5.1**. An older kernel refuses the program at
+//!   load.
+//! - The counter map is created with `BPF_F_MMAPABLE`, which the kernel accepts on
+//!   `BPF_MAP_TYPE_ARRAY` from **5.5** (commit `fc9702273e2e`). An older kernel refuses the
+//!   *map*, so the agent never starts. The read path does have a fallback —
+//!   `BPF_MAP_LOOKUP_BATCH` at about a hundred times the cost, taken when `mmap` itself is
+//!   refused — but the map creation does not, which is why this belongs here and not in a row.
 
 use super::Capability;
 
@@ -83,8 +90,9 @@ pub const ROWS: [Entry; 7] = [
         name: "bpf_arena",
         since: (6, 9),
         symbol: Some("arena_map_ops"),
-        fallback: "batch reads, then a hand-sharded mmappable array. Both are agent-side \
-                   cost, so the tier reached is untouched either way",
+        fallback: "the hand-sharded mmappable array the counter map already is: a flat ARRAY \
+                   striped by processor, mapped read-only, with the batch read behind it. \
+                   Agent-side cost either way, so the tier reached is untouched",
     },
     Entry {
         cap: Capability::QueueLeasing,

@@ -384,9 +384,12 @@ fn object_bytes() -> Result<Vec<u8>, Failure> {
 /// The maps at the size being measured. The program is not loaded: a map measurement
 /// needs no verifier and no attach.
 fn load(object: &[u8], entries: u32, counter_entries: u32) -> Result<Ebpf, Failure> {
-    EbpfLoader::new()
+    // The counter map's entry count and the stripe width the program indexes it with are
+    // one decision, and `maps::size_counters` is the only thing allowed to make it.
+    let layout = maps::counter_layout(counter_entries)?;
+    let mut loader = EbpfLoader::new();
+    maps::size_counters(&mut loader, &layout)
         .map_max_entries("UNIFIED_LIST", entries)
-        .map_max_entries("COUNTERS", counter_entries)
         .load(object)
         .map_err(|err| format!("creating the maps failed: {err}").into())
 }

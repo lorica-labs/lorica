@@ -21,13 +21,12 @@ use std::{
 use aya::{
     Ebpf, EbpfLoader,
     maps::{
-        MapData, PerCpuArray, PerCpuValues,
+        Array, MapData,
         lpm_trie::{Key, LpmTrie},
     },
-    util::nr_cpus,
 };
-use lorica_common::{Action, CounterId, LpmKey, LpmValue};
-use lorica_dataplane::maps::{self, lpm};
+use lorica_common::{Action, CounterId, CounterLayout, LpmKey, LpmValue};
+use lorica_dataplane::maps::{self, Counters, lpm};
 use support::run::object_path;
 
 /// Small and, above all, not a multiple of any batch size used below: the partial last
@@ -75,11 +74,48 @@ fn maps() -> Ebpf {
     let path = object_path();
     let object = std::fs::read(&path)
         .unwrap_or_else(|err| panic!("cannot read the eBPF object at {}: {err}", path.display()));
-    EbpfLoader::new()
+    let layout = layout();
+    let mut loader = EbpfLoader::new();
+    // Both halves of the counter map through one call: the entry count and the stripe width
+    // the program indexes it with are one decision, and a fixture that set only the first
+    // would be testing a reader against a map the program writes differently.
+    maps::size_counters(&mut loader, &layout)
         .map_max_entries("UNIFIED_LIST", LIST_ENTRIES)
-        .map_max_entries("COUNTERS", COUNTER_ENTRIES)
         .load(&object)
         .unwrap_or_else(|err| panic!("creating the maps of {} failed: {err}", path.display()))
+}
+
+/// The counter layout this file's map is created with, on this machine.
+fn layout() -> CounterLayout {
+    maps::counter_layout(COUNTER_ENTRIES).expect("no counter layout for this machine")
+}
+
+/// Writes one processor's copy of one slot, at the flat index the program would compute.
+///
+/// Writing every stripe of a slot with a **distinct** value is what a running packet could
+/// never do — a packet touches the stripe of the one processor it ran on — and it is what makes
+/// a wrong stride visible: over a map of zeros, any stride looks correct.
+fn write_stripe(ebpf: &mut Ebpf, layout: CounterLayout, cpu: u32, slot: u32, value: u64) {
+    let map = ebpf.map_mut("COUNTERS").expect("no COUNTERS map");
+    let mut counters: Array<&mut MapData, u64> =
+        Array::try_from(map).expect("COUNTERS is not a flat array");
+    counters
+        .set(layout.index(cpu, slot), value, 0)
+        .unwrap_or_else(|err| panic!("writing stripe {cpu} of slot {slot} failed: {err}"));
+}
+
+/// Fills every stripe of every slot with a value derived from both, so a value read into the
+/// wrong slot or out of the wrong stripe is visible. Returns the expected sum per slot.
+fn fill(ebpf: &mut Ebpf, layout: CounterLayout) -> Vec<u64> {
+    let mut expected = vec![0u64; layout.slots as usize];
+    for cpu in 0..layout.cpus {
+        for slot in 0..layout.slots {
+            let value = u64::from(slot) * 1_000 + u64::from(cpu) + 1;
+            write_stripe(ebpf, layout, cpu, slot, value);
+            expected[slot as usize] += value;
+        }
+    }
+    expected
 }
 
 fn counters_fd(ebpf: &Ebpf) -> BorrowedFd<'_> {
@@ -111,136 +147,156 @@ fn host(i: u32) -> LpmKey {
     LpmKey::v4([10, 0, (i >> 8) as u8, i as u8], 32)
 }
 
-/// A per-CPU batch lookup returns one value per **possible** processor for every key it
-/// returns, so the caller buffer is `count × num_possible_cpus` values long and nothing
-/// else. A stride short by one processor is an out-of-bounds write; a stride too long
-/// reads the next key's values as if they belonged to this one.
+/// The batch walk of the striped array against the kernel's own single-element lookup.
 ///
-/// Every processor slot is written with a distinct value, which running a packet could
-/// never do — a packet touches the slot of the one processor it ran on, and a wrong
-/// stride over a vector of zeros looks perfectly correct.
+/// **What can go wrong and what this catches.** The map is one flat array of `stripe × cpus`
+/// eight-byte values and a slot's total is the sum over every stripe, so the reader has to
+/// reduce a flat index to a slot with the same arithmetic the program used to produce it. A
+/// stride off by one puts one processor's values under another slot; a stripe width that
+/// forgot its cache-line rounding folds padding into a real slot. Every stripe of every slot
+/// is written with a distinct value, which no running packet could produce, because over a
+/// map of zeros any arithmetic looks right.
 #[test]
-fn a_batch_read_sums_the_same_processors_the_single_element_lookup_does() {
+fn a_batch_read_sums_the_stripes_the_single_element_lookup_does() {
     let mut ebpf = maps();
-    let cpus = nr_cpus().expect("cannot read the possible processor count");
+    let layout = layout();
+    let expected = fill(&mut ebpf, layout);
 
-    let written: Vec<(u32, Vec<u64>)> = [
+    // The kernel's own lookup, one element at a time, summed the same way. Two
+    // implementations disagreeing is the whole point; a batch read compared against itself
+    // proves nothing.
+    for slot in [
         CounterId::LpmAllowExit.index(),
         CounterId::COUNT + 3,
         COUNTER_ENTRIES - 1,
-    ]
-    .into_iter()
-    .map(|slot| {
-        let values = (0..cpus)
-            .map(|cpu| u64::from(slot) * 1_000 + cpu as u64 + 1)
-            .collect();
-        (slot, values)
-    })
-    .collect();
-
-    {
-        let map = ebpf.map_mut("COUNTERS").expect("no COUNTERS map");
-        let mut counters: PerCpuArray<&mut MapData, u64> =
-            PerCpuArray::try_from(map).expect("COUNTERS is not a per-CPU array");
-        for (slot, values) in &written {
-            counters
-                .set(
-                    *slot,
-                    PerCpuValues::try_from(values.clone()).expect("wrong number of processors"),
-                    0,
-                )
-                .expect("writing a counter slot failed");
-        }
-    }
-
-    let mut reader =
-        maps::counters(&ebpf, COUNTER_ENTRIES, 16).expect("cannot build the counter reader");
-    let read = reader.read().expect("the batch read of COUNTERS failed");
-
-    assert_eq!(read.len(), COUNTER_ENTRIES as usize);
-    for (slot, values) in &written {
+    ] {
+        let one_by_one = maps::counter_at(&ebpf, COUNTER_ENTRIES, slot)
+            .expect("the single-element read of a slot failed");
         assert_eq!(
-            read[*slot as usize],
-            values.iter().sum::<u64>(),
-            "slot {slot} has to read the sum of its {cpus} processor values"
+            one_by_one, expected[slot as usize],
+            "slot {slot} has to read the sum of its {} stripes",
+            layout.cpus
         );
     }
-    // The one assertion a wrong stride cannot survive: anything read into a slot that
-    // was never written means the values of one key landed under another key.
+
+    // SAFETY: COUNTERS is the flat array of u64 `maps()` created from this layout.
+    let mut reader = unsafe { Counters::batched(counters_fd(&ebpf), layout, 16) };
+    let read = reader.read().expect("the batch read of COUNTERS failed");
+    assert_eq!(read.len(), COUNTER_ENTRIES as usize);
     assert_eq!(
-        read.iter().sum::<u64>(),
-        written.iter().map(|(_, v)| v.iter().sum::<u64>()).sum(),
-        "every slot that was not written has to still read zero"
+        read,
+        &expected[..],
+        "the batch walk and the single-element lookup disagree about at least one slot"
     );
 }
 
-/// The batch size decides how many keys one syscall asks for, never how many it gets.
+/// The mapped read and the batch walk, on the same known state.
+///
+/// This is the assertion that makes keeping two implementations defensible. The whole point
+/// of `BPF_F_MMAPABLE` is that the agent stops asking the kernel for these numbers, and the
+/// only way to know it is reading the same numbers is to read them both ways: the mapping has
+/// to reduce a flat offset to a slot exactly as the batch walk reduces a flat *key*, and
+/// nothing but a comparison catches an off-by-a-stripe in one of them.
+///
+/// The state is written from userspace rather than by running traffic, because what is under
+/// test is the arithmetic of two readers and not what increments a counter.
+#[test]
+fn the_mapped_read_and_the_batch_walk_agree() {
+    let mut ebpf = maps();
+    let layout = layout();
+    let expected = fill(&mut ebpf, layout);
+
+    // SAFETY: COUNTERS is the flat array of u64 `maps()` created from this layout, and it
+    // carries BPF_F_MMAPABLE because that is how `lorica-ebpf` declares it.
+    let mut mapped = unsafe { Counters::open(counters_fd(&ebpf), layout, 16) };
+    assert!(
+        mapped.is_mapped(),
+        "the counter array refused to map, so this kernel or this object cannot carry the \
+         design at all: {:?}",
+        mapped.unmapped().map(ToString::to_string)
+    );
+    // SAFETY: as above.
+    let mut batched = unsafe { Counters::batched(counters_fd(&ebpf), layout, 16) };
+
+    let from_batch = batched.read().expect("the batch walk failed").to_vec();
+    let from_mapping = mapped.read().expect("the mapped read failed");
+
+    assert_eq!(
+        from_mapping,
+        &expected[..],
+        "the mapped read disagrees with what was written"
+    );
+    assert_eq!(
+        from_mapping,
+        &from_batch[..],
+        "the two read paths disagree, so one of them reduces a stripe wrong and the agent's \
+         counters depend on which one the kernel allowed"
+    );
+    // The number the conversion was about: the mapped path asks the kernel for nothing.
+    assert_eq!(mapped.walked(), 0);
+    assert_eq!(batched.walked(), layout.entries() as usize);
+}
+
+/// The batch size decides how many elements one syscall asks for, never how many it gets.
 /// The last batch of a walk is short, and a batch larger than the map is a single short
 /// one: those are the two lengths at which a caller that trusts its own batch size
 /// instead of the count the kernel wrote back reads — or writes — past the end.
 #[test]
 fn every_batch_size_reads_the_same_map() {
     let mut ebpf = maps();
-    {
-        let map = ebpf.map_mut("COUNTERS").expect("no COUNTERS map");
-        let mut counters: PerCpuArray<&mut MapData, u64> =
-            PerCpuArray::try_from(map).expect("COUNTERS is not a per-CPU array");
-        let cpus = nr_cpus().expect("cannot read the possible processor count");
-        for slot in 0..COUNTER_ENTRIES {
-            let values: Vec<u64> = (0..cpus).map(|cpu| u64::from(slot) + cpu as u64).collect();
-            counters
-                .set(slot, PerCpuValues::try_from(values).unwrap(), 0)
-                .expect("writing a counter slot failed");
-        }
-    }
+    let layout = layout();
+    let expected = fill(&mut ebpf, layout);
 
     let read = |batch| {
-        maps::counters(&ebpf, COUNTER_ENTRIES, batch)
-            .unwrap_or_else(|err| panic!("cannot build a reader for a batch of {batch}: {err}"))
+        // SAFETY: COUNTERS is the flat array of u64 `maps()` created from this layout.
+        let mut reader = unsafe { Counters::batched(counters_fd(&ebpf), layout, batch) };
+        reader
             .read()
             .unwrap_or_else(|err| panic!("a batch of {batch} failed: {err}"))
             .to_vec()
     };
-    let reference = read(1);
-    assert!(reference.iter().all(|&value| value != 0));
+    assert_eq!(read(1), expected, "a batch of one read something else");
 
-    // 7 and 13 do not divide 82; the last three cover a batch just under the map, one
-    // exactly its size, and one larger than it exists.
-    for batch in [
-        7,
-        13,
-        COUNTER_ENTRIES - 1,
-        COUNTER_ENTRIES,
-        COUNTER_ENTRIES + 5,
-    ] {
+    // 7 and 13 divide neither the slot count nor the entry count; the last three cover a
+    // batch just under the map, one exactly its size, and one larger than it exists.
+    let entries = layout.entries();
+    for batch in [7, 13, entries - 1, entries, entries + 5] {
         assert_eq!(
             read(batch),
-            reference,
+            expected,
             "a batch of {batch} read something else"
         );
     }
 }
 
-/// The reader exists so a tick can hold it and read through it forever. aya's
-/// `PerCpuArray::get` boxes a slice per slot, so the naive path is one allocation per
-/// counter per tick — fifty thousand of them, ten times a second — and the assertion
-/// that the tick allocates nothing could never pass with it.
+/// Neither reader may allocate after its constructor. The tick holds one and is asserted to
+/// allocate nothing at all, and aya's typed lookups box a value per slot: the naive path is
+/// one allocation per counter per tick, fifty thousand of them ten times a second.
 #[test]
 fn a_read_after_the_first_allocates_nothing() {
     let ebpf = maps();
-    let mut reader =
-        maps::counters(&ebpf, COUNTER_ENTRIES, 16).expect("cannot build the counter reader");
-    // The first read is the one entitled to touch the allocator, and it does not either:
-    // every buffer was sized by the constructor.
-    reader.read().expect("the first read failed");
+    let layout = layout();
+    for name in ["mapped or batched", "batched"] {
+        // SAFETY: COUNTERS is the flat array of u64 `maps()` created from this layout.
+        let mut reader = unsafe {
+            if name == "batched" {
+                Counters::batched(counters_fd(&ebpf), layout, 16)
+            } else {
+                Counters::open(counters_fd(&ebpf), layout, 16)
+            }
+        };
+        // The first read is the one entitled to touch the allocator, and it does not either:
+        // every buffer was sized by the constructor.
+        reader.read().expect("the first read failed");
 
-    let before = ALLOCATIONS.get();
-    reader.read().expect("the second read failed");
-    let after = ALLOCATIONS.get();
-    assert_eq!(
-        after, before,
-        "a read allocated; the tick that holds this reader is asserted not to"
-    );
+        let before = ALLOCATIONS.get();
+        reader.read().expect("the second read failed");
+        let after = ALLOCATIONS.get();
+        assert_eq!(
+            after, before,
+            "the {name} reader allocated; the tick that holds it is asserted not to"
+        );
+    }
 }
 
 /// The unified list written by raw batch syscall, read back by the kernel's own
@@ -315,14 +371,20 @@ fn the_list_memlock_grows_with_the_entries_written() {
         "{LIST_ENTRIES} prefixes have to show up in memlock, went from {empty} to {full}"
     );
 
-    // The per-CPU counter array is preallocated, so its own memlock is already whole
-    // and is the one place the processor count of the budget can be checked against a
-    // machine.
+    // The counter array is preallocated, so its own memlock is already whole and is the one
+    // place the processor count of the budget can be checked against a machine. Against
+    // `entries()` and not against `slots`: the map carries one stripe per possible processor,
+    // which is the whole reason the memlock model multiplies by a processor count.
+    let layout = layout();
     let counters =
         maps::memlock_bytes(counters_fd(&ebpf)).expect("cannot read the memlock of the counters");
     assert!(
-        counters >= u64::from(COUNTER_ENTRIES) * 8,
-        "a per-CPU array of {COUNTER_ENTRIES} u64 cannot cost less than one value each, got {counters}"
+        counters >= layout.bytes(),
+        "an array of {} u64 ({} slots x {} processors) cannot cost less than eight bytes each, \
+         got {counters}",
+        layout.entries(),
+        layout.stripe,
+        layout.cpus,
     );
 }
 
@@ -334,23 +396,47 @@ fn the_list_memlock_grows_with_the_entries_written() {
 /// it was built for, so adding a cheap reader over eighteen slots doubled the CPU of the
 /// tick instead of costing nothing. The cost is exactly linear in elements walked, so
 /// elements walked is the thing to assert on.
+///
+/// **What "the whole map" now means.** The map is `stripe × cpus` elements and a slot's total
+/// is the sum over its stripes, so a reader over the named counters does not read fewer
+/// stripes — it reads a narrower window inside each of them. What it walks is therefore
+/// `stripe(named) × cpus`, and the saving is the same one it always was: linear in the slots
+/// asked for.
 #[test]
 fn a_reader_built_for_fewer_slots_walks_fewer_slots() {
     let ebpf = maps();
-    let slots = COUNTER_ENTRIES;
 
-    let mut whole = maps::counters(&ebpf, slots, 1_000).expect("reader over the whole map");
-    whole.read().expect("read failed");
-    assert_eq!(whole.walked(), slots as usize);
+    let whole = maps::counter_layout(COUNTER_ENTRIES).expect("layout for the whole map");
+    let named = maps::counter_layout(CounterId::COUNT).expect("layout for the named counters");
+    assert!(
+        named.entries() < whole.entries(),
+        "a reader over {} slots has to be created for fewer elements than one over {}",
+        CounterId::COUNT,
+        COUNTER_ENTRIES
+    );
 
-    let named = CounterId::COUNT;
-    let mut head = maps::counters(&ebpf, named, 1_000).expect("reader over the named counters");
-    head.read().expect("read failed");
+    // The batch reader and not the mapped one: what is asserted is elements asked of the
+    // kernel, and the mapped path asks for none either way.
+    //
+    // SAFETY: COUNTERS is the flat array of u64 `maps()` created, and both layouts describe a
+    // prefix of it — the narrow one has a shorter stripe, so it walks a shorter map rather
+    // than a differently shaped one.
+    let mut whole_reader = unsafe { Counters::batched(counters_fd(&ebpf), whole, 1_000) };
+    whole_reader.read().expect("read failed");
+    assert_eq!(whole_reader.walked(), whole.entries() as usize);
+
+    // SAFETY: as above.
+    let mut named_reader = unsafe { Counters::batched(counters_fd(&ebpf), named, 1_000) };
+    named_reader.read().expect("read failed");
     assert_eq!(
-        head.walked(),
-        named as usize,
-        "a reader over {named} slots asked the kernel for {} elements, so it costs what          the whole map costs and buys a fraction of it",
-        head.walked()
+        named_reader.walked(),
+        named.entries() as usize,
+        "a reader over {} slots asked the kernel for {} elements against the {} the whole map \
+         costs, so it either buys a fraction of the data for a fraction of the price or it \
+         pays for all of it",
+        CounterId::COUNT,
+        named_reader.walked(),
+        whole.entries(),
     );
 }
 
@@ -358,73 +444,61 @@ fn a_reader_built_for_fewer_slots_walks_fewer_slots() {
 /// has to cost about a `stride`-th of it.
 ///
 /// Both halves matter and neither implies the other. A window that advanced by the wrong
-/// amount would still cover the map eventually and would read some slots twice and others
-/// never — so the sums are compared against the whole-map read, slot by slot, and the
-/// element counts are compared against the map size. A stride that quietly did nothing
-/// would pass the first assertion on its own.
+/// amount would still cover the map eventually and would read some elements twice and others
+/// never — so the sums are compared against what was written, slot by slot, and the element
+/// counts are compared against the map size. A stride that quietly did nothing would pass the
+/// first assertion on its own.
 ///
-/// 5 does not divide 82, so the last window of a pass is short and the pass has to wrap from
-/// a partial window rather than from an exact boundary. That is where an off-by-one lives.
+/// **Why the totals only appear at the end of a pass.** A slot's total is the sum over every
+/// processor's stripe, and a partial pass has reached only some of them: publishing that would
+/// report a collapse that did not happen. So a pass accumulates and the last completed pass is
+/// what a caller reads, which is what makes the staleness a lower bound rather than a lie.
+///
+/// 5 divides neither the slot count nor the entry count, so the last window of a pass is short
+/// and the pass wraps from a partial window rather than from an exact boundary. That is where
+/// an off-by-one lives.
 #[test]
 fn a_strided_reader_covers_the_map_in_stride_reads() {
     let mut ebpf = maps();
-    let cpus = nr_cpus().expect("cannot read the possible processor count");
-    {
-        let map = ebpf.map_mut("COUNTERS").expect("no COUNTERS map");
-        let mut counters: PerCpuArray<&mut MapData, u64> =
-            PerCpuArray::try_from(map).expect("COUNTERS is not a per-CPU array");
-        // Every slot non-zero and derived from its index, so a value read into the wrong
-        // slot is visible and a slot never read stays at zero.
-        for slot in 0..COUNTER_ENTRIES {
-            let values: Vec<u64> = (0..cpus)
-                .map(|cpu| u64::from(slot) * 1_000 + cpu as u64 + 1)
-                .collect();
-            counters
-                .set(slot, PerCpuValues::try_from(values).unwrap(), 0)
-                .expect("writing a counter slot failed");
-        }
-    }
-
-    let reference = maps::counters(&ebpf, COUNTER_ENTRIES, 16)
-        .expect("reader over the whole map")
-        .read()
-        .expect("the whole-map read failed")
-        .to_vec();
-    assert!(reference.iter().all(|&value| value != 0));
+    let layout = layout();
+    let expected = fill(&mut ebpf, layout);
 
     const STRIDE: u32 = 5;
-    let mut strided = maps::counters(&ebpf, COUNTER_ENTRIES, 16)
-        .expect("strided reader")
-        .with_stride(STRIDE);
-    let window = (COUNTER_ENTRIES as usize).div_ceil(STRIDE as usize);
+    // SAFETY: COUNTERS is the flat array of u64 `maps()` created from this layout.
+    let mut strided =
+        unsafe { Counters::batched(counters_fd(&ebpf), layout, 16) }.with_stride(STRIDE);
+    let entries = layout.entries() as usize;
+    let window = entries.div_ceil(STRIDE as usize);
 
     // Two whole passes, so the wrap is exercised and not only the first pass.
     for pass in 0..2 {
-        let mut fresh = 0usize;
+        let mut asked = 0usize;
         for read in 0..STRIDE {
             let got = strided
                 .read()
                 .unwrap_or_else(|err| panic!("pass {pass}, read {read} failed: {err}"));
-            assert_eq!(got.len(), COUNTER_ENTRIES as usize);
+            assert_eq!(got.len(), layout.slots as usize);
             assert!(
                 strided.walked() <= window,
                 "pass {pass}, read {read} walked {} elements where a stride of {STRIDE} over \
-                 {COUNTER_ENTRIES} slots allows {window}: the whole point is the divided cost",
+                 {entries} allows {window}: the whole point is the divided cost",
                 strided.walked()
             );
-            fresh += strided.walked();
+            asked += strided.walked();
         }
         // A pass is a pass: `stride` reads and the map is covered, no more and no less.
         assert_eq!(
-            fresh, COUNTER_ENTRIES as usize,
-            "pass {pass} asked the kernel for {fresh} elements over {STRIDE} reads, and the \
-             map has {COUNTER_ENTRIES} slots"
+            asked, entries,
+            "pass {pass} asked the kernel for {asked} elements over {STRIDE} reads, and the map \
+             has {entries}"
         );
+        // The pass that just ended is the one published, so this read — the first of the next
+        // one — hands back its totals.
         assert_eq!(
             strided.read().expect("a read past the pass failed"),
-            reference.as_slice(),
-            "after pass {pass} every slot has to carry what the whole-map read found; a \
-             window that advanced wrong reads some slots twice and others never"
+            expected.as_slice(),
+            "after pass {pass} every slot has to carry the sum of its stripes; a window that \
+             advanced wrong reads some elements twice and others never"
         );
     }
 }
@@ -437,9 +511,19 @@ fn a_strided_reader_covers_the_map_in_stride_reads() {
 #[test]
 fn a_reader_covers_the_whole_map_unless_told_otherwise() {
     let ebpf = maps();
-    let reader = maps::counters(&ebpf, COUNTER_ENTRIES, 16).expect("reader");
+    let layout = layout();
+    // SAFETY: COUNTERS is the flat array of u64 `maps()` created from this layout.
+    let reader = unsafe { Counters::batched(counters_fd(&ebpf), layout, 16) };
     assert_eq!(reader.stride(), 1);
-    // Zero would claim no slots and finish no pass. The agent refuses it at the flag; the
+    // Zero would claim no elements and finish no pass. The agent refuses it at the flag; the
     // reader cannot be made to hold it either.
     assert_eq!(reader.with_stride(0).stride(), 1);
+
+    // And the mapped path has no stride to spread: there is no per-element syscall cost, so
+    // asking for one has to leave it reading everything rather than a fifth of it.
+    //
+    // SAFETY: as above.
+    let mapped = unsafe { Counters::open(counters_fd(&ebpf), layout, 16) }.with_stride(5);
+    assert!(mapped.is_mapped());
+    assert_eq!(mapped.stride(), 1);
 }

@@ -72,9 +72,9 @@ pub struct MemlockModel {
     pub counter_bytes_per_entry: u64,
 }
 
-/// The processor count the model is stated for. The counter map is per-CPU, so its cost
-/// is linear in the number of possible processors and a model that did not name one would
-/// be meaningless. The loader recomputes it from the machine it is on.
+/// The processor count the model is stated for. The counter map carries one stripe per
+/// possible processor, so its cost is linear in that count and a model that did not name one
+/// would be meaningless. The loader recomputes it from the machine it is on.
 pub const REFERENCE_CPUS: u64 = 8;
 
 impl MemlockModel {
@@ -90,15 +90,24 @@ impl MemlockModel {
     /// dangerous direction: a configuration that fits under a model and not under the
     /// slab is refused by the machine and not by the compiler.
     ///
-    /// **The counter map charges `8 × cpus + 8`.** A per-CPU array holds one
-    /// eight-byte-aligned value per possible processor, and one pointer per entry in the
-    /// `pptrs` table that finds them. Measured at 40 000 000 bytes for a million entries
-    /// on four processors — 40 an entry against the 32 the per-processor values alone
-    /// account for, and the eight left over is exactly the pointer.
+    /// **The counter map charges `8 × cpus`, and it used to charge eight more.** It was a
+    /// `PERCPU_ARRAY`, which holds one eight-byte-aligned value per possible processor *and*
+    /// one pointer per entry in the `pptrs` table that finds them: measured at 40 000 000
+    /// bytes for a million entries on four processors, 40 an entry against the 32 the
+    /// per-processor values account for, and the eight left over was exactly the pointer.
+    ///
+    /// It is now one flat `ARRAY` striped by processor, because the kernel refuses
+    /// `BPF_F_MMAPABLE` on a per-CPU map and mapping the counters is what took the agent's
+    /// sweep from milliseconds to microseconds. A flat array has no `pptrs`, so the pointer
+    /// per entry is gone; what replaces it is smaller and does not scale with the entry count
+    /// — each processor's stripe is rounded up to a cache line, so at most seven slots per
+    /// processor, and the mapping is rounded to a page. Both are under a percent at any size
+    /// a profile asks for, and both are in the *un*charged direction, so the model stays the
+    /// conservative one it was.
     pub const fn for_cpus(cpus: u64) -> Self {
         Self {
             list_bytes_per_entry: 208,
-            counter_bytes_per_entry: 8 * cpus + 8,
+            counter_bytes_per_entry: 8 * cpus,
         }
     }
 

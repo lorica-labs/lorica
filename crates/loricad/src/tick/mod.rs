@@ -35,14 +35,14 @@
 //! allocates once per slot, which under this load would be half a million allocations a
 //! second in the one process that promised not to be a source of jitter.
 
-use lorica_dataplane::maps::batch::PerCpuU64Reader;
+use lorica_dataplane::maps::Counters;
 use lorica_detect::snapshot::NAMED_SLOTS;
 
 pub struct Sweep {
     /// The named counters, read every tick.
-    named: PerCpuU64Reader<'static>,
+    named: Counters<'static>,
     /// Every slot, read every `every` ticks.
-    full: PerCpuU64Reader<'static>,
+    full: Counters<'static>,
     every: u64,
     slots: usize,
     named_slots: usize,
@@ -59,8 +59,8 @@ pub struct Sweep {
 
 impl Sweep {
     pub fn new(
-        named: PerCpuU64Reader<'static>,
-        full: PerCpuU64Reader<'static>,
+        named: Counters<'static>,
+        full: Counters<'static>,
         named_slots: usize,
         slots: usize,
         every: u64,
@@ -127,6 +127,13 @@ impl Sweep {
     /// a per-entry counter costs at this configuration.
     pub fn stride(&self) -> u32 {
         self.full.stride()
+    }
+
+    /// Whether the sweep is reading the counter array as memory rather than through
+    /// `BPF_MAP_LOOKUP_BATCH`. It is a hundredfold difference in what a sweep costs, so it is
+    /// on the startup line: an agent whose CPU figure surprises somebody starts here.
+    pub const fn is_mapped(&self) -> bool {
+        self.full.is_mapped()
     }
 
     pub fn slots(&self) -> usize {

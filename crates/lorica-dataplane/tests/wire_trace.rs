@@ -43,14 +43,13 @@ use std::{
 
 use aya::{
     Ebpf,
-    maps::{MapData, PerCpuArray},
     programs::{Xdp, xdp::XdpLinkId},
 };
 use lorica_common::{CounterId, setting};
 use lorica_dataplane::loader::{attach_native, detach};
 use support::{
     net::{Link, ip_link_mode},
-    run::{load_raw, object_path, xdp_program},
+    run::{COUNTER_SLOTS, load_raw, object_path, xdp_program},
 };
 
 /// The interface the replay arrives on. The measurement machine also carries `enp6s18` on
@@ -203,19 +202,13 @@ struct Sample {
 
 impl Sample {
     fn take(ebpf: &Ebpf, iface: &str) -> Self {
-        let map = ebpf.map("COUNTERS").expect("no COUNTERS map");
-        let counters: PerCpuArray<&MapData, u64> =
-            PerCpuArray::try_from(map).expect("COUNTERS is not a per-CPU array");
         Self {
             rx: rx_packets(iface),
             counters: CounterId::ALL
                 .iter()
                 .map(|id| {
-                    counters
-                        .get(&id.index(), 0)
+                    lorica_dataplane::maps::counter_at(ebpf, COUNTER_SLOTS, id.index())
                         .expect("reading a counter failed")
-                        .iter()
-                        .sum()
                 })
                 .collect(),
         }

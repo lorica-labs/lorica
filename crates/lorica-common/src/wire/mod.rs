@@ -7,7 +7,9 @@ mod packet;
 mod settings;
 mod verdict;
 
-pub use counters::CounterId;
+pub use counters::{
+    COUNTER_STRIPE_SLOTS, COUNTER_STRIPE_SYMBOL, CounterId, CounterLayout, MAX_CPUS,
+};
 pub use event::EventHeader;
 pub use keys::{LpmKey, V4_MAPPED_PREFIX_BITS};
 pub use packet::{Family, FragState, MAX_OFFSET, PacketView, anomaly};

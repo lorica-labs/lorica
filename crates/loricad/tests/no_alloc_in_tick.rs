@@ -67,9 +67,10 @@ fn object_path() -> PathBuf {
 #[test]
 fn a_thousand_sweeps_allocate_nothing_after_the_first() {
     let bytes = std::fs::read(object_path()).expect("cannot read the eBPF object");
-    let ebpf = EbpfLoader::new()
+    let layout = maps::counter_layout(SLOTS).expect("no counter layout for this machine");
+    let mut loader = EbpfLoader::new();
+    let ebpf = maps::size_counters(&mut loader, &layout)
         .override_global(SETTINGS_SYMBOL, &DEFAULT_SETTINGS, true)
-        .map_max_entries("COUNTERS", SLOTS)
         .load(&bytes)
         .expect("loading the object failed");
 
@@ -105,9 +106,10 @@ fn a_thousand_sweeps_allocate_nothing_after_the_first() {
 #[test]
 fn the_named_counters_can_be_read_without_the_per_entry_slots() {
     let bytes = std::fs::read(object_path()).expect("cannot read the eBPF object");
-    let ebpf = EbpfLoader::new()
+    let layout = maps::counter_layout(SLOTS).expect("no counter layout for this machine");
+    let mut loader = EbpfLoader::new();
+    let ebpf = maps::size_counters(&mut loader, &layout)
         .override_global(SETTINGS_SYMBOL, &DEFAULT_SETTINGS, true)
-        .map_max_entries("COUNTERS", SLOTS)
         .load(&bytes)
         .expect("loading the object failed");
 

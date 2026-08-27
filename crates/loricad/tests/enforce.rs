@@ -72,9 +72,13 @@ fn lab() -> (Ebpf, Clock) {
     let path = object_path();
     let bytes = std::fs::read(&path)
         .unwrap_or_else(|err| panic!("cannot read the eBPF object at {}: {err}", path.display()));
-    let mut ebpf = EbpfLoader::new()
+    // The counter map's entry count and the stripe width the program indexes it with are
+    // one decision, and `maps::size_counters` is the only thing allowed to make it.
+    let layout = lorica_dataplane::maps::counter_layout(COUNTER_ENTRIES)
+        .expect("no counter layout for this machine");
+    let mut loader = EbpfLoader::new();
+    let mut ebpf = lorica_dataplane::maps::size_counters(&mut loader, &layout)
         .map_max_entries("UNIFIED_LIST", LIST_ENTRIES)
-        .map_max_entries("COUNTERS", COUNTER_ENTRIES)
         .load(&bytes)
         .unwrap_or_else(|err| panic!("creating the maps of {} failed: {err}", path.display()));
     let clock = clock::calibrate(&mut ebpf).expect("cannot measure the kernel clock rate");

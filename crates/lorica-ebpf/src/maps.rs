@@ -5,21 +5,63 @@
 //! maps are created.
 
 use aya_ebpf::{
+    bindings::BPF_F_MMAPABLE,
     macros::map,
-    maps::{Array, LpmTrie, PerCpuArray, lpm_trie::Key},
+    maps::{Array, LpmTrie, lpm_trie::Key},
 };
-use lorica_common::{Bucket, CLASS24_BYTES, CounterId, LpmKey, LpmValue, OA_SLOTS, OaSlot};
+// Only the two instrumentation maps below are per-CPU now, and both are behind a feature.
+#[cfg(any(feature = "parse-probe", feature = "count-helpers"))]
+use aya_ebpf::maps::PerCpuArray;
+use lorica_common::{
+    Bucket, CLASS24_BYTES, CounterId, CounterLayout, LpmKey, LpmValue, OA_SLOTS, OaSlot,
+};
 
 /// Entries of the unified list, and the per-entry counter slots that go with them.
 const DEFAULT_LIST_ENTRIES: u32 = 1024;
 
-/// Named counters first, then one slot per entry of the unified list.
+/// Named counters first, then one slot per entry of the unified list — and one such block
+/// per processor, laid end to end in one flat array.
 ///
-/// Per-CPU so a bump is a lookup and an add with no atomic on the critical path, and
-/// so the agent can sum the slots in one batch read instead of one syscall per counter.
+/// **Why not `PerCpuArray`, which is what this was.** Reading the counters cost the agent
+/// 13 % of a core at the worst configuration, and every nanosecond of it was
+/// `BPF_MAP_LOOKUP_BATCH`: ~130 ns fixed plus ~34 ns per possible processor per element, two
+/// `copy_to_user` calls and a `cond_resched()` for each one. The way out is not a faster
+/// syscall, it is no syscall: `BPF_F_MMAPABLE` lets the agent map the map and read the slots
+/// as memory. **The kernel refuses that flag on a per-CPU map** — `map_create` checks it
+/// against `BPF_MAP_TYPE_ARRAY` only — so the conversion to a flat array is the precondition
+/// and not a detail of the design.
+///
+/// **What the striping preserves.** `index = cpu * COUNTER_STRIPE + slot`, so each processor
+/// owns a contiguous region nothing else writes, and the increment below stays a plain
+/// non-atomic add. The stripe is rounded to a cache line
+/// ([`COUNTER_STRIPE_SLOTS`](lorica_common::COUNTER_STRIPE_SLOTS)) so a boundary never falls
+/// inside one; the reverse layout, one processor's value beside another's for the same slot,
+/// would put every processor's counters for one slot in one line and make each bump
+/// invalidate it everywhere.
+///
+/// **What it costs on the packet path**: one `bpf_get_smp_processor_id`, which the verifier
+/// does not inline before 6.10, plus a multiply and an add. The static call budget in
+/// `lorica-dataplane/tests/helper_budget.rs` had one slot of headroom and this is what
+/// spends it.
+///
+/// The flag goes through `with_max_entries`, whose `flags` argument reaches
+/// `bpf_map_def` → `MapData::create` → `bpf_create_map` unchanged — the same path that
+/// carries `BPF_F_NO_PREALLOC` for the trie. No fork of aya is involved.
+///
+/// The size here is a default nothing deploys with. The loader recomputes it from the
+/// machine's possible-processor count and the profile's slot count, and patches
+/// [`COUNTER_STRIPE`](crate::settings) to match; the two are one decision in
+/// `lorica_common::CounterLayout`.
 #[map]
-pub static COUNTERS: PerCpuArray<u64> =
-    PerCpuArray::with_max_entries(CounterId::COUNT + DEFAULT_LIST_ENTRIES, 0);
+pub static COUNTERS: Array<u64> = Array::with_max_entries(
+    match CounterLayout::new(CounterId::COUNT + DEFAULT_LIST_ENTRIES, 1) {
+        Some(layout) => layout.entries(),
+        // Unreachable: one processor and a slot count under 2^29. `unwrap` is not const
+        // here, and a panic in a map declaration would be a panic at load time.
+        None => CounterId::COUNT + DEFAULT_LIST_ENTRIES,
+    },
+    BPF_F_MMAPABLE,
+);
 
 /// One list, one lookup: the allow list and the block list are the same trie and the
 /// value carries the verdict.

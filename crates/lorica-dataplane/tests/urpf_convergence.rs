@@ -51,10 +51,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use aya::{
-    Ebpf,
-    maps::{MapData, PerCpuArray},
-};
+use aya::Ebpf;
 use lorica_common::{CounterId, DEFAULT_SETTINGS, setting};
 use lorica_dataplane::{
     fib::{DEFAULT_HOLD, Discrimination, RouteWatcher},
@@ -62,7 +59,7 @@ use lorica_dataplane::{
 };
 use support::{
     net::{ip, ip_link_mode},
-    run::{load_raw, object_path, xdp_program},
+    run::{COUNTER_SLOTS, load_raw, object_path, xdp_program},
 };
 
 /// The near side, on the interface the program is attached to, and the destination of
@@ -144,14 +141,8 @@ impl Urpf {
 
 fn counter(ebpf: &Ebpf, name: &str) -> u64 {
     let id = CounterId::from_name(name).unwrap_or_else(|| panic!("no counter named {name}"));
-    let map = ebpf.map("COUNTERS").expect("no COUNTERS map");
-    let counters: PerCpuArray<&MapData, u64> =
-        PerCpuArray::try_from(map).expect("COUNTERS is not a per-CPU array");
-    counters
-        .get(&id.index(), 0)
+    lorica_dataplane::maps::counter_at(ebpf, COUNTER_SLOTS, id.index())
         .expect("reading a counter failed")
-        .iter()
-        .sum()
 }
 
 /// A wire, in a network namespace this thread owns, with the peer in one of its own.

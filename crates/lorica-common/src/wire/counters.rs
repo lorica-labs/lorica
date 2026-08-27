@@ -185,3 +185,101 @@ const fn str_eq(a: &str, b: &str) -> bool {
     }
     true
 }
+
+/// The symbol the loader patches with the stripe width, in slots.
+///
+/// The counter map is one flat `ARRAY` striped by processor rather than a `PERCPU_ARRAY`,
+/// because the kernel refuses `BPF_F_MMAPABLE` on a per-CPU map and the agent reading the
+/// counters through a mapping instead of through `BPF_MAP_LOOKUP_BATCH` is what takes the
+/// sweep from milliseconds to microseconds. A striped flat array needs the stripe width in
+/// the program, and the width is a load-time number: the slot count comes from the
+/// deployment profile, which derives it from a memlock budget.
+///
+/// So it is a patched `.rodata` word, on the same mechanism as
+/// [`SETTINGS_SYMBOL`](super::SETTINGS_SYMBOL), and the loader must set it and the map size
+/// together — [`CounterLayout`] is what makes that one decision instead of two.
+pub const COUNTER_STRIPE_SYMBOL: &str = "COUNTER_STRIPE";
+
+/// Slots a stripe is rounded up to, so a stripe boundary never falls inside a cache line.
+///
+/// Eight `u64` is sixty-four bytes. Without it the last slots of one processor's stripe and
+/// the first of the next share a line, and two processors counting different things would
+/// invalidate each other's line on every packet — which is the exact cost a per-CPU map
+/// exists to avoid, reintroduced by the layout that replaced it. The waste is at most seven
+/// slots per processor.
+pub const COUNTER_STRIPE_SLOTS: u32 = 8;
+
+/// Processors the counter map is allowed to be striped for.
+///
+/// A dimensioning ceiling and not a limit the program enforces: the map is created for the
+/// machine's own `num_possible_cpus`, and this is the number above which that stops being a
+/// size anybody budgeted for. At the ceiling and the largest profile — a gateway asking for
+/// 2²⁰ counter slots — the map is 512 GiB, so a machine near it needs a profile and not a
+/// bigger constant. The loader refuses past it rather than creating a map the kernel would
+/// refuse for less legible reasons.
+///
+/// 512 is what Linux ships as `CONFIG_NR_CPUS` on x86-64 defconfig for the distributions
+/// this project targets, so a machine above it is one whose kernel was built for it.
+pub const MAX_CPUS: u32 = 512;
+
+/// How the counter map is laid out, and the one place the two numbers that have to agree
+/// are computed.
+///
+/// **CPU-major**: `index = cpu * stripe + slot`. The other order — slot-major, one
+/// processor's value next to another's for the same slot — puts every processor's counters
+/// for one slot inside one cache line, so a bump on any processor invalidates that line
+/// everywhere. CPU-major gives each processor a contiguous region it alone writes, which is
+/// the property the per-CPU map provided and the only reason the increment can stay
+/// non-atomic.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct CounterLayout {
+    /// Counter slots the agent reads: the named counters, then one per entry of the list.
+    pub slots: u32,
+    /// Slots between the start of one processor's stripe and the next, rounded to
+    /// [`COUNTER_STRIPE_SLOTS`].
+    pub stripe: u32,
+    /// Processors the map is striped for, which is `num_possible_cpus` and not the online
+    /// count: `bpf_get_smp_processor_id` can return any of them.
+    pub cpus: u32,
+}
+
+impl CounterLayout {
+    /// The layout for `slots` counter slots on a machine with `cpus` possible processors.
+    ///
+    /// `None` when the machine is past [`MAX_CPUS`], which is the one case where the answer
+    /// is a refusal rather than a number.
+    pub const fn new(slots: u32, cpus: u32) -> Option<Self> {
+        if cpus == 0 || cpus > MAX_CPUS {
+            return None;
+        }
+        let stripe = slots.next_multiple_of(COUNTER_STRIPE_SLOTS);
+        // A map the kernel cannot create is better refused here, where the caller can say
+        // which profile asked for it.
+        if stripe.checked_mul(cpus).is_none() {
+            return None;
+        }
+        Some(Self {
+            slots,
+            stripe,
+            cpus,
+        })
+    }
+
+    /// Entries the map is created with. This is what goes to `map_max_entries`, and it is
+    /// `stripe × cpus` and never `slots`.
+    pub const fn entries(&self) -> u32 {
+        self.stripe * self.cpus
+    }
+
+    /// Bytes the mapping covers, before the kernel rounds it up to a page.
+    pub const fn bytes(&self) -> u64 {
+        self.entries() as u64 * 8
+    }
+
+    /// The flat index one processor writes one slot at. The program computes this same
+    /// expression from the patched stripe; this is the userspace mirror, and the test that
+    /// reads a slot back is what keeps the two the same.
+    pub const fn index(&self, cpu: u32, slot: u32) -> u32 {
+        cpu * self.stripe + slot
+    }
+}

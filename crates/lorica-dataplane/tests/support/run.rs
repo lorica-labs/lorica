@@ -23,7 +23,20 @@ use lorica_common::{
     blocklist::{class24_set, oa_insert},
     key_words,
 };
-use lorica_dataplane::clock;
+use lorica_dataplane::{clock, maps};
+
+/// Counter slots every fixture in this suite sizes the map for.
+///
+/// The named counters and a thousand entry slots, which is the object's own default and more
+/// than any case here uses. It is a constant rather than a parameter because the counter map
+/// is striped by processor now: its entry count and the stripe width the program indexes it
+/// with are one decision, so a per-case slot count would be a per-case decision to get wrong.
+pub const COUNTER_SLOTS: u32 = CounterId::COUNT + 1024;
+
+/// The layout of the counter map for this machine, at [`COUNTER_SLOTS`].
+pub fn counter_layout() -> lorica_common::CounterLayout {
+    maps::counter_layout(COUNTER_SLOTS).expect("no counter layout for this machine")
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum XdpAction {
@@ -334,7 +347,12 @@ impl TestProg {
             )
         });
 
+        let layout = counter_layout();
         let mut loader = EbpfLoader::new();
+        // The counter map's entry count and the stripe width the program indexes it with are
+        // one decision, and this is the function that makes it. A fixture that set only the
+        // size would load a program counting into slot zero of every stripe.
+        maps::size_counters(&mut loader, &layout);
         loader.override_global(SETTINGS_SYMBOL, &settings, true);
         // The whole catalogue by default, which is what a case about a vector wants and
         // what a case about anything else wants not to think about. The program's own
@@ -499,17 +517,10 @@ impl TestProg {
         self.counter_at(id.index())
     }
 
-    /// A raw slot. The ones above `CounterId::COUNT` belong to individual entries of
-    /// the unified list.
+    /// A raw slot, summed over every processor's stripe. The ones above `CounterId::COUNT`
+    /// belong to individual entries of the unified list.
     pub fn counter_at(&self, index: u32) -> u64 {
-        let map = self.ebpf.map("COUNTERS").expect("no COUNTERS map");
-        let counters: PerCpuArray<&MapData, u64> =
-            PerCpuArray::try_from(map).expect("COUNTERS is not a per-CPU array");
-        counters
-            .get(&index, 0)
-            .expect("reading a counter failed")
-            .iter()
-            .sum()
+        maps::counter_at(&self.ebpf, COUNTER_SLOTS, index).expect("reading a counter failed")
     }
 
     /// Writes one entry of the unified list, the way the loader will.
@@ -684,7 +695,9 @@ pub fn load_raw(path: &std::path::Path, settings: u32) -> Ebpf {
 pub fn load_raw_vectors(path: &std::path::Path, settings: u32, vectors: Option<u32>) -> Ebpf {
     let object = fs::read(path)
         .unwrap_or_else(|err| panic!("cannot read the eBPF object at {}: {err}", path.display()));
+    let layout = counter_layout();
     let mut loader = EbpfLoader::new();
+    maps::size_counters(&mut loader, &layout);
     loader.override_global(SETTINGS_SYMBOL, &settings, true);
     if let Some(vectors) = vectors.as_ref() {
         loader.override_global(SIGNATURE_VECTORS_SYMBOL, vectors, true);

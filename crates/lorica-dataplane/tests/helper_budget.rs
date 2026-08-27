@@ -38,9 +38,22 @@ use support::{
 /// reverse-path lookup of stage 5 is in the object on every host and on the path only
 /// where the loader set `URPF_ENFORCE`.
 ///
-/// **Five are present today**, and they are the wrappers of the data path: the list, the
-/// bank, the counters, the clock, the reverse path. One slot of headroom, and it is a real
-/// one — see [`OFF_PACKET_PATH`] for the call this deliberately does not count and why.
+/// **Six are present today**, and they are the wrappers of the data path: the list, the
+/// bank, the counters, the clock, the reverse path, and the processor id.
+///
+/// **The slot of headroom is spent, deliberately, and by the counter map.** It was five for a
+/// long time and the sixth is `bpf_get_smp_processor_id`, which the counter bump now needs:
+/// the counters are a flat array striped by processor rather than a `PERCPU_ARRAY`, because
+/// the kernel refuses `BPF_F_MMAPABLE` on per-CPU maps and mapping them is what took the
+/// agent's sweep from milliseconds to microseconds. The verifier does not inline that helper
+/// before 6.10, so on the 6.8 floor it is a real call on the packet path — a cost paid on
+/// every counted packet to remove a cost the agent was paying at 13 % of a core. The
+/// arithmetic is in `lorica-ebpf/src/helpers.rs` and the trade is in
+/// `lorica-ebpf/src/maps.rs`.
+///
+/// The ceiling stays at six rather than moving to seven: the slot existed to be spent once,
+/// on a decision somebody argued for, and raising it now would be raising it to keep the
+/// headroom rather than to allow a call. The next call is a line in a diff.
 const BUDGET: usize = 6;
 
 /// The entry points whose calls this budget does not count, because no packet reaches

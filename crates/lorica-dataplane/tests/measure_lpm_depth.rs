@@ -619,7 +619,11 @@ fn load_flat(object: &[u8], hosts: &[u32]) -> Result<Flat, Failure> {
 
     let settings = DEFAULT_SETTINGS;
     let trie_armed = 0u32;
-    let mut ebpf = EbpfLoader::new()
+    // The counter map's entry count and the stripe width the program indexes it with are
+    // one decision, and `maps::size_counters` is the only thing allowed to make it.
+    let layout = maps::counter_layout(CounterId::COUNT)?;
+    let mut loader = EbpfLoader::new();
+    let mut ebpf = maps::size_counters(&mut loader, &layout)
         .override_global(SETTINGS_SYMBOL, &settings, true)
         .override_global(CLASS24_SYMBOL, &snapshot.class24[..], true)
         .override_global(OA_TABLE_SYMBOL, table, true)
@@ -628,7 +632,6 @@ fn load_flat(object: &[u8], hosts: &[u32]) -> Result<Flat, Failure> {
         // program, and a trie sized like the one next door would charge this row 198 MiB of
         // kernel memory it does not use.
         .map_max_entries("UNIFIED_LIST", 1)
-        .map_max_entries("COUNTERS", CounterId::COUNT)
         .load(object)
         .map_err(|err| format!("loading the flat program failed: {err}"))?;
     verify(&mut ebpf)?;
@@ -649,10 +652,13 @@ fn load_flat(object: &[u8], hosts: &[u32]) -> Result<Flat, Failure> {
 /// this file does not use the shared test harness.
 fn maps_at_size(object: &[u8], entries: u32) -> Result<Ebpf, Failure> {
     let settings = DEFAULT_SETTINGS;
-    EbpfLoader::new()
+    // The counter map's entry count and the stripe width the program indexes it with are
+    // one decision, and `maps::size_counters` is the only thing allowed to make it.
+    let layout = maps::counter_layout(CounterId::COUNT + entries)?;
+    let mut loader = EbpfLoader::new();
+    maps::size_counters(&mut loader, &layout)
         .override_global(SETTINGS_SYMBOL, &settings, true)
         .map_max_entries("UNIFIED_LIST", entries.max(1))
-        .map_max_entries("COUNTERS", CounterId::COUNT + entries)
         .load(object)
         .map_err(|err| format!("creating the maps failed: {err}").into())
 }
