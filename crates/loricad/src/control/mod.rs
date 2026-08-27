@@ -30,7 +30,7 @@ use std::{
     fmt::Write as _,
     fs::{self, Permissions},
     io,
-    os::unix::fs::PermissionsExt,
+    os::unix::fs::{DirBuilderExt, PermissionsExt},
     path::Path,
     time::Duration,
 };
@@ -74,16 +74,33 @@ pub const EXCHANGE: Duration = Duration::from_secs(2);
 /// then any local account can arm and disarm the mitigation of a machine it does not
 /// administer. Luck is not an access control decision, so the mode is set here.
 ///
-/// **The directory is tightened before the bind, and that ordering is the point.** Between
-/// `bind` and any `chmod` of the socket there is an instant in which the socket exists at
-/// whatever the umask said; a directory that cannot be traversed closes that instant,
-/// because a path nobody can walk into is a socket nobody can connect to. The `chmod` of the
-/// socket is the second layer, for the case where the directory already existed and belonged
-/// to somebody else — which is why a failure to tighten it is returned rather than ignored.
+/// **The directory is created tightened, and it is never tightened after the fact.** A
+/// directory this agent makes is made at [`DIR_MODE`] in the `mkdir` itself, so there is no
+/// instant at which it is looser. A directory that already existed is left exactly as it was.
+///
+/// That distinction is not a nicety, it is a defect this code shipped with. The first version
+/// chmodded the parent unconditionally, which is right for the default `/run/lorica/…` and
+/// catastrophic for `--socket /run/agent.sock`: the parent is then `/run` itself, and a
+/// measurement run turned `/run` into `0700 root:root` on the lab's measurement machine. Every
+/// service that needs a runtime directory as a non-root user stopped working, the overlay
+/// dropped its interface, and the host became unreachable — from a flag whose only intent was
+/// to name a socket. **An agent may harden what it creates and must not re-permission what it
+/// finds.**
+///
+/// What guards the socket in the pre-existing case is [`SOCKET_MODE`], applied immediately
+/// after the bind. The residual window between `bind` and that `chmod` is real and is not
+/// closed here: closing it needs a `umask` around the bind, which is process-global state this
+/// function has no business setting while a runtime is running. It is named rather than
+/// papered over.
 pub fn listen(path: &Path) -> io::Result<UnixListener> {
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-        fs::set_permissions(parent, Permissions::from_mode(DIR_MODE))?;
+        // `mode` applies to the directories this call creates and to nothing it finds, which
+        // is exactly the distinction above. `recursive` also makes an existing directory a
+        // success rather than `AlreadyExists`.
+        fs::DirBuilder::new()
+            .recursive(true)
+            .mode(DIR_MODE)
+            .create(parent)?;
     }
     // A socket left behind by a killed agent makes bind fail with EADDRINUSE, which reads
     // as "another agent is running" when there is none. Removing it is the only way to

@@ -612,6 +612,53 @@ async fn the_socket_and_its_directory_are_not_left_to_the_umask() {
     );
 }
 
+/// A directory the agent did not create keeps the mode it had.
+///
+/// The regression this pins down was shipped and did real damage. `listen` used to chmod the
+/// socket's parent to `0700` unconditionally, which is right for the default
+/// `/run/lorica/control.sock` and catastrophic for `--socket /run/agent.sock`: the parent is
+/// then `/run`, and one measurement run left `/run` at `0700 root:root` on the lab's
+/// measurement machine. Every service needing a runtime directory as a non-root user broke,
+/// the overlay dropped its interface, and the host went unreachable — from a flag whose only
+/// job was to name a socket.
+///
+/// So the property is not "the directory ends up at 0700". It is **the agent hardens what it
+/// creates and leaves what it finds**, and only the second half can be broken silently.
+#[tokio::test]
+async fn a_directory_the_agent_did_not_create_keeps_its_mode() {
+    let dir = PathBuf::from("/tmp").join(format!("lorica-preexisting-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).expect("cannot create the directory");
+    // 0755 rather than 0700, so a version that tightens what it finds changes it and a
+    // version that leaves it alone does not. Setting it explicitly because create_dir_all
+    // goes through the umask and the test must not depend on the caller's.
+    fs::set_permissions(&dir, fs::Permissions::from_mode(0o755)).expect("cannot set the mode");
+
+    let path = dir.join("control.sock");
+    let _listener = control::listen(&path).expect("cannot listen");
+
+    let after = fs::metadata(&dir)
+        .expect("no directory")
+        .permissions()
+        .mode()
+        & 0o777;
+    assert_eq!(
+        after, 0o755,
+        "listen changed the mode of a directory it did not create, from 0755 to {after:o}. \
+         Pointed at a socket directly in /run that is /run itself, and it takes the machine \
+         down with it."
+    );
+
+    let socket = fs::metadata(&path).expect("no socket").permissions().mode() & 0o777;
+    assert_eq!(
+        socket, 0o600,
+        "the socket in a pre-existing directory is the only thing guarding the agent there, \
+         and it is not owner-only"
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
 /// `reload` is answered rather than silently accepted.
 ///
 /// There is no configuration file on this path — `main` loads the object, the default

@@ -97,6 +97,12 @@ half=$((DURATION / 2))
 
 cleanup() {
     sudo -n systemctl stop "$UNIT.service" 2>/dev/null
+    # The agent's own directory, not a socket dropped straight into /run. The first version
+    # passed --socket /run/$UNIT.sock, whose parent is /run itself, and the agent hardens the
+    # parent of the socket it is given: that run left /run at 0700 root:root and took the
+    # machine's overlay down with it. The agent no longer re-permissions a directory it did
+    # not create, and this side stops asking it to.
+    sudo -n rm -rf "/run/$UNIT" 2>/dev/null
     [ "$FLOOD" = yes ] && ssh -o BatchMode=yes -o ConnectTimeout=10 "$GEN_HOST" 'pkill -f trafgen' 2>/dev/null
     return 0
 }
@@ -107,7 +113,7 @@ sudo -n systemctl reset-failed "$UNIT.service" 2>/dev/null
 # --seconds is the agent stopping itself, so a run that loses its SSH still ends.
 sudo -n systemd-run --unit="$UNIT" --collect --quiet \
     "$PWD/$AGENT" --object "$PWD/$OBJECT" --counters "$COUNTERS" --hz "$HZ" \
-    --seconds $((DURATION + 10)) --metrics off --socket "/run/$UNIT.sock" \
+    --seconds $((DURATION + 10)) --metrics off --socket "/run/$UNIT/control.sock" \
     --iface "$IFACE" \
     || die "the agent did not start as a unit"
 
