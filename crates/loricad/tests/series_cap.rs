@@ -21,9 +21,13 @@
 #[allow(dead_code)]
 mod control;
 
-// Included because `control` reaches for it — `disarm` withdraws what arming wrote — and a
-// module pulled in by path brings its own edges with it, the way `tick_budget.rs` has to
-// include both the state and the tick. Nothing here is counted; only `control::Snapshot` is.
+// Included because `control` reaches for them — `disarm` withdraws what arming wrote and
+// `attach` puts the program on an interface — and a module pulled in by path brings its own
+// edges with it, the way `tick_budget.rs` has to include both the state and the tick.
+// Nothing here is counted; only `control::Snapshot` is.
+#[path = "../src/attach.rs"]
+#[allow(dead_code, unused_imports)]
+mod attach;
 #[path = "../src/enforce/mod.rs"]
 #[allow(dead_code, unused_imports)]
 mod enforce;

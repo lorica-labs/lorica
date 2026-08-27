@@ -8,9 +8,9 @@
 //! would cost an 8th crate in a workspace of 7 and turn that 1 line into a tree. It is
 //! worth that the day the CLI has to branch on an answer. Today it prints.
 //!
-//! **Who can reach it.** `arm` changes what the data path does to traffic, so the
-//! permissions of this socket are the whole access control of the mitigation. They are not
-//! left to the umask — see [`listen`].
+//! **Who can reach it.** `arm` changes what the data path does to traffic and `attach` puts
+//! a data path there at all, so the permissions of this socket are the whole access control
+//! of the mitigation. They are not left to the umask — see [`listen`].
 //!
 //! **What bounds an exchange.** `main` awaits the handler on the thread the tick runs on
 //! rather than spawning it, which is the right choice — a task per connection would let a
@@ -51,10 +51,12 @@ const SOCKET_MODE: u32 = 0o600;
 
 /// Bytes a client may send before the read stops looking for a newline.
 ///
-/// The longest command is `disarm`, 6 bytes, and 32 leaves room for a CRLF and for a word
-/// nobody has written yet. The bound is not tidiness: `read_line` grows its buffer until it
-/// finds a newline, so an unbounded read is a client deciding how much the agent allocates.
-/// A line cut here does not match any command and is refused like any other unknown word.
+/// The longest command is `attach ` and an interface name, and the kernel bounds the second
+/// half at 15 bytes — `IFNAMSIZ` is 16 including the nul — so 22, and 32 leaves room for a
+/// CRLF and for a word nobody has written yet. The bound is not tidiness: `read_line` grows
+/// its buffer until it finds a newline, so an unbounded read is a client deciding how much
+/// the agent allocates. A line cut here does not match any command and is refused like any
+/// other unknown word.
 const MAX_COMMAND: u64 = 32;
 
 /// How long one exchange may take, end to end.
@@ -117,18 +119,29 @@ async fn exchange(
         .read_line(&mut command)
         .await?;
 
-    let answer = match command.trim() {
-        "status" => status_json(&snapshot, control),
-        "tiers" => handler::tiers_json(control),
-        "rules" => handler::rules_json(&snapshot, control),
-        "arm" => handler::arm(&snapshot, control),
-        "disarm" => handler::disarm(control),
-        "reload" => handler::reload(),
-        // Escaped as one string and not interpolated into a hand-written one. The word is a
-        // third party's bytes and the answer is read by `jq`: the shorter form put the
-        // client's own quotes straight into the message, which produced
-        // `{"error":"unknown command "x""}` — not JSON, for every unknown word ever sent.
-        other => handler::error(&format!("unknown command {other}")),
+    let line = command.trim();
+    // `attach` is the one command with an operand, so the split comes first and everything
+    // else stays a word. Splitting on the first space rather than parsing: an interface name
+    // contains none, and a second word after one is part of the name and will be refused by
+    // the kernel under the name the client actually sent.
+    let answer = match line.split_once(' ') {
+        Some(("attach", iface)) => handler::attach(control, iface.trim()),
+        _ => match line {
+            "status" => status_json(&snapshot, control),
+            "tiers" => handler::tiers_json(control),
+            "rules" => handler::rules_json(&snapshot, control),
+            "arm" => handler::arm(&snapshot, control),
+            "disarm" => handler::disarm(control),
+            "attach" => handler::attach(control, ""),
+            "detach" => handler::detach(control),
+            "reload" => handler::reload(),
+            // Escaped as one string and not interpolated into a hand-written one. The word
+            // is a third party's bytes and the answer is read by `jq`: the shorter form put
+            // the client's own quotes straight into the message, which produced
+            // `{"error":"unknown command "x""}` — not JSON, for every unknown word ever
+            // sent.
+            other => handler::error(&format!("unknown command {other}")),
+        },
     };
     write.write_all(answer.as_bytes()).await
 }
@@ -146,6 +159,9 @@ pub struct Snapshot {
     pub counted: u64,
     pub named_counted: u64,
     pub period_ms: u64,
+    /// Whether the program is on an interface. Read off the same value the interface name
+    /// is rendered from, so the flag and the name cannot disagree; it is a `bool` here
+    /// because `metrics` exports it as a gauge and a gauge has no room for a name.
     pub attached: bool,
     /// The clock every deadline in the maps is expressed on. Published because a TTL
     /// nobody can convert back into seconds is a decision nobody can check: the rate is
@@ -169,6 +185,17 @@ fn status_json(snapshot: &Snapshot, control: &Control<'_>) -> String {
         })
     );
     let _ = writeln!(out, "  \"attached\": {},", snapshot.attached);
+    // Named next to the flag, because "true" answers whether this agent is in a packet path
+    // and not which one. A host with two agents on two interfaces otherwise reports the same
+    // line twice, and the tax in `crate::attach` is charged to whichever interface this is.
+    let _ = writeln!(
+        out,
+        "  \"interface\": {},",
+        match control.attached.as_ref() {
+            Some(held) => quote(held.iface()),
+            None => "null".to_owned(),
+        }
+    );
     let _ = writeln!(out, "  \"tick_period_ms\": {},", snapshot.period_ms);
     let _ = writeln!(out, "  \"kernel_hz\": {},", snapshot.clock.hz);
     let _ = writeln!(out, "  \"jiffies\": {},", snapshot.clock.jiffies);

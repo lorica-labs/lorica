@@ -16,6 +16,8 @@
 
 #![cfg(all(target_os = "linux", feature = "kernel-tests"))]
 
+#[path = "../src/attach.rs"]
+mod attach;
 #[path = "../src/control/mod.rs"]
 mod control;
 #[path = "../src/enforce/mod.rs"]
@@ -23,7 +25,10 @@ mod enforce;
 
 use std::{
     fs,
-    os::unix::fs::PermissionsExt,
+    os::{
+        fd::{AsFd, OwnedFd},
+        unix::fs::PermissionsExt,
+    },
     path::{Path, PathBuf},
     time::Instant,
 };
@@ -99,6 +104,10 @@ struct Agent {
     pulled: u64,
     tiers: Tiers,
     stages: [u64; NAMED_SLOTS],
+    /// Never anything but `None` here: an [`Attachment`](attach::Attachment) exists only
+    /// where a real interface was attached, and that is `tests/attach_iface.rs`. What this
+    /// file asserts about it is that `status` says so.
+    attached: Option<attach::Attachment>,
 }
 
 impl Default for Agent {
@@ -109,12 +118,13 @@ impl Default for Agent {
             pulled: 0,
             tiers: Tiers::default(),
             stages: [0; NAMED_SLOTS],
+            attached: None,
         }
     }
 }
 
 impl Agent {
-    fn control<'a>(&'a mut self, ebpf: &'a Ebpf) -> Control<'a> {
+    fn control<'a>(&'a mut self, ebpf: &'a mut Ebpf) -> Control<'a> {
         Control {
             mode: &mut self.mode,
             standing: &mut self.standing,
@@ -123,9 +133,22 @@ impl Agent {
             withheld: 0,
             stages: &self.stages,
             tiers: &self.tiers,
+            attached: &mut self.attached,
             ebpf,
         }
     }
+}
+
+/// The list descriptor, duplicated rather than borrowed out of the program.
+///
+/// `Control` takes the program mutably — that is what makes `attach` a command — so a
+/// borrow of one of its maps held across a command would not compile. `main` duplicates the
+/// same two descriptors for the same reason.
+fn duplicate(ebpf: &Ebpf, name: &str) -> OwnedFd {
+    maps::fd(ebpf, name)
+        .unwrap_or_else(|| panic!("no {name} map in the object"))
+        .try_clone_to_owned()
+        .unwrap_or_else(|err| panic!("cannot duplicate the descriptor of {name}: {err}"))
 }
 
 /// The snapshot a query would be answered from. `slots` is the one field a case varies: it
@@ -217,12 +240,12 @@ fn refusal(key: LpmKey, deadline: Deadline) -> Decision {
 /// nothing can be set to.
 #[tokio::test]
 async fn status_reports_the_observing_mode_by_default() {
-    let (ebpf, clock) = lab();
+    let (mut ebpf, clock) = lab();
     let path = socket_path("status-default");
     let listener = control::listen(&path).expect("cannot listen");
 
     let mut agent = Agent::default();
-    let mut control = agent.control(&ebpf);
+    let mut control = agent.control(&mut ebpf);
     let answer = ask(
         &listener,
         path.clone(),
@@ -260,10 +283,11 @@ async fn status_reports_the_observing_mode_by_default() {
 /// first and the invariant second.
 #[tokio::test]
 async fn rules_never_reports_an_active_entry_without_a_deadline() {
-    let (ebpf, clock) = lab();
+    let (mut ebpf, clock) = lab();
     let path = socket_path("rules-deadline");
     let listener = control::listen(&path).expect("cannot listen");
-    let list = maps::fd(&ebpf, "UNIFIED_LIST").expect("no UNIFIED_LIST map in the object");
+    let list_fd = duplicate(&ebpf, "UNIFIED_LIST");
+    let list = list_fd.as_fd();
 
     let key = LpmKey::host_v4([198, 51, 100, 21]);
     assert_eq!(
@@ -278,7 +302,7 @@ async fn rules_never_reports_an_active_entry_without_a_deadline() {
     );
 
     let mut agent = Agent::default();
-    let mut control = agent.control(&ebpf);
+    let mut control = agent.control(&mut ebpf);
     let answer = ask(
         &listener,
         path.clone(),
@@ -314,12 +338,12 @@ async fn rules_never_reports_an_active_entry_without_a_deadline() {
 /// restated.
 #[tokio::test]
 async fn arming_without_a_slot_above_the_named_counters_is_refused() {
-    let (ebpf, clock) = lab();
+    let (mut ebpf, clock) = lab();
     let path = socket_path("arm-no-slot");
     let listener = control::listen(&path).expect("cannot listen");
 
     let mut agent = Agent::default();
-    let mut control = agent.control(&ebpf);
+    let mut control = agent.control(&mut ebpf);
     // Exactly the named counters and nothing above them.
     let answer = ask(
         &listener,
@@ -359,13 +383,13 @@ async fn arming_without_a_slot_above_the_named_counters_is_refused() {
 /// request elsewhere in this project.
 #[tokio::test]
 async fn an_unknown_command_is_refused_and_the_agent_keeps_answering() {
-    let (ebpf, clock) = lab();
+    let (mut ebpf, clock) = lab();
     let path = socket_path("unknown-command");
     let listener = control::listen(&path).expect("cannot listen");
     let snap = snapshot(COUNTER_ENTRIES as usize, clock);
 
     let mut agent = Agent::default();
-    let mut control = agent.control(&ebpf);
+    let mut control = agent.control(&mut ebpf);
 
     let answer = ask(&listener, path.clone(), "wat\n", snap, &mut control).await;
     assert!(
@@ -416,13 +440,13 @@ async fn an_unknown_command_is_refused_and_the_agent_keeps_answering() {
 /// and the assertion is on the clock: the exchange has to come back on its own.
 #[tokio::test]
 async fn a_truncated_line_or_a_client_that_leaves_does_not_stop_the_agent() {
-    let (ebpf, clock) = lab();
+    let (mut ebpf, clock) = lab();
     let path = socket_path("truncated");
     let listener = control::listen(&path).expect("cannot listen");
     let snap = snapshot(COUNTER_ENTRIES as usize, clock);
 
     let mut agent = Agent::default();
-    let mut control = agent.control(&ebpf);
+    let mut control = agent.control(&mut ebpf);
 
     // A line with no newline at all, longer than any command word. The read is bounded, so
     // this is a refusal and not a buffer that grows until the allocator gives up.
@@ -493,16 +517,17 @@ async fn a_truncated_line_or_a_client_that_leaves_does_not_stop_the_agent() {
 /// withdrawn — anything else in the list belongs to whoever put it there.
 #[tokio::test]
 async fn disarm_returns_to_observing_and_withdraws_what_arming_wrote() {
-    let (ebpf, clock) = lab();
+    let (mut ebpf, clock) = lab();
     let path = socket_path("disarm");
     let listener = control::listen(&path).expect("cannot listen");
-    let list = maps::fd(&ebpf, "UNIFIED_LIST").expect("no UNIFIED_LIST map in the object");
+    let list_fd = duplicate(&ebpf, "UNIFIED_LIST");
+    let list = list_fd.as_fd();
     let snap = snapshot(COUNTER_ENTRIES as usize, clock);
 
     let mut agent = Agent::default();
     let key = LpmKey::host_v4([198, 51, 100, 22]);
     {
-        let mut control = agent.control(&ebpf);
+        let mut control = agent.control(&mut ebpf);
         let armed = ask(&listener, path.clone(), "arm\n", snap, &mut control).await;
         assert!(
             armed.contains("\"mode\": \"armed\""),
@@ -526,7 +551,7 @@ async fn disarm_returns_to_observing_and_withdraws_what_arming_wrote() {
     agent.standing = Some(key);
 
     {
-        let mut control = agent.control(&ebpf);
+        let mut control = agent.control(&mut ebpf);
         let disarmed = ask(&listener, path.clone(), "disarm\n", snap, &mut control).await;
         assert!(
             disarmed.contains("\"mode\": \"observe\""),
@@ -541,7 +566,7 @@ async fn disarm_returns_to_observing_and_withdraws_what_arming_wrote() {
     assert_eq!(agent.standing, None, "the withdrawn key is still standing");
     assert_eq!(agent.pulled, 1, "the withdrawal was not counted");
 
-    let mut control = agent.control(&ebpf);
+    let mut control = agent.control(&mut ebpf);
     let rules = ask(&listener, path.clone(), "rules\n", snap, &mut control).await;
     assert!(
         entry_lines(&rules).is_empty(),
@@ -595,12 +620,12 @@ async fn the_socket_and_its_directory_are_not_left_to_the_umask() {
 /// missing instead.
 #[tokio::test]
 async fn reload_names_what_it_has_no_source_for_instead_of_reporting_success() {
-    let (ebpf, clock) = lab();
+    let (mut ebpf, clock) = lab();
     let path = socket_path("reload");
     let listener = control::listen(&path).expect("cannot listen");
 
     let mut agent = Agent::default();
-    let mut control = agent.control(&ebpf);
+    let mut control = agent.control(&mut ebpf);
     let answer = ask(
         &listener,
         path.clone(),
@@ -630,10 +655,11 @@ async fn reload_names_what_it_has_no_source_for_instead_of_reporting_success() {
 /// was reachable.
 #[tokio::test]
 async fn a_never_expiring_entry_written_behind_apply_is_reported_as_such() {
-    let (ebpf, clock) = lab();
+    let (mut ebpf, clock) = lab();
     let path = socket_path("never");
     let listener = control::listen(&path).expect("cannot listen");
-    let list = maps::fd(&ebpf, "UNIFIED_LIST").expect("no UNIFIED_LIST map in the object");
+    let list_fd = duplicate(&ebpf, "UNIFIED_LIST");
+    let list = list_fd.as_fd();
 
     let key = LpmKey::host_v4([198, 51, 100, 23]);
     assert!(
@@ -649,7 +675,7 @@ async fn a_never_expiring_entry_written_behind_apply_is_reported_as_such() {
         .expect("writing straight into the trie failed");
 
     let mut agent = Agent::default();
-    let mut control = agent.control(&ebpf);
+    let mut control = agent.control(&mut ebpf);
     let answer = ask(
         &listener,
         path.clone(),
@@ -675,7 +701,7 @@ async fn a_never_expiring_entry_written_behind_apply_is_reported_as_such() {
 /// The history is what the ladder went through, and it is bounded.
 #[tokio::test]
 async fn tiers_reports_the_transitions_and_says_how_many_it_keeps() {
-    let (ebpf, clock) = lab();
+    let (mut ebpf, clock) = lab();
     let path = socket_path("tiers");
     let listener = control::listen(&path).expect("cannot listen");
 
@@ -684,7 +710,7 @@ async fn tiers_reports_the_transitions_and_says_how_many_it_keeps() {
     agent.tiers.note(8, Tier::Mark.rung());
     agent.tiers.note(9, Tier::Limit.rung());
 
-    let mut control = agent.control(&ebpf);
+    let mut control = agent.control(&mut ebpf);
     let answer = ask(
         &listener,
         path.clone(),

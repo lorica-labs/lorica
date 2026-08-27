@@ -1,12 +1,16 @@
 //! The agent, reduced to what makes the counter read measurable: one timer, one sweep,
 //! one control socket.
 //!
-//! No policy is loaded, nothing is attached, and no metric is exported. The design that
-//! came out of the attach-tax measurement is detached by default and attached on
-//! detection, so an agent that attached at startup would be the wrong default as well as
-//! outside this phase.
+//! No policy is loaded and nothing is attached unless `--iface` says so. Detached stays the
+//! default because the attach tax is paid on every packet whether or not anything is
+//! happening — see [`attach`] for the two numbers — and attached-on-detection, which was the
+//! design that came out of that measurement, is not what replaced it: detection reads the
+//! counters of the program and the counters only move while it is attached, so the signal
+//! that was supposed to decide the attach requires the attach. The decision is the
+//! operator's, it is one flag, and the agent stays attached for as long as it runs.
 
 mod alloc;
+mod attach;
 mod control;
 mod enforce;
 mod journal;
@@ -17,6 +21,8 @@ mod store;
 mod tick;
 
 use std::{
+    io,
+    os::fd::{AsFd, BorrowedFd, OwnedFd},
     path::{Path, PathBuf},
     process::ExitCode,
     time::{Duration, Instant},
@@ -28,22 +34,31 @@ use lorica_common::{
     BUCKET_KEY_SYMBOLS, Clock, CounterId, DEFAULT_SETTINGS, SETTINGS_SYMBOL, SIGNATURE_VECTORS_ALL,
     SIGNATURE_VECTORS_SYMBOL, key_words,
 };
-use lorica_dataplane::{clock, loader, maps};
+use lorica_dataplane::{
+    clock, loader,
+    maps::{self, batch::PerCpuU64Reader},
+};
 use lorica_detect::{Config as Ladder, Engine};
 use lorica_policy::Mode;
-use tokio::{runtime::Builder, time::MissedTickBehavior};
+use tokio::{
+    runtime::Builder,
+    signal::unix::{SignalKind, signal},
+    time::MissedTickBehavior,
+};
 
-use crate::enforce::{Applied, apply, withdraw};
+use crate::{
+    attach::Attachment,
+    enforce::{Applied, apply, withdraw},
+};
 
 #[global_allocator]
 static ALLOCATOR: alloc::Counting = alloc::Counting;
 
 const DEFAULT_SOCKET: &str = "/run/lorica/control.sock";
-const PROGRAM: &str = "lorica_xdp";
 
 const USAGE: &str = "usage: loricad --object PATH [--socket PATH] [--counters N] [--hz N] \
                      [--batch N] [--sweep-every N] [--seconds N] [--metrics ADDR|off] \
-                     [--mode observe|armed]";
+                     [--mode observe|armed] [--iface NAME]";
 
 struct Options {
     object: PathBuf,
@@ -70,6 +85,10 @@ struct Options {
     /// Where `/metrics` listens, or `off`. Loopback by default: the endpoint serialises the
     /// whole registry per call, so exposing it off-host is an address somebody types.
     metrics: String,
+    /// The interface to attach to at startup, and to stay attached to. Absent by default,
+    /// because the attach tax in [`attach`] is paid on every packet whether or not anything
+    /// is happening, and nothing here can decide for the operator that it is worth paying.
+    iface: Option<String>,
 }
 
 fn main() -> ExitCode {
@@ -93,6 +112,7 @@ fn parse_options() -> Result<Options> {
         seconds: 0,
         mode: Mode::default(),
         metrics: metrics::serve::DEFAULT_ADDR.to_owned(),
+        iface: None,
     };
     let mut args = std::env::args().skip(1);
     while let Some(flag) = args.next() {
@@ -107,6 +127,7 @@ fn parse_options() -> Result<Options> {
             "--seconds" => options.seconds = value()?.parse()?,
             "--metrics" => options.metrics = value()?,
             "--mode" => options.mode = value()?.parse().map_err(anyhow::Error::msg)?,
+            "--iface" => options.iface = Some(value()?),
             other => bail!("unknown argument {other}\n{USAGE}"),
         }
     }
@@ -148,11 +169,22 @@ fn run(options: Options) -> Result<()> {
 
 async fn serve(mut options: Options) -> Result<()> {
     let (ebpf, clock) = load(&options.object, options.counter_slots)?;
+    // The descriptors below are duplicates and not borrows of the loaded program, and that
+    // is what makes attaching possible at all: attaching needs the program mutably, at any
+    // moment for as long as the agent runs, and a borrow of its maps that lives that long
+    // would freeze it. A `dup` costs one syscall at startup and names the same kernel object,
+    // so nothing about what is read changes.
+    let counters = duplicate(ebpf, "COUNTERS")?;
+    let list = duplicate(ebpf, "UNIFIED_LIST")?;
     // Two readers over the same map: one stops at the named counters, one covers every
     // slot. Each owns its buffers, sized once, so neither allocates again.
-    let named = maps::counters(ebpf, CounterId::COUNT, options.batch.min(CounterId::COUNT))
-        .context("building the named-counter reader failed")?;
-    let full = maps::counters(ebpf, options.counter_slots, options.batch)
+    let named = reader(
+        counters,
+        CounterId::COUNT,
+        options.batch.min(CounterId::COUNT),
+    )
+    .context("building the named-counter reader failed")?;
+    let full = reader(counters, options.counter_slots, options.batch)
         .context("building the full-sweep reader failed")?;
     let mut sweep = tick::Sweep::new(
         named,
@@ -173,10 +205,10 @@ async fn serve(mut options: Options) -> Result<()> {
     // below. A scrape after that allocates nothing but the growth of its output buffer.
     let mut exporter = metrics::Exporter::new();
 
-    // The ladder, and the file descriptor it writes an accepted rung into. Resolved here so
-    // an agent whose object has no list fails at startup rather than on the first refusal.
+    // The ladder that decides what goes into the list resolved above, which was resolved at
+    // startup so an agent whose object has no list fails there rather than on the first
+    // refusal.
     let mut engine = Engine::new(Ladder::default());
-    let list = maps::fd(ebpf, "UNIFIED_LIST").context("no UNIFIED_LIST map in the object")?;
     // One slot for everything the ladder writes, the first one above the named counters.
     // Not one per entry: a slot allocator is a thing to build when something reads the
     // per-entry counters back, and nothing does yet.
@@ -211,6 +243,35 @@ async fn serve(mut options: Options) -> Result<()> {
     // snapshot against a kernel deadline needs the jiffy base instead, which is what
     // `clock::read` is for.
     let started = Instant::now();
+
+    // Registered once, before the loop, rather than built inside the `select!`. A future
+    // built per iteration registers its handler after the signal it was meant to catch may
+    // already have been delivered, and the agent then keeps running with an interface it was
+    // told to give back. Both signals, because `Ctrl-C` is SIGINT and a service manager
+    // sends SIGTERM, and an agent that only handles one of them leaves a hook behind under
+    // the other.
+    let mut interrupted = signal(SignalKind::interrupt()).context("cannot listen for SIGINT")?;
+    let mut terminated = signal(SignalKind::terminate()).context("cannot listen for SIGTERM")?;
+
+    // The attach, last of the startup and after everything that can still fail cheaply. An
+    // attach that succeeds and is then followed by a failed bind would leave a program on an
+    // interface nobody is watching, which is the state this whole file exists to not be in.
+    let mut attached: Option<Attachment> = None;
+    if let Some(iface) = options.iface.clone() {
+        // Refused, not degraded. An agent that starts believing it protects an interface and
+        // does not is worse than an agent that did not start: the first is a monitored
+        // service reporting healthy.
+        let held = attach::attach(ebpf, &iface)
+            .map_err(anyhow::Error::msg)
+            .with_context(|| format!("cannot attach to {iface}"))?;
+        eprintln!(
+            "loricad: attached to {} in native mode; every received packet goes through the \
+             program from now on, at 58 % off the receive throughput and 57 % onto the \
+             application p99 measured on virtio, whether or not anything is attacking",
+            held.iface()
+        );
+        attached = Some(held);
+    }
 
     // Every allocation of the startup is behind us at this point, so what the tick does
     // afterwards is measurable by difference.
@@ -279,12 +340,16 @@ async fn serve(mut options: Options) -> Result<()> {
                         withheld,
                         pulled,
                     );
-                    return Ok(());
+                    break;
                 }
             }
+            // Both signals lead to the same exit, and the exit is below the loop rather than
+            // in these arms: a detach written twice is a detach that gets fixed once.
+            _ = interrupted.recv() => break,
+            _ = terminated.recv() => break,
             accepted = listener.accept() => {
                 let (stream, _) = accepted.context("accepting on the control socket failed")?;
-                let snapshot = snapshot(&sweep, &options, period, clock, ebpf);
+                let snapshot = snapshot(&sweep, &options, period, clock, &attached, ebpf);
                 let latest = published.read();
                 // Borrows, not copies: `arm` and `disarm` change the mode the next tick
                 // reads and withdraw the key the descent would otherwise have taken out, so
@@ -298,7 +363,9 @@ async fn serve(mut options: Options) -> Result<()> {
                     withheld,
                     stages: latest.counters.named(),
                     tiers: &tiers,
-                    ebpf,
+                    attached: &mut attached,
+                    // Reborrowed rather than moved: the loop runs again after this.
+                    ebpf: &mut *ebpf,
                 };
                 // Awaited rather than spawned. One client at a time is the whole protocol,
                 // and a task per connection would let a slow reader hold the tick behind
@@ -307,7 +374,7 @@ async fn serve(mut options: Options) -> Result<()> {
             }
             scraped = metrics::serve::accept(scrapes.as_ref()) => {
                 let stream = scraped.context("accepting a scrape failed")?;
-                let snapshot = snapshot(&sweep, &options, period, clock, ebpf);
+                let snapshot = snapshot(&sweep, &options, period, clock, &attached, ebpf);
                 // The snapshot the last tick published, held for the length of the response
                 // and no longer. `load_full`, so nothing of arc-swap's is held across the
                 // await below.
@@ -325,6 +392,57 @@ async fn serve(mut options: Options) -> Result<()> {
             }
         }
     }
+
+    // Detached before the process goes away, and reported.
+    //
+    // **On a kernel that has `bpf_link`, closing the process would free the hook anyway, and
+    // that is not the case this exists for.** aya falls back to a netlink attach when
+    // `bpf_link_create` is refused, and a netlink attach is not owned by any descriptor: the
+    // program stays on the interface after the agent is gone, filtering with a policy nobody
+    // can change and nobody can read. The other half is this: an agent that lets the kernel
+    // tidy up never learns whether the tidying worked, so a detach that fails is a line an
+    // operator reads here instead of an interface somebody finds later.
+    if let Some(held) = attached.take() {
+        let iface = held.iface().to_owned();
+        attach::detach(ebpf, held)
+            .map_err(anyhow::Error::msg)
+            .with_context(|| format!("cannot detach from {iface}"))?;
+        eprintln!("loricad: detached from {iface}");
+    }
+    Ok(())
+}
+
+/// A descriptor of one of the program's maps that outlives any borrow of the program.
+///
+/// [`maps::fd`] hands out a borrow, and a borrow held for the life of the agent is what
+/// would make the program permanently unattachable — see the call site. The duplicate refers
+/// to the same kernel object, so the map is the same map and its lifetime in the kernel is
+/// now the longer of the two descriptors.
+fn duplicate(ebpf: &Ebpf, name: &str) -> Result<BorrowedFd<'static>> {
+    let fd = maps::fd(ebpf, name).with_context(|| format!("no {name} map in the object"))?;
+    let owned = fd
+        .try_clone_to_owned()
+        .with_context(|| format!("cannot duplicate the descriptor of {name}"))?;
+    // Leaked for the reason `load` is: this is the agent's handle on the map for as long as
+    // it runs, and closing it would take the map out from under the sweep.
+    let kept: &'static OwnedFd = Box::leak(Box::new(owned));
+    Ok(kept.as_fd())
+}
+
+/// The counter reader, over a descriptor rather than over the program.
+///
+/// [`maps::counters`] is this same call and takes the program, which is the one thing that
+/// cannot be borrowed here for as long as the reader lives. So the invariant it exists to
+/// state once is restated once more, here, and nowhere else in this crate.
+fn reader(
+    fd: BorrowedFd<'static>,
+    entries: u32,
+    batch: u32,
+) -> io::Result<PerCpuU64Reader<'static>> {
+    // SAFETY: `fd` is a duplicate of the descriptor of COUNTERS, declared
+    // `PerCpuArray<u64>` in lorica-ebpf, which is the map type and the eight-byte value
+    // width PerCpuU64Reader requires.
+    unsafe { PerCpuU64Reader::new(fd, entries, batch) }
 }
 
 /// What the agent knows about itself, for whichever of the two listeners asked.
@@ -338,7 +456,8 @@ fn snapshot(
     options: &Options,
     period: Duration,
     clock: Clock,
-    ebpf: &'static Ebpf,
+    attached: &Option<Attachment>,
+    ebpf: &Ebpf,
 ) -> control::Snapshot {
     control::Snapshot {
         counter_slots: sweep.slots(),
@@ -349,7 +468,11 @@ fn snapshot(
         counted: sweep.counted(),
         named_counted: sweep.named_counted(),
         period_ms: period.as_millis() as u64,
-        attached: false,
+        // The live value and not a constant. It was `false` in the source, which was true of
+        // the agent that never attached and would have gone on reading `false` the day it
+        // did — a status field whose value is written in the code that renders it answers
+        // about that code and not about the agent.
+        attached: attached.is_some(),
         clock: Clock {
             jiffies: clock::read(ebpf).unwrap_or(0),
             ..clock
@@ -365,10 +488,14 @@ fn snapshot(
 /// so would buy nothing, and dropping it early would close the map descriptors under the
 /// sweep.
 ///
+/// **Leaked mutably, and that is the difference from what was here before.** Attaching takes
+/// the program mutably, at any moment for as long as the agent runs, so a shared `&'static`
+/// would make `--iface` and the `attach` command unwritable rather than merely awkward.
+///
 /// The calibration happens here because it needs the program mutable, which it only is
 /// before the leak, and because it sleeps: a few hundred milliseconds at startup, once,
 /// where no tick is waiting on it.
-fn load(object: &Path, slots: u32) -> Result<(&'static Ebpf, Clock)> {
+fn load(object: &Path, slots: u32) -> Result<(&'static mut Ebpf, Clock)> {
     let bytes = std::fs::read(object)
         .with_context(|| format!("cannot read the eBPF object at {}", object.display()))?;
     // Drawn here and never written down. The bucket index is chosen by whoever sends the
@@ -390,11 +517,11 @@ fn load(object: &Path, slots: u32) -> Result<(&'static Ebpf, Clock)> {
         .load(&bytes)
         .with_context(|| format!("loading {} failed", object.display()))?;
 
-    // Verified but not attached. The maps exist, which is all the counter read needs, and
-    // attaching is a decision this phase does not make.
+    // Verified here and attached later, or never. Loading is what creates the maps, which is
+    // all the counter read needs; whether the program also sees packets is `--iface`.
     let program: &mut aya::programs::Xdp = ebpf
-        .program_mut(PROGRAM)
-        .with_context(|| format!("no program named {PROGRAM}"))?
+        .program_mut(attach::PROGRAM)
+        .with_context(|| format!("no program named {}", attach::PROGRAM))?
         .try_into()
         .context("the program is not an XDP program")?;
     program

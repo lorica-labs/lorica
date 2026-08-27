@@ -31,17 +31,37 @@ const SOCKET_VAR: &str = "LORICA_CONTROL_SOCKET";
 /// Every word the daemon answers. Kept as one list because it is both the dispatch and the
 /// usage line, and a usage string maintained apart from the dispatch is how a command comes
 /// to exist without being documented.
-const COMMANDS: [&str; 6] = ["status", "tiers", "rules", "arm", "disarm", "reload"];
+const COMMANDS: [&str; 8] = [
+    "status", "tiers", "rules", "arm", "disarm", "reload", "attach", "detach",
+];
+
+/// The one command with an operand, and the reason there is no argument parser here: a word
+/// and an interface name are two `args()` and a `format!`, and anything that generalised
+/// that would be the typed protocol this crate exists without.
+const WITH_OPERAND: &str = "attach";
 
 fn main() -> ExitCode {
-    match std::env::args().nth(1) {
+    let mut args = std::env::args().skip(1);
+    match args.next() {
+        Some(word) if word == WITH_OPERAND => match args.next() {
+            Some(iface) => send(&format!("{word} {iface}")),
+            // Refused here rather than sent, so the message names the operand instead of the
+            // daemon answering about a command it received without one.
+            None => usage(&format!("{WITH_OPERAND} needs an interface name")),
+        },
         Some(word) if COMMANDS.contains(&word.as_str()) => send(&word),
-        _ => {
-            eprintln!("usage: lorica-ctl {}", COMMANDS.join("|"));
-            eprintln!("socket: {} (override with {SOCKET_VAR})", socket());
-            ExitCode::FAILURE
-        }
+        _ => usage(""),
     }
+}
+
+fn usage(why: &str) -> ExitCode {
+    if !why.is_empty() {
+        eprintln!("lorica-ctl: {why}");
+    }
+    eprintln!("usage: lorica-ctl {}", COMMANDS.join("|"));
+    eprintln!("       lorica-ctl {WITH_OPERAND} <iface>");
+    eprintln!("socket: {} (override with {SOCKET_VAR})", socket());
+    ExitCode::FAILURE
 }
 
 fn socket() -> String {
