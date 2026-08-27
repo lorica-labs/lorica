@@ -26,7 +26,7 @@ use std::{
         Mutex,
         atomic::{AtomicU64, Ordering},
     },
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 use lorica_common::{CounterId, Deadline};
@@ -68,6 +68,12 @@ static ALLOCATOR: Counting = Counting;
 
 /// The tick period at the default ten hertz, in nanoseconds.
 const TICK_NS: u64 = 100_000_000;
+
+/// What a tick is told it cost, for the diagnostic the aggregate line carries. 1.7 ms is the
+/// mean `tick_budget.rs` measures on the lab guest over 4 096 slots; nothing here asserts on
+/// it, and a fixed value is the point — the emission has to be a function of the state and
+/// not of how long a tick happened to take.
+const TICK_COST: Duration = Duration::from_micros(1_700);
 
 /// Ticks per run: sixty seconds at ten hertz, so a per-second aggregate line gives the
 /// comparison a denominator of sixty rather than of one.
@@ -179,7 +185,12 @@ fn drive(journal: &mut Journal, load: bool) {
         if attacking && tick >= 110 {
             acted += 1;
         }
-        journal.tick(&snapshot, if attacking { &alarm } else { &quiet }, acted);
+        journal.tick(
+            &snapshot,
+            if attacking { &alarm } else { &quiet },
+            acted,
+            TICK_COST,
+        );
     }
 }
 
@@ -283,7 +294,12 @@ fn sustained_emission_allocates_nothing_after_the_first_lines() {
             if attacking && tick % 100 >= 60 {
                 acted += 1;
             }
-            journal.tick(&snapshot, if attacking { &alarm } else { &quiet }, acted);
+            journal.tick(
+                &snapshot,
+                if attacking { &alarm } else { &quiet },
+                acted,
+                TICK_COST,
+            );
         }
 
         let elapsed = started.elapsed();
@@ -333,7 +349,7 @@ fn one_incident_emits_three_lines_and_the_last_carries_duration_and_volume() {
             for slot in snapshot.counters.named_mut() {
                 *slot += 1_000;
             }
-            journal.tick(&snapshot, decision, acted);
+            journal.tick(&snapshot, decision, acted, TICK_COST);
         };
         tick(1, &quiet, 0);
         tick(2, &alarm, 0);
@@ -401,7 +417,7 @@ fn an_incident_nothing_acted_on_emits_two_lines() {
         for (seq, decision) in [(1, &quiet), (2, &alarm), (3, &alarm), (4, &quiet)] {
             snapshot.seq = seq;
             snapshot.at_ns = seq * 1_000_000;
-            journal.tick(&snapshot, decision, 0);
+            journal.tick(&snapshot, decision, 0, TICK_COST);
         }
     });
 

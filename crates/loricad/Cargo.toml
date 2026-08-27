@@ -32,6 +32,9 @@ anyhow.workspace = true
 arc-swap.workspace = true
 aya.workspace = true
 crossbeam-utils.workspace = true
+# getrusage(RUSAGE_THREAD) and sysconf(_SC_CLK_TCK) for the tick diagnostic. Already in the
+# tree through lorica-dataplane, which makes the raw batch syscall.
+libc.workspace = true
 memmap2.workspace = true
 redb.workspace = true
 # current_thread only. #[tokio::main] would spawn one worker per logical CPU and

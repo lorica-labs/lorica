@@ -353,3 +353,93 @@ fn a_reader_built_for_fewer_slots_walks_fewer_slots() {
         head.walked()
     );
 }
+
+/// The incremental sweep: `stride` reads have to see what one read sees, and each of them
+/// has to cost about a `stride`-th of it.
+///
+/// Both halves matter and neither implies the other. A window that advanced by the wrong
+/// amount would still cover the map eventually and would read some slots twice and others
+/// never — so the sums are compared against the whole-map read, slot by slot, and the
+/// element counts are compared against the map size. A stride that quietly did nothing
+/// would pass the first assertion on its own.
+///
+/// 5 does not divide 82, so the last window of a pass is short and the pass has to wrap from
+/// a partial window rather than from an exact boundary. That is where an off-by-one lives.
+#[test]
+fn a_strided_reader_covers_the_map_in_stride_reads() {
+    let mut ebpf = maps();
+    let cpus = nr_cpus().expect("cannot read the possible processor count");
+    {
+        let map = ebpf.map_mut("COUNTERS").expect("no COUNTERS map");
+        let mut counters: PerCpuArray<&mut MapData, u64> =
+            PerCpuArray::try_from(map).expect("COUNTERS is not a per-CPU array");
+        // Every slot non-zero and derived from its index, so a value read into the wrong
+        // slot is visible and a slot never read stays at zero.
+        for slot in 0..COUNTER_ENTRIES {
+            let values: Vec<u64> = (0..cpus)
+                .map(|cpu| u64::from(slot) * 1_000 + cpu as u64 + 1)
+                .collect();
+            counters
+                .set(slot, PerCpuValues::try_from(values).unwrap(), 0)
+                .expect("writing a counter slot failed");
+        }
+    }
+
+    let reference = maps::counters(&ebpf, COUNTER_ENTRIES, 16)
+        .expect("reader over the whole map")
+        .read()
+        .expect("the whole-map read failed")
+        .to_vec();
+    assert!(reference.iter().all(|&value| value != 0));
+
+    const STRIDE: u32 = 5;
+    let mut strided = maps::counters(&ebpf, COUNTER_ENTRIES, 16)
+        .expect("strided reader")
+        .with_stride(STRIDE);
+    let window = (COUNTER_ENTRIES as usize).div_ceil(STRIDE as usize);
+
+    // Two whole passes, so the wrap is exercised and not only the first pass.
+    for pass in 0..2 {
+        let mut fresh = 0usize;
+        for read in 0..STRIDE {
+            let got = strided
+                .read()
+                .unwrap_or_else(|err| panic!("pass {pass}, read {read} failed: {err}"));
+            assert_eq!(got.len(), COUNTER_ENTRIES as usize);
+            assert!(
+                strided.walked() <= window,
+                "pass {pass}, read {read} walked {} elements where a stride of {STRIDE} over \
+                 {COUNTER_ENTRIES} slots allows {window}: the whole point is the divided cost",
+                strided.walked()
+            );
+            fresh += strided.walked();
+        }
+        // A pass is a pass: `stride` reads and the map is covered, no more and no less.
+        assert_eq!(
+            fresh, COUNTER_ENTRIES as usize,
+            "pass {pass} asked the kernel for {fresh} elements over {STRIDE} reads, and the \
+             map has {COUNTER_ENTRIES} slots"
+        );
+        assert_eq!(
+            strided.read().expect("a read past the pass failed"),
+            reference.as_slice(),
+            "after pass {pass} every slot has to carry what the whole-map read found; a \
+             window that advanced wrong reads some slots twice and others never"
+        );
+    }
+}
+
+/// The reader that skips nothing is the default, and it stays the default.
+///
+/// The stride is a knob an operator sets, so the value it has when nobody sets it is part of
+/// the contract: one, meaning the whole map per read, which is what every other assertion in
+/// this file is written against.
+#[test]
+fn a_reader_covers_the_whole_map_unless_told_otherwise() {
+    let ebpf = maps();
+    let reader = maps::counters(&ebpf, COUNTER_ENTRIES, 16).expect("reader");
+    assert_eq!(reader.stride(), 1);
+    // Zero would claim no slots and finish no pass. The agent refuses it at the flag; the
+    // reader cannot be made to hold it either.
+    assert_eq!(reader.with_stride(0).stride(), 1);
+}

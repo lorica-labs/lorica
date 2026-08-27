@@ -33,11 +33,13 @@
 //! native protocol, which buys structured fields and one more dependency, and it is not here
 //! because the fields this agent needs to correlate on are two integers.
 
+pub mod health;
 pub mod incident;
 
 use std::{
     io::{self, Write},
     sync::atomic::{AtomicU64, Ordering},
+    time::Duration,
 };
 
 use anyhow::Result;
@@ -45,6 +47,7 @@ use lorica_detect::{Decision, Snapshot, snapshot::NAMED_SLOTS};
 use tracing::{Level, info};
 use tracing_subscriber::{fmt::MakeWriter, util::SubscriberInitExt};
 
+pub use health::Diagnostic;
 pub use incident::Incident;
 
 /// Nanoseconds between two aggregate lines.
@@ -182,6 +185,10 @@ impl<W: Write> Write for Counted<W> {
 /// nothing but compare two `u64`s and ask the incident whether anything changed.
 pub struct Journal {
     incident: Incident,
+    /// Which of the three suspects the tail of a tick belongs to. Sampled per tick, reported
+    /// on the aggregate line, because a line per tick is ten a second against the one this
+    /// module is asserted at.
+    health: Diagnostic,
     /// `Snapshot::at_ns` of the last aggregate line.
     emitted_at_ns: u64,
     /// `Snapshot::seq` of the last aggregate line, so the next one carries the jump.
@@ -197,6 +204,7 @@ impl Default for Journal {
     fn default() -> Self {
         Self {
             incident: Incident::default(),
+            health: Diagnostic::default(),
             emitted_at_ns: 0,
             emitted_seq: 0,
             seen: [0; NAMED_SLOTS],
@@ -212,7 +220,20 @@ impl Journal {
     /// from it. It is passed as one number rather than read from the enforcement result
     /// because a rise in it is the only thing this module needs to know: that the rung stopped
     /// being a decision and became a rule.
-    pub fn tick(&mut self, snapshot: &Snapshot, decision: &Decision, acted: u64) {
+    ///
+    /// `elapsed` is how long the tick that produced `snapshot` took. It is measured by the
+    /// caller and not here: this call happens at the end of a tick, so the only interval this
+    /// function could time on its own is the period of the timer, which is a constant.
+    pub fn tick(
+        &mut self,
+        snapshot: &Snapshot,
+        decision: &Decision,
+        acted: u64,
+        elapsed: Duration,
+    ) {
+        // Sampled on every tick, whatever the aggregate line does next: the correlation
+        // between a tail and the scheduler is per tick, and the report is per second.
+        self.health.observe(elapsed);
         self.lines += self.incident.observe(snapshot, decision, acted);
 
         if snapshot.at_ns.saturating_sub(self.emitted_at_ns) < AGGREGATE_NS {
@@ -233,6 +254,7 @@ impl Journal {
         self.seen = *named;
         self.lines += 1;
 
+        let health = self.health.take();
         info!(
             tick_seq = snapshot.seq,
             // The jump, not the count. A tick the agent did not get to run leaves a hole
@@ -248,6 +270,18 @@ impl Journal {
             lines = self.lines,
             folded = folded(),
             lost = lost(),
+            // The tick diagnostic. `tick_worst_us` against `tick_mean_us` is the tail; the
+            // four below say whose it is. Involuntary switches ⇒ CFS, and SCHED_FIFO on this
+            // thread would remove it. Steal or runqueue wait ⇒ the hypervisor, and nothing
+            // inside this guest will. Minor faults ⇒ a read buffer being reallocated, which
+            // the readers are built not to do, so anything but zero there is a defect here
+            // and not a property of the machine.
+            tick_worst_us = health.worst.as_micros(),
+            tick_mean_us = health.mean().as_micros(),
+            nivcsw = health.nivcsw,
+            minflt = health.minflt,
+            steal_us = health.steal_us,
+            runq_wait_us = health.runq_wait_us,
             "digest"
         );
 

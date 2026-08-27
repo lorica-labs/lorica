@@ -640,6 +640,7 @@ dependencies = [
  "arc-swap",
  "aya",
  "crossbeam-utils",
+ "libc",
  "lorica-common",
  "lorica-dataplane",
  "lorica-detect",

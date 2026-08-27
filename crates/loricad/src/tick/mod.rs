@@ -112,9 +112,21 @@ impl Sweep {
 
     /// Slots read per second at this cadence, which is the number the cost is linear in
     /// and therefore the only one worth comparing between configurations.
+    ///
+    /// The stride divides it for the same reason `every` does — a pass over the map now
+    /// takes `every × stride` ticks — and the two are not the same knob: `every` leaves the
+    /// worst tick where it was and skips whole ticks, the stride cuts the worst tick and
+    /// skips nothing.
     pub fn slot_reads_per_second(&self, hz: u32) -> u64 {
         let hz = u64::from(hz);
-        self.named_slots as u64 * hz + (self.slots as u64 * hz) / self.every
+        let stride = u64::from(self.full.stride());
+        self.named_slots as u64 * hz + (self.slots as u64 * hz) / (self.every * stride)
+    }
+
+    /// Reads it takes the full sweep to cover the map once, which is what the freshness of
+    /// a per-entry counter costs at this configuration.
+    pub fn stride(&self) -> u32 {
+        self.full.stride()
     }
 
     pub fn slots(&self) -> usize {

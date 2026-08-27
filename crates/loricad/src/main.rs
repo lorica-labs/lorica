@@ -57,8 +57,8 @@ static ALLOCATOR: alloc::Counting = alloc::Counting;
 const DEFAULT_SOCKET: &str = "/run/lorica/control.sock";
 
 const USAGE: &str = "usage: loricad --object PATH [--socket PATH] [--counters N] [--hz N] \
-                     [--batch N] [--sweep-every N] [--seconds N] [--metrics ADDR|off] \
-                     [--mode observe|armed] [--iface NAME]";
+                     [--batch N] [--sweep-every N] [--sweep-stride N] [--seconds N] \
+                     [--metrics ADDR|off] [--mode observe|armed] [--iface NAME]";
 
 struct Options {
     object: PathBuf,
@@ -75,6 +75,14 @@ struct Options {
     /// the cadence the exit criterion is literally written about; anything above it trades
     /// freshness of the per-entry counters for CPU, and the trade is exactly linear.
     sweep_every: u64,
+    /// Reads one full sweep is spread over. One reads the whole map in a single read, which
+    /// is what the agent did before this existed; above it, each read covers `1/N` of the
+    /// map and resumes where the last one stopped.
+    ///
+    /// It divides the worst read of a sweep where `--sweep-every` only makes them rarer, and
+    /// it is the knob for the tail: the read is preemptible between elements, so the cost of
+    /// one read is what a scheduling tail is measured against.
+    sweep_stride: u32,
     /// Seconds to run before exiting. Zero runs until signalled, which is what a real
     /// agent does; a measurement wants a bound.
     seconds: u64,
@@ -109,6 +117,7 @@ fn parse_options() -> Result<Options> {
         hz: 10,
         batch: 1_000,
         sweep_every: 1,
+        sweep_stride: 1,
         seconds: 0,
         mode: Mode::default(),
         metrics: metrics::serve::DEFAULT_ADDR.to_owned(),
@@ -124,6 +133,7 @@ fn parse_options() -> Result<Options> {
             "--hz" => options.hz = value()?.parse()?,
             "--batch" => options.batch = value()?.parse()?,
             "--sweep-every" => options.sweep_every = value()?.parse()?,
+            "--sweep-stride" => options.sweep_stride = value()?.parse()?,
             "--seconds" => options.seconds = value()?.parse()?,
             "--metrics" => options.metrics = value()?,
             "--mode" => options.mode = value()?.parse().map_err(anyhow::Error::msg)?,
@@ -136,6 +146,9 @@ fn parse_options() -> Result<Options> {
     }
     if options.hz == 0 || options.batch == 0 || options.sweep_every == 0 {
         bail!("--hz 0 never ticks, --batch 0 reads nothing, --sweep-every 0 never sweeps");
+    }
+    if options.sweep_stride == 0 {
+        bail!("--sweep-stride 0 would cover zero slots per read, so no pass would ever finish");
     }
     if options.counter_slots < CounterId::COUNT {
         bail!(
@@ -185,7 +198,8 @@ async fn serve(mut options: Options) -> Result<()> {
     )
     .context("building the named-counter reader failed")?;
     let full = reader(counters, options.counter_slots, options.batch)
-        .context("building the full-sweep reader failed")?;
+        .context("building the full-sweep reader failed")?
+        .with_stride(options.sweep_stride);
     let mut sweep = tick::Sweep::new(
         named,
         full,
@@ -277,20 +291,36 @@ async fn serve(mut options: Options) -> Result<()> {
     // afterwards is measurable by difference.
     let settled = alloc::allocations();
     eprintln!(
-        "loricad: {} counter slots, batch {}, {} Hz, full sweep every {} ticks, {} slot reads per second, socket {}, kernel clock {} Hz at jiffy {}",
+        "loricad: {} counter slots, batch {}, {} Hz, full sweep every {} ticks over {} reads, {} slot reads per second, socket {}, kernel clock {} Hz at jiffy {}",
         options.counter_slots,
         options.batch,
         options.hz,
         sweep.every(),
+        sweep.stride(),
         sweep.slot_reads_per_second(options.hz),
         options.socket.display(),
         clock.hz,
         clock.jiffies,
     );
+    // Said once, at startup, and not counted as a metric: it is a property of how the guest
+    // was booted, so it cannot change while the agent runs and nobody can act on it from a
+    // dashboard.
+    if let Some((possible, online)) = maps::batch::phantom_cpus() {
+        eprintln!(
+            "loricad: the kernel reports {possible} possible processors and {online} online,              so every per-CPU counter carries {} slots that can never be written and every              batch read copies them anyway. Booting the guest with maxcpus equal to its vCPU              count removes the copies.",
+            possible - online,
+        );
+    }
 
     loop {
         tokio::select! {
             _ = timer.tick() => {
+                // The tick timed from here to the journal call below, which is the whole of
+                // the periodic work: the sweep, the publication, the decision and whatever
+                // the decision wrote into the list. The tail this measures is what
+                // `log::health` attributes to the scheduler, the hypervisor or a faulted
+                // buffer, so it has to cover the syscalls and not only the sweep.
+                let tick_started = Instant::now();
                 sweep.run();
                 published.publish(&sweep, started.elapsed().as_nanos() as u64);
                 // Decide from the snapshot that was just published, not from the sweep: the
@@ -322,7 +352,12 @@ async fn serve(mut options: Options) -> Result<()> {
                         }
                     }
                 }
-                journal.tick(&published.read(), &decision, written + withheld);
+                journal.tick(
+                    &published.read(),
+                    &decision,
+                    written + withheld,
+                    tick_started.elapsed(),
+                );
                 if deadline.is_some_and(|at| tokio::time::Instant::now() >= at) {
                     eprintln!(
                         "loricad: {} ticks, {} full sweeps of {} slots, {} failed, \
