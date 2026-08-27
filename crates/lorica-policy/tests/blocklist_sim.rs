@@ -56,7 +56,7 @@ use lorica_common::{
         oa_index, oa_occupied, oa_psl, oa_step, oa_tag,
     },
 };
-use lorica_policy::blocklist::build;
+use lorica_policy::blocklist::{build, cuckoo_from};
 
 const USAGE: &str = "\
 blocklist_sim [--trials N] [--seed HEX] [--absent N] [--rebuild]
@@ -456,9 +456,29 @@ fn time_a_rebuild() {
     );
     println!(
         "  robin hood, through lorica_policy::blocklist::build: {} keys, worst psl {}, \
-         {:.1} ms",
+         {:.1} ms (class24 painted, table filled, exhaustive round trip included)",
         snapshot.keys,
         snapshot.worst_psl,
         elapsed.as_secs_f64() * 1e3
+    );
+
+    // The candidate's side of the same question. It pays a second hash per key and the
+    // one-signature-per-bucket check, and the plan's ceiling for a rebuild is 150 ms — so this
+    // is the number that says whether the cheaper lookup costs a more expensive publish.
+    //
+    // It reads its keys out of the finished Robin Hood table, so what it does *not* include is
+    // the prefix expansion, which both would pay identically. `cuckoo_from` says why the
+    // conversion is a conversion.
+    let started = Instant::now();
+    let table = cuckoo_from(&snapshot.oa).expect("the same key set fills a cuckoo table");
+    let elapsed = started.elapsed();
+    let filled: u64 = table
+        .iter()
+        .map(|bucket| u64::from(cuckoo_occupancy(bucket.sigs)))
+        .sum();
+    println!(
+        "  cuckoo 2x{CUCKOO_LANES}, through lorica_policy::blocklist::cuckoo_from: {filled} keys, \
+         {:.1} ms, excluding the prefix expansion both designs share",
+        elapsed.as_secs_f64() * 1e3,
     );
 }

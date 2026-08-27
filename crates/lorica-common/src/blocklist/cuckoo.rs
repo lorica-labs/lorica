@@ -137,6 +137,15 @@ impl CuckooBucket {
 /// Size of the table, and it is the size of the one it would replace.
 pub const CUCKOO_BYTES: usize = CUCKOO_BUCKETS * size_of::<CuckooBucket>();
 
+/// Symbol of the `.bss` global carrying [`CUCKOO_BUCKETS`] buckets.
+///
+/// It **replaces** [`OA_TABLE_SYMBOL`](super::OA_TABLE_SYMBOL) rather than joining it: both
+/// tables in one object would be 36 MiB of `.bss` against the 20 MiB the whole flat-table
+/// design exists for. So the two are the same 16 MiB under two names, selected by the
+/// `blocklist-cuckoo` feature of `lorica-ebpf`, and a loader patches whichever the object it
+/// holds declares.
+pub const CUCKOO_TABLE_SYMBOL: &str = "CUCKOO_TABLE";
+
 /// The second multiplier, for the alternate bucket.
 ///
 /// A different odd constant and a second finalizer rather than bits of the first hash: the

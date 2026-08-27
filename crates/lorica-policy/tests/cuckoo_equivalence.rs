@@ -29,10 +29,11 @@ use lorica_common::{
     Action,
     blocklist::{
         OA_MAX_KEYS, OA_SLOTS, OaSlot,
-        cuckoo::{CUCKOO_BUCKETS, CUCKOO_LANES, CuckooBucket, cuckoo_insert, cuckoo_lookup},
+        cuckoo::{CUCKOO_LANES, CuckooBucket, cuckoo_lookup},
         oa_insert, oa_lookup,
     },
 };
+use lorica_policy::blocklist::cuckoo_from;
 
 /// Written down so a failure is reproducible. A seed taken from the clock turns one divergence
 /// into a story nobody can re-run.
@@ -104,13 +105,11 @@ fn corpus() -> Corpus {
             .unwrap_or_else(|| panic!("the Robin Hood table refused {key:#010x} at this load"));
     }
 
-    let mut cuckoo = vec![CuckooBucket::EMPTY; CUCKOO_BUCKETS];
-    let mut walk = Rng(SEED ^ 0xdead_beef_dead_beef | 1);
-    let mut random = || walk.next();
-    for (&key, &action) in &keys {
-        cuckoo_insert(&mut cuckoo, key, action, &mut random)
-            .unwrap_or_else(|err| panic!("the cuckoo table refused {key:#010x}: {err:?}"));
-    }
+    // Filled through the same function a measurement would use, and from the finished Robin
+    // Hood table rather than from the key map: that is what makes the two structures hold the
+    // same keys with the same verdicts by construction instead of by two agreeing loops.
+    let cuckoo = cuckoo_from(&robin_hood)
+        .unwrap_or_else(|err| panic!("the cuckoo table refused this key set: {err}"));
 
     Corpus {
         keys,

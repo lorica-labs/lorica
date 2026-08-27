@@ -17,6 +17,18 @@ count-helpers = []
 # Publishes the parsed view into a map. Parsing has to be verifiable before any stage
 # exists to act on it.
 parse-probe = []
+# Selects the bucketised cuckoo table of stage 3 instead of the sixteen unrolled Robin Hood
+# probes. **The Robin Hood table is the default and stays it**: what decides the switch is
+# instructions per packet and cycles under attack traffic, and neither is a simulation.
+#
+# A feature and not a load-time global, for two reasons the other flags of this crate do not
+# have. The two tables are the same 16 MiB of `.bss` under two names — both in one object would
+# be 36 MiB against the 20 MiB budget the flat tables exist for — so they cannot coexist at run
+# time. And the probe sequences are structurally different: one is sixteen unrolled steps and
+# the other is two, so a run-time choice would put both in the program and measure neither.
+#
+# `lorica-policy::blocklist::cuckoo_from` is what fills the table for a measurement.
+blocklist-cuckoo = []
 # Selects the jump-table backend of stage 6 instead of the branch cascade. A feature and
 # not a run-time choice because eBPF has no method table to dispatch through, so there is
 # nothing to select at run time. Off until `gotox` is on a kernel floor this project can

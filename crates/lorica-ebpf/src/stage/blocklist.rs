@@ -31,18 +31,27 @@
 //! anyway — and the one loop this program tried over an attacker-chosen index was refused
 //! with `var_off=(0x0; 0xff)` after LLVM moved the mask that made it safe.
 
+use lorica_common::{Action, CLASS24_BYTES, Class24, Family, PacketView, blocklist::class24_get};
+#[cfg(feature = "blocklist-cuckoo")]
+use lorica_common::blocklist::cuckoo::{
+    CUCKOO_BUCKET_MASK, CUCKOO_LANES, CuckooBucket, cuckoo_alt, cuckoo_delta, cuckoo_hash,
+    cuckoo_home, cuckoo_lane, cuckoo_match, cuckoo_sig,
+};
+#[cfg(not(feature = "blocklist-cuckoo"))]
 use lorica_common::{
-    Action, CLASS24_BYTES, Class24, Family, OA_PROBES, OaSlot, PacketView,
+    OA_PROBES, OaSlot,
     blocklist::{
-        OA_INDEX_MASK, class24_get, oa_action, oa_fingerprint, oa_index, oa_occupied, oa_psl,
-        oa_step, oa_tag_fingerprint,
+        OA_INDEX_MASK, oa_action, oa_fingerprint, oa_index, oa_occupied, oa_psl, oa_step,
+        oa_tag_fingerprint,
     },
 };
 
-use crate::{
-    maps::{CLASS24, OA_TABLE},
-    stage::Outcome,
-};
+use crate::maps::CLASS24;
+#[cfg(feature = "blocklist-cuckoo")]
+use crate::maps::CUCKOO_TABLE;
+#[cfg(not(feature = "blocklist-cuckoo"))]
+use crate::maps::OA_TABLE;
+use crate::stage::Outcome;
 
 #[inline(never)]
 pub fn run(view: &PacketView) -> Outcome {
@@ -116,6 +125,7 @@ const fn verdict(action: Option<Action>) -> Outcome {
 // index is advanced to a slot no step reads. Restructuring either away would mean writing the
 // step body twice or replacing `oa_step` with arithmetic of this file's own, and the frozen
 // definition is worth more than two warnings.
+#[cfg(not(feature = "blocklist-cuckoo"))]
 #[expect(unused_comparisons, unused_assignments)]
 #[inline(always)]
 fn probe(key: u32) -> Option<Action> {
@@ -181,4 +191,88 @@ fn probe(key: u32) -> Option<Action> {
     probe_sequence!(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15);
 
     None
+}
+
+/// The bucketised cuckoo form of [`lorica_common::blocklist::cuckoo::cuckoo_lookup`], step for
+/// step, behind the `blocklist-cuckoo` feature.
+///
+/// **This is an experiment with an output, not a replacement.** What it exists to produce is
+/// three numbers against the sixteen-probe form above — xlated instructions, JITed bytes and
+/// instructions per packet — and the switch is decided on the third of those under attack
+/// traffic, in the lab, not here. The simulation that authorised writing it is
+/// `lorica-policy/tests/blocklist_sim.rs`: zero insertion failures over 2.1 billion insertions
+/// at the maximum load, worst displacement chain six, and an equivalence against
+/// `oa_lookup` over all 4 294 967 296 addresses.
+///
+/// **What it should cost, from counting the source rather than the object.** Two buckets
+/// against sixteen probes: one hash, one signature, two bucket indices, two cache-line loads,
+/// two `haszero` sequences, two lane decodes and at most two key comparisons. The estimate the
+/// design note carries is ~100 static instructions against 147 and ~4 branches against 48. It
+/// is an estimate: the object is what says, and nothing in this tree may quote the estimate as
+/// a measurement.
+///
+/// **Two barriers, one per bucket, and the second is the one that forced this shape.** 6.8
+/// propagates a bound through a shift and **loses it at an `XOR`** — that is exactly what
+/// happens to `oa_index`, and the alternate bucket here is `home ^ delta`, the same pattern
+/// one step worse. So each index gets its own `read_volatile` through the stack before its
+/// `AND`, which is what LLVM may not see across, so the literal mask survives into the object
+/// and the verifier reads a bound off it. Without them the expected refusal is
+/// `math between map_value pointer and register with unbounded min value is not allowed`,
+/// which is the message this program has already collected twice.
+///
+/// **The lane index needs a mask of its own, and it is structural.** A manual access through a
+/// map-value pointer has none of the bound checking `bpf_map_lookup_elem` performs, and the
+/// decode hands back a lane in `0..8` by construction — but "by construction" is exactly what
+/// the verifier will not take, so `& (CUCKOO_LANES - 1)` is written out. The lane count is a
+/// compile-time power of two, so the mask is the same kind of structural one as
+/// `OA_INDEX_MASK` and not the kind LLVM deleted from the IP-option walk.
+#[cfg(feature = "blocklist-cuckoo")]
+#[inline(always)]
+fn probe(key: u32) -> Option<Action> {
+    let table = &raw const CUCKOO_TABLE as *const CuckooBucket;
+
+    // One hash for both fields: the top eighteen bits are the bucket and the low byte is the
+    // signature, so the packet path computes `fmix32` once.
+    let hash = cuckoo_hash(key);
+    let sig = cuckoo_sig(hash);
+
+    let home = cuckoo_home(hash);
+    // SAFETY: a volatile read of a live local of this frame. See the note above for why it is
+    // not optional on the 6.8 floor.
+    let home = unsafe { core::ptr::read_volatile(&home) } & CUCKOO_BUCKET_MASK;
+    if let Some(action) = lane(table, home, key, sig) {
+        return Some(action);
+    }
+
+    let alt = cuckoo_alt(home, cuckoo_delta(key));
+    // SAFETY: as above, and this is the index derived by `XOR` — the barrier matters more here
+    // than for the first one.
+    let alt = unsafe { core::ptr::read_volatile(&alt) } & CUCKOO_BUCKET_MASK;
+    lane(table, alt, key, sig)
+}
+
+/// One bucket: one cache line, one signature search, one key comparison at most.
+///
+/// Written once and called twice rather than unrolled by hand, so the two buckets cannot drift
+/// apart — the sixteen Robin Hood steps are a macro for the same reason.
+#[cfg(feature = "blocklist-cuckoo")]
+#[inline(always)]
+fn lane(table: *const CuckooBucket, bucket: u32, key: u32, sig: u8) -> Option<Action> {
+    // SAFETY: the mask takes the index to `0 ..= CUCKOO_BUCKETS - 1`, which is the whole of the
+    // global, and `CuckooBucket` is `repr(C, align(64))` with its padding named, so bucket `i`
+    // starts at `i * 64` bytes into it.
+    let bucket = unsafe { &*table.add((bucket & CUCKOO_BUCKET_MASK) as usize) };
+
+    // Eight signatures compared in one arithmetic sequence, and the builder's
+    // one-signature-per-bucket invariant is what makes the lowest set bit the whole answer:
+    // there is nothing to iterate and therefore no loop for the verifier to unroll.
+    let lane = cuckoo_lane(cuckoo_match(bucket.sigs, sig))? & (CUCKOO_LANES - 1);
+
+    // The key is read only here, which is the whole point of a signature: 255 of 256 occupied
+    // lanes never reach this load. And the comparison is exact, so a signature collision costs
+    // a load and never a wrong verdict.
+    if bucket.keys[lane] != key {
+        return None;
+    }
+    Action::from_u8(bucket.tags[lane])
 }

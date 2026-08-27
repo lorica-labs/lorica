@@ -12,9 +12,11 @@ use aya_ebpf::{
 // Only the two instrumentation maps below are per-CPU now, and both are behind a feature.
 #[cfg(any(feature = "parse-probe", feature = "count-helpers"))]
 use aya_ebpf::maps::PerCpuArray;
-use lorica_common::{
-    Bucket, CLASS24_BYTES, CounterId, CounterLayout, LpmKey, LpmValue, OA_SLOTS, OaSlot,
-};
+use lorica_common::{Bucket, CLASS24_BYTES, CounterId, CounterLayout, LpmKey, LpmValue};
+#[cfg(feature = "blocklist-cuckoo")]
+use lorica_common::blocklist::cuckoo::{CUCKOO_BUCKETS, CuckooBucket};
+#[cfg(not(feature = "blocklist-cuckoo"))]
+use lorica_common::{OA_SLOTS, OaSlot};
 
 /// Entries of the unified list, and the per-entry counter slots that go with them.
 const DEFAULT_LIST_ENTRIES: u32 = 1024;
@@ -102,8 +104,24 @@ pub static mut CLASS24: [u8; CLASS24_BYTES] = [0; CLASS24_BYTES];
 
 /// The open-addressed table. Zeroed, and zero is *free* rather than
 /// `0.0.0.0`: [`lorica_common::blocklist::OA_TAG_OCCUPIED`] is what separates the two.
+#[cfg(not(feature = "blocklist-cuckoo"))]
 #[unsafe(no_mangle)]
 pub static mut OA_TABLE: [OaSlot; OA_SLOTS] = [OaSlot { key: 0, tag: 0 }; OA_SLOTS];
+
+/// The bucketised cuckoo table, in place of the one above.
+///
+/// **The same 16 MiB under a different name, and that is why it is `cfg` and not a second
+/// global.** Both tables in one object would be 36 MiB of `.bss` against the 20 MiB the whole
+/// flat-table design exists for, and `CUCKOO_BYTES == OA_BYTES` is asserted in
+/// `lorica_common::blocklist::cuckoo` so the budget cannot drift between the two.
+///
+/// Zeroed, and here zero is unambiguous with no occupancy bit needed: a lane's signature is
+/// forced nonzero at construction, so an all-zero bucket has eight free lanes and a query can
+/// never match one.
+#[cfg(feature = "blocklist-cuckoo")]
+#[unsafe(no_mangle)]
+pub static mut CUCKOO_TABLE: [CuckooBucket; CUCKOO_BUCKETS] =
+    [CuckooBucket::EMPTY; CUCKOO_BUCKETS];
 
 /// Where the clock probe leaves the jiffy it read.
 ///

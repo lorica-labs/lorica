@@ -58,8 +58,11 @@
 //! not a wrong one.
 
 mod class24;
+mod cuckoo;
 mod expand;
 mod robin_hood;
+
+pub use cuckoo::cuckoo_from;
 
 use std::collections::BTreeSet;
 
