@@ -587,7 +587,7 @@ $RUN_BODY" 2>&1)
             if [ -z "$bzy" ] && [ -z "$REFEREE_WHY" ]; then
                 REFEREE_WHY=$(printf '%s\n' "$out" \
                     | sed -n '/^NOISE_TURBOSTAT_ERR_BEGIN$/,/^NOISE_TURBOSTAT_ERR_END$/p' \
-                    | sed -e '1d' -e '$d' | tr '\n' ' ')
+                    | sed -e '1d' -e '$d' | tr '\n' ' ' | sed -e 's/[[:space:]]*$//')
                 [ -n "$REFEREE_WHY" ] || REFEREE_WHY="turbostat printed no row for core $CPU and said nothing about why"
             fi
         fi
