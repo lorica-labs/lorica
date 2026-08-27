@@ -159,11 +159,10 @@ esac
 remote "$TARGET_HOST" "command -v $PERF >/dev/null" \
     || die "$TARGET_HOST has no $PERF on its PATH: name the binary with LORICA_PERF, and note that a Proxmox host calls it perf_7.0"
 
-runner="cd ~/$RUN_DIR/target-tests && b=\$(ls bin/* | head -1) && ${elevate}$PERF stat -x, \
--e cycles,instructions,cache-misses -- env LORICA_EBPF_OBJ=\$PWD/ebpf/instrumented \
-LORICA_EBPF_PLAIN_OBJ=\$PWD/ebpf/plain \
-LORICA_STAGE_CUTOFF=LEVEL \$b \
-one_level_of_the_pipeline_under_a_profiler --exact --nocapture"
+# The command and the parse of what it prints live in scripts/lab/test-run-level.sh, so
+# that measure-noise.sh measures this load and not a second copy of it that drifts.
+# shellcheck source=scripts/lab/test-run-level.sh
+. scripts/lab/test-run-level.sh
 
 echo 'stages,label,ns_raw,ns_above_floor,ns_this_level,cycles,instructions,ipc,llc_misses,llc_misses_per_packet' > "$csv"
 
@@ -187,24 +186,17 @@ fi
 
 for level in ${LEVELS//,/ }; do
     printf '\n--- level %s\n' "$level"
-    out=$(remote "$TARGET_HOST" "${runner//LEVEL/$level}" 2>&1)
+    out=$(remote "$TARGET_HOST" "$(test_run_command "$RUN_DIR" "$level" "$elevate" "$PERF")" 2>&1)
 
-    record=$(printf '%s\n' "$out" | sed -n 's/^LEVEL,\([0-9]*\),\(.*\),\([0-9]*\)$/\1;\2;\3/p' | tail -1)
-    [ -n "$record" ] || { printf '%s\n' "$out" >&2; die "level $level printed no LEVEL record"; }
-    label=${record#*;}; label=${label%;*}
-    ns_raw=${record##*;}
+    test_run_fields "$out" \
+        || { printf '%s\n' "$out" >&2; die "level $level printed no LEVEL record"; }
+    label=$TR_LABEL
+    ns_raw=$TR_NS
     case $ns_raw in ''|*[!0-9]*) die "level $level reported '$ns_raw' nanoseconds" ;; esac
 
-    # perf writes its table to stderr in the -x, form: value,unit,event,...
-    field() {
-        printf '%s\n' "$out" | awk -F, -v ev="$1" '$3 == ev { print $1; exit }'
-    }
-    # A counter perf could not deliver reads `<not supported>`, which is not a number. It
-    # becomes an empty cell rather than entering an arithmetic that would report a zero.
-    numeric() { case $1 in ''|*[!0-9]*) echo "" ;; *) echo "$1" ;; esac; }
-    cycles=$(numeric "$(field cycles)")
-    instructions=$(numeric "$(field instructions)")
-    llc=$(numeric "$(field cache-misses)")
+    cycles=$TR_CYCLES
+    instructions=$TR_INSTRUCTIONS
+    llc=$TR_LLC
 
     ipc=""
     if [ -n "$cycles" ] && [ -n "$instructions" ] && [ "$cycles" -gt 0 ]; then
