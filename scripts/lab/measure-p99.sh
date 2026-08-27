@@ -22,6 +22,11 @@ SWEEP="0 100kpps 250kpps 500kpps"
 REPEAT=3
 SECONDS_PER=20
 PROBE=${LORICA_PROBE:-/tmp/latency-probe}
+# The profiler is named rather than assumed, the same way measure-stage-cost.sh names it. A
+# Proxmox host installs its perf as `perf_7.0` and ships no `perf`, and here a missing binary
+# would leave the xdp_exception count empty — which reads as "no exception" and is the one
+# answer this run must never invent.
+PERF=${LORICA_PERF:-perf}
 PORTDROP=bench/progs/xdp_portdrop.o
 NFT=bench/nftables/compare.nft
 
@@ -45,6 +50,8 @@ done
 [ -n "$CEILING" ] || { echo "measure-p99: --ceiling is required (the delivered ceiling from T4), it is not invented here" >&2; exit 2; }
 [ -r "$PORTDROP" ] || { echo "measure-p99: no $PORTDROP" >&2; exit 2; }
 [ -r "$NFT" ] || { echo "measure-p99: no $NFT" >&2; exit 2; }
+command -v "$PERF" >/dev/null \
+    || { echo "measure-p99: $PERF is not on the PATH; name it with LORICA_PERF, and note that a Proxmox host calls it perf_7.0 and has no perf" >&2; exit 2; }
 
 as_pps() {
     case $1 in
@@ -105,7 +112,7 @@ one_point() {
     # xdp_exception is system-wide; a nonzero value means a program aborted and
     # legitimate traffic may have been dropped. The run is discarded, not annotated.
     local exc_file; exc_file=$(mktemp)
-    ( sudo -n perf stat -e xdp:xdp_exception -a -- sleep "$SECONDS_PER" ) 2>"$exc_file" &
+    ( sudo -n "$PERF" stat -e xdp:xdp_exception -a -- sleep "$SECONDS_PER" ) 2>"$exc_file" &
     local perf_pid=$!
 
     ssh -o BatchMode=yes "$GEN_HOST" "

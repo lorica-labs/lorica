@@ -11,6 +11,10 @@
 set -uo pipefail
 
 IFACE=${LORICA_IFACE:-enp6s19}
+# The profiler is named rather than assumed, the same way measure-stage-cost.sh names it.
+# A Proxmox host installs its perf as `perf_7.0` and ships no `perf` at all, so a bare call
+# here reports "no PMU" on a machine whose PMU is fine — a wrong diagnosis is worse than none.
+PERF=${LORICA_PERF:-perf}
 STEAL_SECONDS=${LORICA_STEAL_SECONDS:-60}
 # Policy threshold, not a measurement: above this the guest is not getting the CPU
 # it thinks it has and every per-packet number is inflated by an unknown amount.
@@ -71,7 +75,10 @@ fi
 # --- hardware counters --------------------------------------------------------
 # 902 runs on --cpu host and is not a profiling target: it generates traffic.
 if [ "$ROLE" != gen ]; then
-    perf_out=$(perf stat -e cycles -- sleep 1 2>&1)
+    command -v "$PERF" >/dev/null \
+        || fail "$PERF is not on the PATH" \
+                "name the binary with LORICA_PERF; a Proxmox host calls it perf_7.0 and has no perf"
+    perf_out=$("$PERF" stat -e cycles -- sleep 1 2>&1)
     case $perf_out in
         *"<not supported>"*|*"not supported"*)
             fail "perf stat -e cycles is not supported" \
