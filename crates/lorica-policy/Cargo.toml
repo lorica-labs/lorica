@@ -6,6 +6,14 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 
+# A measurement is not a test: it takes parameters, prints a record and asserts almost
+# nothing. libtest has no way to pass `--trials` through, so this one owns its own main. It
+# stays a test target because that is what a plain `cargo test` builds, so the campaign
+# binary cannot rot between campaigns.
+[[test]]
+name = "blocklist_sim"
+harness = false
+
 [dependencies]
 lorica-common.workspace = true
 serde.workspace = true

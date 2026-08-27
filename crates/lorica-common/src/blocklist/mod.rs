@@ -108,13 +108,31 @@
 //! almost nothing: Robin Hood misses in 1.33 probes on average, so there is little left to
 //! save.
 //!
-//! # Why Robin Hood and not cuckoo
+//! # Why Robin Hood and not cuckoo, and where that argument turned out to be weaker than it
+//! reads
 //!
-//! Insertion cannot fail and the maximum probe length is **observable at construction**,
-//! where cuckoo can fail to place and needs a rebuild with a fresh seed. [`OA_PROBES`] is
-//! compiled into the unrolled probe sequence and the builder refuses to publish a snapshot
-//! whose measured maximum exceeds it, which turns a probabilistic property into an invariant
-//! somebody can check.
+//! Insertion cannot fail and the maximum probe length is **observable at construction**, where
+//! cuckoo can fail to place and needs a rebuild with a fresh seed. [`OA_PROBES`] is compiled
+//! into the unrolled probe sequence and the builder refuses to publish a snapshot whose measured
+//! maximum exceeds it, which turns a probabilistic property into an invariant somebody can
+//! check.
+//!
+//! **"Insertion cannot fail" is true of the algorithm and false of the algorithm under a
+//! compiled bound.** Robin Hood always places a key; it does not always place it within
+//! sixteen. A thousand simulated key sets per shape at the maximum load —
+//! `lorica-policy/tests/blocklist_sim.rs` — put `P(worst probe length >= 16)` at **0.2 %** on
+//! whole-`/24` blocks, so roughly one configuration in five hundred at full load is refused,
+//! deterministically and with no re-seed available because the hash is not keyed. The refusal is
+//! still safe — the previous snapshot stays published — but the property being compared against
+//! cuckoo is "refuses 1 in 500 with no recourse" and not "cannot fail".
+//!
+//! The candidate that has neither cliff is in [`cuckoo`]: two buckets of eight, eight-bit
+//! signatures, and **zero insertion failures over 2.1 billion insertions** across those same
+//! two thousand key sets, with a worst displacement chain of six against a bound of five
+//! hundred. Nothing routes there — the decision is a cycles campaign and not a simulation — but
+//! the simulation is what makes it a decision rather than a preference.
+
+pub mod cuckoo;
 
 use core::mem::{align_of, size_of};
 
@@ -246,10 +264,32 @@ pub const OA_MAX_KEYS: usize = OA_SLOTS / 2;
 /// snapshot that exceeds this, so the constant is an invariant the program may rely on and
 /// not an expectation it hopes holds.
 ///
-/// Sixteen against a **measured** maximum of 11 — `tests/blocklist_layout.rs` at 1 048 450
-/// keys and a load factor of 0.500, which is the worst load this format permits. The plan's
-/// simulation said 8; the number here is the one that was run. The margin is deliberate and
-/// its cost is JITed bytes, which `jited_size` measures.
+/// Sixteen against a maximum of 11 measured on one key set — `tests/blocklist_layout.rs` at
+/// 1 048 450 keys and a load factor of 0.500, which is the worst load this format permits. The
+/// plan's simulation said 8; eleven is the number that was run. The margin's cost is JITed
+/// bytes, which `jited_size` measures.
+///
+/// **Sixteen is not a bound, and this is the measurement that says so.** `lorica-policy`'s
+/// `blocklist_sim` draws a thousand key sets per shape at that same load and reports the
+/// maximum probe length of each. Neither tail ends where the single draw above suggested:
+///
+/// ```text
+/// worst probe length      8    9   10   11   12   13   14   15   16
+/// scattered /32           5  170  438  253   92   26   14    2    -
+/// whole /24 blocks        2  162  441  258   99   26    9    1    2
+/// ```
+///
+/// So `P(worst >= 12)` is 13.4 % on scattered keys and 13.7 % on the whole-`/24` blocks the
+/// builder emits when an exception forces a block fill, and **`P(worst >= 16)` is 0.2 % on the
+/// second shape**: two of a thousand key sets at full load produce a table this constant
+/// refuses. The hash is not keyed, so that refusal is deterministic per configuration and there
+/// is no re-seed for an operator to try.
+///
+/// Two things follow, and neither is "raise the constant". Reducing it is dead — 12 would
+/// refuse one configuration in seven for 34 instructions. And the claim that Robin Hood
+/// insertion *cannot* fail, which is the argument this structure was chosen on, is true of the
+/// algorithm and false of the algorithm under a compiled bound: see the discussion at the top
+/// of this module, where that argument is now qualified rather than repeated.
 pub const OA_PROBES: u32 = 16;
 
 /// One slot. Key and tag, eight bytes, no padding.
@@ -328,9 +368,8 @@ pub const OA_TAG_FINGERPRINT_MASK: u32 = 0xff;
 ///
 /// # It composes with the signature of the cuckoo design
 ///
-/// The candidate cuckoo replacement compares an eight-bit *signature* before it reads a key, and
-/// that signature is this same byte with zero forced away, because there a zero marks a free
-/// lane. If that variant ever replaces this table, the self-validating slot arrives
+/// [`cuckoo::cuckoo_sig`] is this same byte with zero forced away, because there a zero marks a
+/// free lane. If the cuckoo variant ever replaces this table, the self-validating slot arrives
 /// with it rather than being ported to it: comparing a signature before the key is what that
 /// design does for speed, and detecting a torn bucket is the same comparison.
 pub const fn oa_fingerprint(key: u32) -> u8 {
