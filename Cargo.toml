@@ -20,7 +20,9 @@ exclude = ["bench", "crates/lorica-ebpf"]
 edition = "2024"
 license = "Apache-2.0 OR MIT"
 repository = "https://github.com/lorica-labs/lorica"
-rust-version = "1.89"
+# 1.90 and not 1.89 because redb 4.2 declares it. The floor is a dependency's and not this
+# tree's: nothing here uses a 1.90 feature.
+rust-version = "1.90"
 
 [workspace.dependencies]
 lorica-common = { path = "crates/lorica-common" }
@@ -45,9 +47,18 @@ libc = "0.2.189"
 memmap2 = "0.9"
 object = "0.39.1"
 # One thread, no C dependency, 3 MiB of RSS and 17 us to open. The engine matters far less
-# than the hardening cadence — 7 us per non-durable commit against 1448 with an fsync — so
-# the cheap embedded one wins by default.
-redb = "2.6"
+# than the hardening cadence — two orders of magnitude between a non-durable commit and one
+# with an fsync — so the cheap embedded one wins by default.
+#
+# 4.x and not 2.6, and the reason is a cost structure and not a version number. Under 2.6 the
+# cheap commit got more expensive the longer hardening was deferred, because every
+# `Durability::None` commit pinned a parent state redb had to keep and only a durable commit
+# cleared them: measured 23.0 us at a cadence of 2, 37.6 at 100, 79 with no hardening at all.
+# 3.0.0 fixed a "None commits linearly slower" regression and added a garbage collector for
+# non-durable transactions; 4.2.0 (2026-08-17) claims `Durability::None` commits about twice
+# as fast and space reclamation even with savepoints alive. `crates/loricad/tests/store.rs`
+# is what re-measures it, and the cadence below the ceiling it asserts is the decision.
+redb = "4.2"
 serde = { version = "1.0.229", features = ["derive"] }
 thiserror = "2.0.20"
 tokio = { version = "1.53.1", default-features = false }

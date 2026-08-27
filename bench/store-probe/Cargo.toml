@@ -9,7 +9,7 @@ publish = false
 [dependencies]
 clap = { version = "4", features = ["derive"] }
 libc = "0.2"
-redb = "2"
+redb = "4"
 
 # Used through their C API rather than as #[global_allocator]: the probe measures
 # each allocator in a child process of its own, and a global allocator is a

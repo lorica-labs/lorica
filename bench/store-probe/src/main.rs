@@ -204,11 +204,13 @@ fn growth(a: &GrowthArgs) -> Result<(), Box<dyn Error>> {
 
         let durable = tick_start >= next_durable;
         let mut txn = db.begin_write()?;
+        // Fallible since redb 4, and only for a durability reduced inside a transaction
+        // that touched a persistent savepoint. This probe creates none.
         txn.set_durability(if durable {
             Durability::Immediate
         } else {
             Durability::None
-        });
+        })?;
         {
             let mut table = txn.open_table(TABLE)?;
             for _ in 0..a.entries_per_tick {
@@ -296,7 +298,7 @@ fn compact(db: &mut Database, path: &Path, st: &mut GrowthState) -> Result<(), B
     // commit is therefore a precondition of compaction, not an option — which
     // also makes the cadence realistic: compaction follows hardening.
     let mut txn = db.begin_write()?;
-    txn.set_durability(Durability::Immediate);
+    txn.set_durability(Durability::Immediate)?;
     txn.commit()?;
 
     let before = file_len(path);
