@@ -142,7 +142,24 @@ remote "$TARGET_HOST" "bash ~/$RUN_DIR/target-tests/target-run.sh --nocapture" 2
     | tee "$sweep"
 [ "${PIPESTATUS[0]}" -eq 0 ] || die "the sweep on $TARGET_HOST failed, see $sweep"
 
-runner="cd ~/$RUN_DIR/target-tests && b=\$(ls bin/* | head -1) && sudo -n perf stat -x, \
+# The profiler is named rather than assumed, the way kernel-matrix.sh already names it, and
+# sudo is asked for only when it is needed. Proxmox ships its perf as `perf_7.0` and no `perf`
+# at all, and a host that runs this as root holds the capabilities without having sudo
+# installed. Both were true of the first machine outside the lab VMs this was pointed at, and
+# it refused on each in turn while wanting nothing it did not already have.
+PERF=${LORICA_PERF:-perf}
+# The uid that matters is the one on the target, not the one running this script. Asking the
+# local shell would answer about the wrong machine and quietly drop the sudo the lab VMs need.
+remote_uid=$(remote "$TARGET_HOST" "id -u" | tr -dc "[:digit:]")
+case $remote_uid in
+    '') die "could not read the uid on $TARGET_HOST" ;;
+    0) elevate="" ;;
+    *) elevate="sudo -n " ;;
+esac
+remote "$TARGET_HOST" "command -v $PERF >/dev/null" \
+    || die "$TARGET_HOST has no $PERF on its PATH: name the binary with LORICA_PERF, and note that a Proxmox host calls it perf_7.0"
+
+runner="cd ~/$RUN_DIR/target-tests && b=\$(ls bin/* | head -1) && ${elevate}$PERF stat -x, \
 -e cycles,instructions,cache-misses -- env LORICA_EBPF_OBJ=\$PWD/ebpf/instrumented \
 LORICA_EBPF_PLAIN_OBJ=\$PWD/ebpf/plain \
 LORICA_STAGE_CUTOFF=LEVEL \$b \

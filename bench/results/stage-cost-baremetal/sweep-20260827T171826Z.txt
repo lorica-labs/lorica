@@ -1,0 +1,25 @@
+
+--- stage_cost-49ef951171a216bd on 7.0.2-6-pve
+
+running 2 tests
+LEVELS,9
+floor subtracted: 15 ns, repeat = 1000000, 7 interleaved passes
+LORICA_STAGE_CUTOFF unset, nothing to profile
+test one_level_of_the_pipeline_under_a_profiler ... ok
+cumulative through    median ns  above floor   this level     spread
+entry                     14 ns         0 ns         0 ns       0 ns
+parse                     42 ns        27 ns        27 ns       7 ns
+clock read                49 ns        34 ns         7 ns       3 ns
+stage 2 ICMP              50 ns        35 ns         1 ns       0 ns
+stage 3 source list       70 ns        55 ns        20 ns       0 ns
+stage 4 fragments         72 ns        57 ns         2 ns       1 ns
+stage 5 uRPF              76 ns        61 ns         4 ns       2 ns
+stage 6 signatures        94 ns        79 ns        18 ns       8 ns
+stage 7 buckets          124 ns       109 ns        30 ns       4 ns
+
+plain object              97 ns above the floor, spread 5 ns over 7 passes
+cutoff compares cost      12 ns
+test each_stage_of_the_pipeline_costs_what_it_costs ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 29.69s
+
