@@ -82,16 +82,16 @@ with a bound, and the agent prints a summary line of its own when the bound is r
 sudo ./lorica-ctl status
 ```
 
-The answer is JSON on stdout: the kernel release, whether the program is attached, the tick
-period, the kernel clock rate and current jiffy, the counter slots, the tick and sweep
-counters, the agent's RSS, and one row per detected kernel capability with the reference
-path taken when it is absent.
+The answer is JSON on stdout: the kernel release, whether the program is attached and to
+which interface, the tick period, the kernel clock rate and current jiffy, the counter
+slots, the tick and sweep counters, the agent's RSS, and one row per detected kernel
+capability with the reference path taken when it is absent.
 
 Two things to look at:
 
 - **`ticks` grows between two calls.** That is the whole liveness check. A `jiffies` of `0`
   means the clock probe stopped answering, which no running agent does.
-- **`attached`.** See *What it does not do yet* below.
+- **`attached` and `interface`.** See *Putting it in the packet path* below.
 
 `lorica-ctl` must run as the user the agent runs as. The agent needs `CAP_BPF`, so it runs
 privileged and its socket belongs to root; a `lorica-ctl` run unprivileged reports a
@@ -145,11 +145,40 @@ different prefix takes the previous one back out, and a descent withdraws what i
 refused instead of waiting for the entry's deadline. The mode is also the first question
 any false-positive report has to answer — see `SECURITY.md`.
 
-## What it does not do yet
+## Putting it in the packet path
 
-The agent loads the program, verifies it, calibrates the clock and reads the maps. It does
-**not** attach the program to an interface: `"attached": false` in `lorica-ctl status` is
-the current, correct answer, and it means no packet of yours has been through the
-dataplane. Detached-by-default is a measured design decision, not an oversight, and
-`docs/limits.md` is where the shape of it — and everything else this will not do for you —
-is written down.
+Without `--iface` the agent loads the program, verifies it, calibrates the clock and reads
+the maps, and no packet of yours goes through the dataplane: `"attached": false` is the
+correct answer and it is still the default.
+
+```sh
+sudo ./loricad --object ./lorica-ebpf --iface eth0
+```
+
+With it, every received packet goes through the program and the price is paid whether or not
+anything is attacking: **58 % off the receive throughput and 57 % onto the application's
+p99**, measured on virtio. It is not an offload that can be turned back on — that hypothesis
+was tested and refuted — it is that XDP runs before GRO, so the coalescing that used to hand
+the stack one large segment per burst has nothing left to coalesce. `docs/limits.md` has the
+table.
+
+The attach is native or nothing. A driver without native XDP support is refused rather than
+downgraded to generic mode, and an interface whose hook is already held by something else —
+Cilium, a hosting provider's protection, another eBPF tool — is refused with the occupant
+named, because the hook takes one program per interface and replacing it would silently stop
+whatever it was doing. Either refusal stops the startup: an agent that runs believing it
+protects an interface and does not is worse than an agent that did not start.
+
+Attaching does not arm. `observe` is still the default mode, and an attached agent in
+observe mode moves its counters and writes nothing into the unified list.
+
+The same thing can be done to a running agent, and undone:
+
+```sh
+sudo ./lorica-ctl attach eth0
+sudo ./lorica-ctl detach
+```
+
+`lorica-ctl status` reports `attached` and the `interface` it names. The agent detaches on
+`SIGTERM` and on `Ctrl-C`; `docs/limits.md` is where everything this will not do for you is
+written down.

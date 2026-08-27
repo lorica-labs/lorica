@@ -34,7 +34,7 @@ use lorica_detect::snapshot::NAMED_SLOTS;
 use lorica_policy::Mode;
 
 use super::{Snapshot, quote};
-use crate::enforce::withdraw;
+use crate::{attach::Attachment, enforce::withdraw};
 
 /// The unified list, by the name `lorica-ebpf` declares it under.
 const LIST: &str = "UNIFIED_LIST";
@@ -67,8 +67,13 @@ pub struct Control<'a> {
     pub withheld: u64,
     pub stages: &'a [u64; NAMED_SLOTS],
     pub tiers: &'a Tiers,
-    /// The loaded program, for the one thing a borrowed descriptor cannot do: name a map.
-    pub ebpf: &'a Ebpf,
+    /// The interface the program is on, if it is on one. Borrowed like `mode`, for the same
+    /// reason: a copy would be a second answer to whether this agent is in the packet path,
+    /// and the two would be read by different code.
+    pub attached: &'a mut Option<Attachment>,
+    /// The loaded program: for the one thing a borrowed descriptor cannot do, name a map,
+    /// and for the one thing a shared borrow cannot do, attach.
+    pub ebpf: &'a mut Ebpf,
 }
 
 /// One move of the ladder, as the tick saw it.
@@ -230,7 +235,7 @@ pub(super) fn tiers_json(control: &Control<'_>) -> String {
 /// that never expire. Leaving those out would make the answer look correct and make the
 /// assertion in `tests/control.rs` unfailable, which are the same mistake.
 pub(super) fn rules_json(snapshot: &Snapshot, control: &Control<'_>) -> String {
-    let Some(map) = control.ebpf.map(LIST) else {
+    let Some(map) = (*control.ebpf).map(LIST) else {
         return error(&format!("no {LIST} map in the loaded object"));
     };
     let list: LpmTrie<&MapData, [u8; 16], PodValue> = match LpmTrie::try_from(map) {
@@ -313,7 +318,7 @@ pub(super) fn disarm(control: &mut Control<'_>) -> String {
             quote(word(Mode::Observe))
         );
     };
-    let Some(list) = lorica_dataplane::maps::fd(control.ebpf, LIST) else {
+    let Some(list) = lorica_dataplane::maps::fd(&*control.ebpf, LIST) else {
         // The mode is already back, which is the half that matters; the key stays recorded
         // so the descent can still take it out.
         *control.standing = Some(key);
@@ -338,6 +343,65 @@ pub(super) fn disarm(control: &mut Control<'_>) -> String {
         quote(word(Mode::Observe)),
         quote(&prefix(key.addr, key.prefix_len))
     )
+}
+
+/// Puts the program on an interface, and leaves it there.
+///
+/// The note in the answer is the attach tax, and it is in the answer rather than only in the
+/// documentation because this command is the one place an operator can turn it on without
+/// having read anything: `--iface` is typed next to a usage line, `attach` is typed into a
+/// running agent. See [`crate::attach`] for where the two numbers come from.
+///
+/// Refusing a second attach rather than moving the program is the same argument
+/// [`AttachError::Occupied`](lorica_dataplane::loader::AttachError) makes about somebody
+/// else's program: a move that succeeds leaves the first interface unprotected without
+/// anyone asking for that, and it would be reported as a success.
+pub(super) fn attach(control: &mut Control<'_>, iface: &str) -> String {
+    if iface.is_empty() {
+        return error("attach needs an interface name: `attach <iface>`");
+    }
+    if let Some(held) = control.attached.as_ref() {
+        return error(&format!(
+            "already attached to {}; this agent holds one program and the XDP hook takes one \
+             program per interface, so detach first",
+            held.iface()
+        ));
+    }
+    match crate::attach::attach(control.ebpf, iface) {
+        Ok(held) => {
+            let answer = format!(
+                "{{\"attached\": true, \"interface\": {}, \"note\": {}}}\n",
+                quote(held.iface()),
+                quote(
+                    "every received packet goes through the program from now on: 58 % off the \
+                     receive throughput and 57 % onto the application p99, measured on virtio, \
+                     whether or not anything is attacking"
+                )
+            );
+            *control.attached = Some(held);
+            answer
+        }
+        Err(why) => error(&why),
+    }
+}
+
+/// Takes the program back off the interface.
+///
+/// The interface is named in the answer, and it is read out of the [`Attachment`] before the
+/// detach consumes it — an operator who detaches has to be told what stopped being filtered,
+/// and after the call there is nothing left to ask.
+pub(super) fn detach(control: &mut Control<'_>) -> String {
+    let Some(held) = control.attached.take() else {
+        return error("not attached to anything, so there is nothing to detach");
+    };
+    let iface = held.iface().to_owned();
+    match crate::attach::detach(control.ebpf, held) {
+        Ok(()) => format!(
+            "{{\"attached\": false, \"interface\": {}}}\n",
+            quote(&iface)
+        ),
+        Err(why) => error(&why),
+    }
 }
 
 /// There is nothing to re-read yet, and saying so is the whole command.
