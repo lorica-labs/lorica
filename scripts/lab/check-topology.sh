@@ -103,9 +103,17 @@ summarise() {
 
 # The CPUs of $1 that also appear in $2, space separated, empty when they are disjoint.
 intersect() {
+    # Membership through awk rather than `comm`, and the reason is a real failure this script
+    # produced on its first run against the hypervisor: `comm` compares byte by byte and wants
+    # its input sorted the same way, while `sort -n` orders 2 before 10 and the collating order
+    # puts "10" before "2". `comm` then printed `input is not in sorted order` on stderr, kept
+    # going, and returned a result nobody could trust -- under which the emptiness of the twelve
+    # sibling CPUs came back "ok" from a comparison the tool had just disowned. awk holds one
+    # side in a hash and asks about the other, so no ordering is assumed anywhere.
     expand_list "$1" | sort -n -u > "$TMP/a"
-    expand_list "$2" | sort -n -u > "$TMP/b"
-    comm -12 "$TMP/a" "$TMP/b" | tr '\n' ' ' | sed 's/ *$//'
+    expand_list "$2" | sort -n -u \
+        | awk 'NR == FNR { seen[$1]; next } $1 in seen' "$TMP/a" - \
+        | tr '\n' ' ' | sed 's/ *$//'
 }
 
 TMP=$(mktemp -d) || { echo "cannot create a temporary directory" >&2; exit 2; }
