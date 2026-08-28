@@ -83,7 +83,24 @@ use support::run::{load_raw_vectors, plain_object_path, xdp_program};
 /// [`OA_PROBES`](lorica_common::blocklist::OA_PROBES). Cutting the constant to 12 would buy
 /// back roughly a quarter of the probe code and leave one probe of margin, which trades JITed
 /// bytes — a ceiling that can be re-argued with a number — against refusing an operator's
-/// legitimate blocklist. That is the wrong direction to economise in.
+/// legitimate blocklist. That is the wrong direction to economise in. A thousand simulated key
+/// sets have since put `P(worst >= 12)` at 13.4 % and closed that question for good.
+///
+/// **What has landed under the standing ceiling since, measured on 6.8.0-138 and not raising
+/// it.** Four objects, one loader, one afternoon:
+///
+/// ```text
+///                                        JITed   xlated
+/// before the mappable counter map         9 502   16 184
+/// + BPF_F_MMAPABLE and the CPU stripe     9 554   16 288    +52   +104
+/// + the self-validating slot              9 995   17 056   +441   +768
+/// the cuckoo variant, in place of both    8 387   14 536  -1 608  -2 520
+/// ```
+///
+/// So the two additions cost 493 bytes together and the ceiling absorbs them with 496 to
+/// spare, which is close enough that the next addition is a line somebody argues rather than
+/// one that lands. And the cuckoo variant is 1 608 bytes *under* the object that ships — the
+/// first hard evidence for a switch this tree has not decided.
 const JITED_CEILING: u32 = 10_491;
 
 #[test]

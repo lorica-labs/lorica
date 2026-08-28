@@ -324,12 +324,13 @@ async fn serve(mut options: Options) -> Result<()> {
         clock.hz,
         clock.jiffies,
     );
-    // The fallback, named with the reason the kernel gave. It is a tenfold difference in the
-    // cost of the sweep, so an agent that quietly took the slow path would be an agent whose
-    // CPU figure nobody can explain.
+    // The fallback, named with the reason the kernel gave. Measured on the target it is a
+    // factor of 52 to 78 in the cost of a sweep — and worse than the per-CPU map this replaced,
+    // because a slot is now four elements of the walk instead of one. An agent that quietly
+    // took it would be an agent whose CPU figure nobody can explain.
     if let Some(err) = unmapped {
         eprintln!(
-            "loricad: the counter array could not be mapped, so the sweep is reading it through              BPF_MAP_LOOKUP_BATCH at about a hundred times the cost: {err}"
+            "loricad: the counter array could not be mapped, so the sweep is reading it through              BPF_MAP_LOOKUP_BATCH at 666 ns a slot against 4.2 mapped: {err}"
         );
     }
     // Said once, at startup, and not counted as a metric: it is a property of how the guest

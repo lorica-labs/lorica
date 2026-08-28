@@ -96,7 +96,8 @@ pub enum Counters<'fd> {
         ///
         /// Kept here rather than returned beside the reader because it is a property of the
         /// reader that every caller would otherwise have to thread through: the difference
-        /// between the two paths is about a hundredfold in what a sweep costs, so an agent has
+        /// between the two paths is a factor of 52 to 78 in what a sweep costs, measured, so an
+        /// agent has
         /// to be able to say which one it got and why, at any point and not only at
         /// construction.
         unmapped: Option<io::Error>,

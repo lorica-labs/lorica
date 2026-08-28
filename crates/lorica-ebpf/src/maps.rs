@@ -25,13 +25,13 @@ const DEFAULT_LIST_ENTRIES: u32 = 1024;
 /// per processor, laid end to end in one flat array.
 ///
 /// **Why not `PerCpuArray`, which is what this was.** Reading the counters cost the agent
-/// 13 % of a core at the worst configuration, and every nanosecond of it was
-/// `BPF_MAP_LOOKUP_BATCH`: ~130 ns fixed plus ~34 ns per possible processor per element, two
-/// `copy_to_user` calls and a `cond_resched()` for each one. The way out is not a faster
-/// syscall, it is no syscall: `BPF_F_MMAPABLE` lets the agent map the map and read the slots
-/// as memory. **The kernel refuses that flag on a per-CPU map** — `map_create` checks it
-/// against `BPF_MAP_TYPE_ARRAY` only — so the conversion to a flat array is the precondition
-/// and not a detail of the design.
+/// 10.8 % of a core at the worst configuration — 50 000 slots at ten hertz, measured on
+/// carapace-target — and every nanosecond of it was `BPF_MAP_LOOKUP_BATCH`: two `copy_to_user`
+/// calls and a `cond_resched()` per element. The way out is not a faster syscall, it is no
+/// syscall: `BPF_F_MMAPABLE` lets the agent map the map and read the slots as memory, and the
+/// same read then costs **0.21 % of a core**, a factor of 52. **The kernel refuses that flag on
+/// a per-CPU map** — `map_create` checks it against `BPF_MAP_TYPE_ARRAY` only — so the
+/// conversion to a flat array is the precondition and not a detail of the design.
 ///
 /// **What the striping preserves.** `index = cpu * COUNTER_STRIPE + slot`, so each processor
 /// owns a contiguous region nothing else writes, and the increment below stays a plain
@@ -41,10 +41,14 @@ const DEFAULT_LIST_ENTRIES: u32 = 1024;
 /// would put every processor's counters for one slot in one line and make each bump
 /// invalidate it everywhere.
 ///
-/// **What it costs on the packet path**: one `bpf_get_smp_processor_id`, which the verifier
-/// does not inline before 6.10, plus a multiply and an add. The static call budget in
-/// `lorica-dataplane/tests/helper_budget.rs` had one slot of headroom and this is what
-/// spends it.
+/// **What it costs on the packet path, measured**: one `bpf_get_smp_processor_id`, which the
+/// verifier does not inline before 6.10, plus a multiply and an add. On the shipped object that
+/// is **+52 JITed bytes and +13 xlated instructions** statically, and **+37.4 instructions per
+/// packet** on the steady-state path — `measure-stage-cost.sh` on carapace-target reads 1 443.4
+/// before and 1 480.8 after, against a reproducibility of 0.06 %. Per packet is larger than
+/// static because `perf` counts the helper's own body in the kernel, which a static count
+/// cannot see. The static call budget in `lorica-dataplane/tests/helper_budget.rs` had one slot
+/// of headroom and this is what spends it: six present against six allowed.
 ///
 /// The flag goes through `with_max_entries`, whose `flags` argument reaches
 /// `bpf_map_def` → `MapData::create` → `bpf_create_map` unchanged — the same path that

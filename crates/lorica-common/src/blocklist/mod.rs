@@ -18,10 +18,11 @@
 //!
 //! **The lever is that these are `.bss` globals and not maps.** A global is reached by one
 //! `LDX` — no `bpf_map_lookup_elem`, not even the eight instructions of
-//! `array_map_gen_lookup`. Measured on the shipped object: the stage adds zero helper calls,
-//! and `helper_budget` still reads five static calls against a ceiling of six with
-//! `KFUNC_BUDGET == 0`. The "three map lookups per packet" budget stops being the binding
-//! constraint for this stage.
+//! `array_map_gen_lookup`. Measured on the shipped object: the stage adds zero helper calls.
+//! `helper_budget` reads **six** static calls against a ceiling of six with
+//! `KFUNC_BUDGET == 0` — it read five until the counter map became mappable and the bump had to
+//! ask which processor it was on. The "three map lookups per packet" budget stops being the
+//! binding constraint for this stage either way.
 //!
 //! **`aya` does not create `.bss` maps `BPF_F_MMAPABLE`, and the reload works anyway.** This
 //! module used to claim it did, on the strength of the design note this came from; `aya-obj`
@@ -357,14 +358,19 @@ pub const OA_TAG_FINGERPRINT_MASK: u32 = 0xff;
 /// So neither the builder nor the packet path computes anything new — the querier holds the
 /// fingerprint of the key it is looking for before the first probe.
 ///
-/// What is not free is the comparison. The tag was already loaded and two of its fields were
-/// already tested, but a third test is a third test: one compare and one branch per unrolled
-/// step. It is cheaper than it looks on the *executed* path, because a fingerprint that does
-/// not match makes the key comparison unnecessary and 255 of 256 occupied slots on a probe run
-/// therefore stop before the key is read at all — but the *static* count goes up, and
-/// `lorica-dataplane/tests/jited_size.rs` is what says by how much. The design note this came
-/// from estimated zero; that was optimistic, and the correction belongs here rather than in a
-/// document nobody compiles.
+/// What is not free is the comparison, and here is what it measured. The tag was already loaded
+/// and two of its fields were already tested, but a third test is a third test — and on
+/// 6.8.0-138 the shipped object went from **9 554 to 9 995 JITed bytes and from 16 288 to
+/// 17 056 xlated**, so **+441 bytes and +96 instructions**, six per unrolled step. The design
+/// note this came from estimated *zero*; the first correction in this tree said "one compare
+/// and one branch per step"; the object says six. Both estimates were low, and this is the
+/// number.
+///
+/// **Per packet it is nothing at all for the addresses that do not reach here.** Ninety-four
+/// per cent of legitimate sources leave at [`Class24::None`] in one access and never enter the
+/// probe, and `measure-stage-cost.sh` sees no part of these 96 instructions on the steady-state
+/// path. What partly pays for them where they *do* run is that the fingerprint gates the key
+/// comparison: 255 of 256 occupied slots on a probe run stop before the key is read at all.
 ///
 /// # It composes with the signature of the cuckoo design
 ///

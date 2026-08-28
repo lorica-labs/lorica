@@ -17,13 +17,17 @@
 //! bits of a 32-bit address and a slot key is a `u32`, so an IPv6 source falls through to the
 //! trie, which is now most of what the trie is for.
 //!
-//! **What the unrolling costs, measured on the object that ships.** 9 537 JITed bytes with the
-//! whole signature catalogue armed and the trie kept, 8 995 with the trie dropped, against
-//! 7 572 recorded for the program before this stage and a ceiling of 8 330 in
-//! `tests/jited_size.rs`. So sixteen unrolled steps put the largest reachable program over
-//! that ceiling by 1 207 bytes and the common configuration over it by 665. The ceiling is
-//! left standing red on purpose: it is a line somebody decides in a diff, not one this stage
-//! raises for itself.
+//! **What the unrolling costs, measured on the object that ships.** On 6.8.0-138, whole
+//! signature catalogue armed and the trie kept: **9 995 JITed bytes and 17 056 xlated**, under
+//! the 10 491 ceiling `tests/jited_size.rs` carries. It was 9 537 before the counter map became
+//! mappable and before the slot fingerprint; those two added 52 and 441 bytes respectively, and
+//! each says so where it is made.
+//!
+//! **The cuckoo variant below measures 8 387 JITed and 14 536 xlated on the same kernel** —
+//! 1 608 bytes and 315 instructions less than the sixteen probes, and it loads on the 6.8
+//! verifier, which was the open question. That is two of the three numbers the switch needs;
+//! the third is cycles per packet on traffic that actually reaches the table, and it is not
+//! here.
 //!
 //! **The probe sequence is written out and never looped.** Sixteen steps, one per
 //! [`OA_PROBES`], because a loop bounded by anything the verifier reads as a variable
@@ -204,12 +208,18 @@ fn probe(key: u32) -> Option<Action> {
 /// at the maximum load, worst displacement chain six, and an equivalence against
 /// `oa_lookup` over all 4 294 967 296 addresses.
 ///
-/// **What it should cost, from counting the source rather than the object.** Two buckets
-/// against sixteen probes: one hash, one signature, two bucket indices, two cache-line loads,
-/// two `haszero` sequences, two lane decodes and at most two key comparisons. The estimate the
-/// design note carries is ~100 static instructions against 147 and ~4 branches against 48. It
-/// is an estimate: the object is what says, and nothing in this tree may quote the estimate as
-/// a measurement.
+/// **What it costs, measured on the object rather than counted in the source.** On 6.8.0-138:
+/// **8 387 JITed bytes and 14 536 xlated against 9 995 and 17 056** for the sixteen probes —
+/// 1 608 bytes and **315 instructions** less over the whole program, 16.1 % and 14.8 %. The
+/// design note estimated the *probe alone* at ~100 instructions against 147; the whole-program
+/// delta is larger because replacing the sequence also removes the Robin Hood tail — the probe
+/// length decode, the early exit, the index stepping — and the slot fingerprint's sixteen
+/// comparisons with it.
+///
+/// **And it loads.** That was the open question: the alternate bucket is derived by `XOR`, the
+/// pattern the 6.8 verifier loses a bound on, and the two barriers below are what keep it. The
+/// third number the switch needs — cycles per packet on traffic that reaches the table — is
+/// not measured, because the fixtures that reach it are a campaign and not a test.
 ///
 /// **Two barriers, one per bucket, and the second is the one that forced this shape.** 6.8
 /// propagates a bound through a shift and **loses it at an `XOR`** — that is exactly what

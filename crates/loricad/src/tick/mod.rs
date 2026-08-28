@@ -4,14 +4,23 @@
 //! this one sweep rather than a timer of its own. A timer per flow, or per bucket, is how
 //! an agent that promised to be invisible ends up waking a core sixty times a second.
 //!
-//! **Why two cadences.** Reading a per-CPU counter slot costs about 264 ns on the target,
-//! measured, and the cost is exactly linear in slots read per second: the kernel copies
-//! `8 × possible_cpus` bytes per element across the syscall boundary with two
-//! `copy_to_user` calls, so batching saves the syscall entry and nothing else. Fifty
-//! thousand slots at ten hertz is half a million slot-reads a second, which is 13 % of a
-//! core — no batch size changes that.
+//! **Why two cadences, and what stopped being true.** Reading a counter slot through
+//! `BPF_MAP_LOOKUP_BATCH` cost 215 ns on the target (`measure_batch` on carapace-target,
+//! 6.8.0-138, four possible processors, 50 000 slots), and the cost was exactly linear in
+//! slots read per second: the kernel copies `8 × possible_cpus` bytes per element across the
+//! syscall boundary with two `copy_to_user` calls, so batching saved the syscall entry and
+//! nothing else. Fifty thousand slots at ten hertz was **10.8 % of a core** and no batch size
+//! changed it.
 //!
-//! The way out is not a faster read, it is reading what is actually needed. The named
+//! Since the counter array became mappable, the same read is **4.16 ns a slot and 0.21 % of a
+//! core** — a factor of 52, measured before and after on the same machine in the same run.
+//! The whole tick over 4 096 slots went from a mean of 864 µs to **14.5 µs**
+//! (`tick_budget.rs`, optimised, same machine). The two cadences below therefore no longer
+//! buy what they were built to buy, and they stay for what they still buy: `every` bounds
+//! the freshness an operator asks for, and the stride bounds the worst read of the fallback
+//! path, which is the one that got *more* expensive — see [`Counters`].
+//!
+//! The way out was not a faster read, it was reading what is actually needed. The named
 //! counters are the control signal and [`CounterId::ALL`](lorica_common::CounterId::ALL)
 //! says how many — thirty-four today, and read from there rather than written down here for
 //! the reason the next paragraph is about; the slots above them
@@ -130,8 +139,9 @@ impl Sweep {
     }
 
     /// Whether the sweep is reading the counter array as memory rather than through
-    /// `BPF_MAP_LOOKUP_BATCH`. It is a hundredfold difference in what a sweep costs, so it is
-    /// on the startup line: an agent whose CPU figure surprises somebody starts here.
+    /// `BPF_MAP_LOOKUP_BATCH`. Measured on the target, it is a factor of 52 at 50 000 slots and
+    /// 78 at 4 096, so it is on the startup line: an agent whose CPU figure surprises somebody
+    /// starts here.
     pub const fn is_mapped(&self) -> bool {
         self.full.is_mapped()
     }

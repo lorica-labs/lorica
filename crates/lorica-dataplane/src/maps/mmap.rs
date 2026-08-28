@@ -1,11 +1,28 @@
 //! The counter map read as memory, with no syscall on the path at all.
 //!
-//! **This is the whole point of the flat layout.** Reading fifty thousand counter slots ten
-//! times a second through `BPF_MAP_LOOKUP_BATCH` cost about 13 % of a core: ~130 ns fixed plus
-//! ~34 ns per possible processor per element, two `copy_to_user` calls and a `cond_resched()`
-//! for every one of them. None of that is a syscall that can be made faster — it is the syscall
-//! itself. `BPF_F_MMAPABLE` (kernel 5.5, commit `fc9702273e2e`) lets the array's pages be
-//! mapped into the reading process, so the same numbers become loads.
+//! **This is the whole point of the flat layout, and here is what it bought.** Measured on
+//! carapace-target, 6.8.0-138, four possible processors, `measure_batch` at `opt-level=3`,
+//! twenty reads averaged after a warm-up:
+//!
+//! ```text
+//! slots     per-CPU + LOOKUP_BATCH      flat + mmap        factor
+//!  4 096    1.005 ms  (245.4 ns/slot)   12.95 µs (3.16)      78
+//! 50 000   10.774 ms  (215.5 ns/slot)   207.9 µs (4.16)      52
+//! ```
+//!
+//! At ten hertz that is **10.8 % of a core against 0.21 %** at the worst configuration. None of
+//! what it removes is a syscall that could have been made faster — it *is* the syscall: two
+//! `copy_to_user` calls and a `cond_resched()` per element. `BPF_F_MMAPABLE` (kernel 5.5,
+//! commit `fc9702273e2e`) lets the array's pages be mapped into the reading process, so the
+//! same numbers become loads.
+//!
+//! The 3.16 against 4.16 ns a slot is cache and not noise: 4 096 slots over four stripes is
+//! 128 KiB and stays in L2, 50 000 is 1.6 MB and does not.
+//!
+//! **The fallback got worse, and that is the price of this.** The same walk over the flat array
+//! measures 665 ns a slot, against 215 to 245 for the per-CPU map it replaced, because a slot
+//! is now four elements instead of one. So `BPF_MAP_LOOKUP_BATCH` is not a path anybody should
+//! land on: [`super::Counters`] says at startup when it did, and why.
 //!
 //! **What the kernel requires**, and it is short: `MAP_SHARED`, the length rounded up to a
 //! page, no `bpf_spin_lock` inside the value, and no writable mapping of a frozen map. Only

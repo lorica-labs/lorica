@@ -29,7 +29,7 @@ use std::{
 use aya::{
     Ebpf, EbpfLoader,
     maps::{
-        MapData, PerCpuArray,
+        Array, MapData,
         lpm_trie::{Key, LpmTrie},
     },
     util::nr_cpus,
@@ -53,6 +53,10 @@ Prints one JSON record on stdout. Reads the eBPF object from LORICA_EBPF_PLAIN_O
 or LORICA_EBPF_OBJ if that is unset.";
 
 type Failure = Box<dyn std::error::Error>;
+
+/// Reads averaged per row. One mapped read of a few thousand slots is tens of microseconds,
+/// which is near enough to the clock that a single sample is mostly the clock.
+const READS: u32 = 20;
 
 fn main() -> Result<(), Failure> {
     let argv: Vec<String> = env::args().skip(1).collect();
@@ -144,21 +148,52 @@ fn main() -> Result<(), Failure> {
             started.elapsed(),
         ));
 
+        // Both read paths over the same map, in the same run, because the ratio is the
+        // whole question and a figure taken on another day is a figure about another day.
+        //
         // Built outside the timed region on purpose: the buffers are the agent's, held
         // for its lifetime, and their allocation is not part of the cost of a read.
-        let mut reader = maps::counters(&ebpf, counter_entries, batch)?;
-        let started = Instant::now();
-        let counters = reader.read()?;
-        rows.push(Row::new(
-            "lookup_batch_per_cpu_array",
-            batch,
-            counter_entries,
-            started.elapsed(),
-        ));
-        if counters.len() != counter_entries as usize {
-            return Err(format!("read {} of {counter_entries} counters", counters.len()).into());
+        let layout = maps::counter_layout(counter_entries)?;
+        // SAFETY: COUNTERS is the flat `Array<u64>` this file's `load` created from this
+        // same layout, which is the map type, the value width and the entry count both
+        // readers require.
+        let mut batched = unsafe { maps::Counters::batched(counters_fd(&ebpf)?, layout, batch) };
+        let mut mapped = maps::counters(&ebpf, counter_entries, batch)?;
+        if !mapped.is_mapped() {
+            return Err(format!(
+                "the counter array would not map, so there is nothing to compare: {:?}",
+                mapped.unmapped().map(ToString::to_string)
+            )
+            .into());
         }
-        black_box(counters);
+
+        // Averaged over several reads. One mapped read at a few thousand slots is tens of
+        // microseconds, which is close enough to the clock that a single sample is mostly
+        // the clock; the batch read needs no averaging and gets the same treatment so the
+        // two numbers are produced the same way.
+        for (label, reader) in [
+            ("read_counters_lookup_batch", &mut batched),
+            ("read_counters_mmap", &mut mapped),
+        ] {
+            // One read before the timed ones: the first mapped read faults its pages in,
+            // and the agent spends its life after that.
+            let counters = reader.read()?;
+            if counters.len() != counter_entries as usize {
+                return Err(
+                    format!("read {} of {counter_entries} counters", counters.len()).into(),
+                );
+            }
+            let started = Instant::now();
+            for _ in 0..READS {
+                black_box(reader.read()?);
+            }
+            rows.push(Row::new(
+                label,
+                batch,
+                counter_entries * READS,
+                started.elapsed(),
+            ));
+        }
     }
 
     // ----- the path this module exists to replace -----
@@ -184,17 +219,24 @@ fn main() -> Result<(), Failure> {
             started.elapsed(),
         ));
 
+        // The counter map is a flat `ARRAY` striped by processor now, so one slot is one
+        // lookup per stripe rather than one lookup returning every processor's copy. That
+        // makes this path *more* expensive than it was, which is honest: it is the path
+        // nothing takes, kept as the ceiling the other two are read against.
+        let layout = maps::counter_layout(counter_entries)?;
         let map = ebpf
             .map("COUNTERS")
             .ok_or("no COUNTERS map in the object")?;
-        let counters: PerCpuArray<&MapData, u64> = PerCpuArray::try_from(map)?;
+        let counters: Array<&MapData, u64> = Array::try_from(map)?;
         let started = Instant::now();
         let mut total: u64 = 0;
         for slot in 0..counter_entries {
-            total += counters.get(&slot, 0)?.iter().sum::<u64>();
+            for cpu in 0..layout.cpus {
+                total += counters.get(&layout.index(cpu, slot), 0)?;
+            }
         }
         rows.push(Row::new(
-            "lookup_elem_per_cpu_array",
+            "lookup_elem_one_at_a_time",
             1,
             counter_entries,
             started.elapsed(),
