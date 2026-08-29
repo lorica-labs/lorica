@@ -153,9 +153,78 @@ impl Window {
         Some(unsafe { *(at as *const [u8; N]) })
     }
 
+    /// The same bound as [`Window::bytes`], kept as a pointer instead of copied into an array.
+    ///
+    /// **The array's justification covers a bound and not a copy.** `bytes` is documented
+    /// against the verifier: a one-byte read at a variable offset is refused, so a header has
+    /// to be taken in one go. That argues for taking **one bound**. Copying is a second thing
+    /// the same call happens to do, and on this target it is not free — there is no forty-byte
+    /// load, so the array becomes forty one-byte loads, and forty bytes do not fit in ten
+    /// registers so each is spilled to the stack as it arrives and read back to be used.
+    ///
+    /// [`Header`] grants the range once and reads fields out of it at constant offsets, which
+    /// is how an XDP program in C is written. The comparison here is the shape
+    /// `find_good_pkt_pointers` recognises, unchanged, and **the 6.8 verifier grants the range
+    /// on it** — measured, because that was the question that could have ended the idea.
+    ///
+    /// It is safe to call and its accessors are safe to use: `N` travels in the type and every
+    /// offset is checked against it at compile time, so the `unsafe` is three lines inside
+    /// [`Header`] with a proof the compiler carries out.
+    #[inline(always)]
+    pub fn header<const N: usize>(&self, off: usize) -> Option<Header<N>> {
+        if off > MAX_OFFSET {
+            return None;
+        }
+        let at = self.start + off;
+        if at + N > self.end {
+            return None;
+        }
+        Some(Header(at as *const u8))
+    }
+
     #[inline(always)]
     pub fn be16(&self, off: usize) -> Option<u16> {
         self.bytes::<2>(off).map(u16::from_be_bytes)
+    }
+}
+
+/// `N` bytes of packet the window has already granted, read at constant offsets.
+///
+/// Every accessor takes its offset as a const parameter and asserts it against `N` in an
+/// inline `const` block, so an out-of-range read is a compile error and not a runtime check
+/// the verifier would have to be convinced of either. That is what lets these be safe
+/// functions over a raw pointer.
+///
+/// Reading a field as its own width also gives LLVM the shape it needs: `from_be_bytes` over
+/// two bytes taken out of an array becomes a shift, an or and then a `be16` on top of the
+/// value the shift-or had already put in big-endian order, while a `u16` load and one swap is
+/// what it emits from this — and against a constant it folds the swap away entirely.
+#[derive(Clone, Copy)]
+pub struct Header<const N: usize>(*const u8);
+
+impl<const N: usize> Header<N> {
+    #[inline(always)]
+    pub fn u8_at<const AT: usize>(&self) -> u8 {
+        const { assert!(AT < N, "the byte is outside the granted window") };
+        // SAFETY: the assertion above puts the read inside `N`, and `Window::header` granted
+        // `N` bytes at this pointer by the comparison the verifier recognises.
+        unsafe { core::ptr::read_unaligned(self.0.add(AT)) }
+    }
+
+    #[inline(always)]
+    pub fn be16_at<const AT: usize>(&self) -> u16 {
+        const { assert!(AT + 2 <= N, "the halfword is outside the granted window") };
+        // SAFETY: as above. `read_unaligned`, because nothing says the packet starts on an
+        // even address and an alignment the hardware tolerates is still a lie to the compiler.
+        u16::from_be(unsafe { core::ptr::read_unaligned(self.0.add(AT).cast::<u16>()) })
+    }
+
+    /// A run of bytes whose order does not change, such as an address.
+    #[inline(always)]
+    pub fn bytes_at<const AT: usize, const M: usize>(&self) -> [u8; M] {
+        const { assert!(AT + M <= N, "the run is outside the granted window") };
+        // SAFETY: as above.
+        unsafe { core::ptr::read_unaligned(self.0.add(AT).cast::<[u8; M]>()) }
     }
 }
 
@@ -195,6 +264,7 @@ fn walk(win: &Window) -> Result<(eth::L2, L3, L4), ParseError> {
     let l2 = eth::parse(win)?;
     let l3 = match l2.ethertype {
         eth::ETH_P_IP => ipv4::parse(win, l2.l3_off)?,
+        #[cfg(not(feature = "measure-without-ipv6"))]
         eth::ETH_P_IPV6 => ipv6::parse(win, l2.l3_off)?,
         _ => return Err(ParseError::UnknownEncap),
     };

@@ -40,9 +40,9 @@ pub fn parse(win: &Window) -> Result<L2, ParseError> {
             break;
         }
         let tag = win
-            .bytes::<VLAN_TAG_LEN>(off)
+            .header::<VLAN_TAG_LEN>(off)
             .ok_or(ParseError::Truncated)?;
-        ethertype = u16::from_be_bytes([tag[2], tag[3]]);
+        ethertype = tag.be16_at::<2>();
         off += VLAN_TAG_LEN;
         tags += 1;
     }

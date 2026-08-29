@@ -25,14 +25,14 @@ const IPPROTO_DSTOPTS: u8 = 60;
 #[cfg_attr(feature = "profiling", inline(never))]
 pub fn parse(win: &Window, base: usize) -> Result<L3, ParseError> {
     let hdr = win
-        .bytes::<FIXED_HDR_LEN>(base)
+        .header::<FIXED_HDR_LEN>(base)
         .ok_or(ParseError::Truncated)?;
 
-    if hdr[0] >> 4 != 6 {
+    if hdr.u8_at::<0>() >> 4 != 6 {
         return Err(ParseError::UnknownEncap);
     }
 
-    let mut next = hdr[6];
+    let mut next = hdr.u8_at::<6>();
     let mut off = base + FIXED_HDR_LEN;
     let mut frag = FragState::None;
     let mut anomalies = 0u8;
@@ -49,20 +49,20 @@ pub fn parse(win: &Window, base: usize) -> Result<L3, ParseError> {
             break;
         }
 
-        let ext = win.bytes::<EXT_HDR_MIN>(off).ok_or(ParseError::Truncated)?;
+        let ext = win.header::<EXT_HDR_MIN>(off).ok_or(ParseError::Truncated)?;
         let len = match next {
             IPPROTO_FRAGMENT => {
-                frag = frag_state(u16::from_be_bytes([ext[2], ext[3]]));
+                frag = frag_state(ext.be16_at::<2>());
                 EXT_HDR_MIN
             }
             // The authentication header measures itself in four-byte units minus two,
             // unlike every other extension header.
-            IPPROTO_AH => (ext[1] as usize + 2) * 4,
-            _ => (ext[1] as usize + 1) * 8,
+            IPPROTO_AH => (ext.u8_at::<1>() as usize + 2) * 4,
+            _ => (ext.u8_at::<1>() as usize + 1) * 8,
         };
 
         anomalies |= anomaly::IPV6_EXT_PRESENT;
-        next = ext[0];
+        next = ext.u8_at::<0>();
         off += len;
         depth += 1;
     }
@@ -73,26 +73,16 @@ pub fn parse(win: &Window, base: usize) -> Result<L3, ParseError> {
 
     // IPv6 states the payload length, not the total. The length checks compare like
     // with like, so the fixed header is added back here.
-    let payload_len = u16::from_be_bytes([hdr[4], hdr[5]]);
+    let payload_len = hdr.be16_at::<4>();
     Ok(L3 {
         family: Family::V6,
-        src: source(&hdr),
+        src: hdr.bytes_at::<8, 16>(),
         ip_total_len: payload_len.saturating_add(FIXED_HDR_LEN as u16),
         frag,
         proto: next,
         l4_off: off,
         anomalies,
     })
-}
-
-/// The source address out of the fixed header, written out rather than sliced: a
-/// slice-to-array conversion carries a length check, and a panic path in a program
-/// whose handler is `unreachable_unchecked` is not a path worth emitting.
-const fn source(hdr: &[u8; FIXED_HDR_LEN]) -> [u8; 16] {
-    [
-        hdr[8], hdr[9], hdr[10], hdr[11], hdr[12], hdr[13], hdr[14], hdr[15], hdr[16], hdr[17],
-        hdr[18], hdr[19], hdr[20], hdr[21], hdr[22], hdr[23],
-    ]
 }
 
 /// From the offset field of a fragment extension header. The layout differs from

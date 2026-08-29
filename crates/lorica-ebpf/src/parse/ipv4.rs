@@ -8,14 +8,15 @@ const FIXED_HDR_LEN: usize = 20;
 #[cfg_attr(feature = "profiling", inline(never))]
 pub fn parse(win: &Window, base: usize) -> Result<L3, ParseError> {
     let hdr = win
-        .bytes::<FIXED_HDR_LEN>(base)
+        .header::<FIXED_HDR_LEN>(base)
         .ok_or(ParseError::Truncated)?;
 
-    if hdr[0] >> 4 != 4 {
+    let version_ihl = hdr.u8_at::<0>();
+    if version_ihl >> 4 != 4 {
         return Err(ParseError::UnknownEncap);
     }
 
-    let ihl_words = (hdr[0] & 0x0f) as usize;
+    let ihl_words = (version_ihl & 0x0f) as usize;
     if ihl_words < FIXED_HDR_LEN / 4 {
         // A header shorter than its own fixed part. Parseable bytes, impossible
         // packet: the L4 offset it implies would point inside the IP header.
@@ -40,10 +41,10 @@ pub fn parse(win: &Window, base: usize) -> Result<L3, ParseError> {
     // the packet with the truncation counter.
     Ok(L3 {
         family: Family::V4,
-        src: mapped([hdr[12], hdr[13], hdr[14], hdr[15]]),
-        ip_total_len: u16::from_be_bytes([hdr[2], hdr[3]]),
-        frag: frag_state(u16::from_be_bytes([hdr[6], hdr[7]])),
-        proto: hdr[9],
+        src: mapped(hdr.bytes_at::<12, 4>()),
+        ip_total_len: hdr.be16_at::<2>(),
+        frag: frag_state(hdr.be16_at::<6>()),
+        proto: hdr.u8_at::<9>(),
         l4_off: base + hdr_len,
         anomalies: if hdr_len > FIXED_HDR_LEN {
             anomaly::IP_OPTIONS_PRESENT

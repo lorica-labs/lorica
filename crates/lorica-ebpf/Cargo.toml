@@ -39,6 +39,16 @@ signature-dfa = []
 # why it needs no subprogram boundary and works on the inlined object: a profile
 # attributes cycles to four symbols all named `run` and to a dispatcher trampoline that
 # absorbs a third of the samples, while a difference of nanoseconds needs no denominator.
+# Compiles the IPv6 walker out of the program, so a measurement can say what carrying it costs
+# an IPv4 deployment. **A measurement and never a shipped configuration**: an object built with
+# this answers `UnknownEncap` — that is, `XDP_PASS` — for every IPv6 packet, which is a filter
+# with a hole in it and not a faster filter.
+#
+# It exists because deleting the fast path showed that code the packet never executes is not
+# free: less of it in the entry point is fewer instructions executed everywhere, because the
+# register allocator has more to work with. `ipv6::parse` is 214 of the 914 instructions there
+# and an IPv4 packet runs none of them, so the size of that effect is worth a number.
+measure-without-ipv6 = []
 stage-cutoff = []
 # Puts each parser back in a subprogram of its own, so it has a JIT symbol a `perf`
 # campaign can attribute cycles to. Instrumentation, not a property of the program: the

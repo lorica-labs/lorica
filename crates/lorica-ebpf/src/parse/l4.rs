@@ -98,34 +98,34 @@ pub fn parse(win: &Window, l3: &L3) -> Result<L4, ParseError> {
     let base = l3.l4_off;
     match l3.proto {
         IPPROTO_TCP => {
-            let hdr = win.bytes::<TCP_PREFIX>(base).ok_or(ParseError::Truncated)?;
+            let hdr = win.header::<TCP_PREFIX>(base).ok_or(ParseError::Truncated)?;
             Ok(L4 {
-                sport: u16::from_be_bytes([hdr[0], hdr[1]]),
-                dport: u16::from_be_bytes([hdr[2], hdr[3]]),
-                tcp_flags: hdr[13],
-                hdr_len: tcp_hdr_len(hdr[12]),
+                sport: hdr.be16_at::<0>(),
+                dport: hdr.be16_at::<2>(),
+                tcp_flags: hdr.u8_at::<13>(),
+                hdr_len: tcp_hdr_len(hdr.u8_at::<12>()),
                 ..L4::NONE
             })
         }
         IPPROTO_UDP => {
             let hdr = win
-                .bytes::<UDP_HDR_LEN>(base)
+                .header::<UDP_HDR_LEN>(base)
                 .ok_or(ParseError::Truncated)?;
             Ok(L4 {
-                sport: u16::from_be_bytes([hdr[0], hdr[1]]),
-                dport: u16::from_be_bytes([hdr[2], hdr[3]]),
-                l4_len: u16::from_be_bytes([hdr[4], hdr[5]]),
+                sport: hdr.be16_at::<0>(),
+                dport: hdr.be16_at::<2>(),
+                l4_len: hdr.be16_at::<4>(),
                 hdr_len: UDP_HDR_LEN,
                 ..L4::NONE
             })
         }
         IPPROTO_ICMP | IPPROTO_ICMPV6 => {
             let hdr = win
-                .bytes::<ICMP_PREFIX>(base)
+                .header::<ICMP_PREFIX>(base)
                 .ok_or(ParseError::Truncated)?;
             Ok(L4 {
-                icmp_type: hdr[0],
-                icmp_code: hdr[1],
+                icmp_type: hdr.u8_at::<0>(),
+                icmp_code: hdr.u8_at::<1>(),
                 hdr_len: ICMP_HDR_LEN,
                 ..L4::NONE
             })
