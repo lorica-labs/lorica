@@ -139,6 +139,40 @@ impl Window {
         Some(unsafe { *(at as *const [u8; N]) })
     }
 
+    /// The same bound as [`Window::bytes`], granted on a pointer instead of copied into an
+    /// array.
+    ///
+    /// **What the array costs, and why the bound is not the reason for it.** `bytes` returns
+    /// `[u8; N]` *by value*, and the comment above justifies that by the verifier: a one-byte
+    /// read at a variable offset is refused, so a header has to be taken in one go. That
+    /// argument is about taking **one bound**, and the array takes one bound *and* makes a
+    /// copy. The copy is not free on this target — there is no forty-two-byte load, so the
+    /// array becomes forty-two one-byte loads, and forty-two bytes do not fit in ten registers
+    /// so each one is spilled to the stack and read back. Measured on the shipped object,
+    /// `bytes` is 259 of the 994 instructions of the entry point and `core`'s byte-order
+    /// conversion another 120, against 15 for every check the parse makes.
+    ///
+    /// This grants the same range and hands back the pointer, so a field is one load at a
+    /// constant offset. It is how an XDP program in C is written, and the comparison below is
+    /// the shape `find_good_pkt_pointers` recognises either way.
+    ///
+    /// # Safety
+    ///
+    /// The caller may read `N` bytes from the returned pointer and no more. Nothing in the
+    /// type system says so, which is the whole difference from `bytes` and the reason this is
+    /// used by one module rather than offered widely.
+    #[inline(always)]
+    pub fn window<const N: usize>(&self, off: usize) -> Option<*const u8> {
+        if off > MAX_OFFSET {
+            return None;
+        }
+        let at = self.start + off;
+        if at + N > self.end {
+            return None;
+        }
+        Some(at as *const u8)
+    }
+
     #[inline(always)]
     pub fn be16(&self, off: usize) -> Option<u16> {
         self.bytes::<2>(off).map(u16::from_be_bytes)

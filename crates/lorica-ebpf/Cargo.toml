@@ -39,6 +39,10 @@ signature-dfa = []
 # why it needs no subprogram boundary and works on the inlined object: a profile
 # attributes cycles to four symbols all named `run` and to a dispatcher trampoline that
 # absorbs a third of the samples, while a difference of nanoseconds needs no denominator.
+# Reads the fast path's header fields at constant offsets from a bounds-checked pointer
+# instead of copying the whole prefix into a `[u8; 42]` first. An experiment with a measured
+# question — see `parse::fast` — and off until the three figures say to turn it on.
+parse-pointer = []
 stage-cutoff = []
 # Puts each parser back in a subprogram of its own, so it has a JIT symbol a `perf`
 # campaign can attribute cycles to. Instrumentation, not a property of the program: the

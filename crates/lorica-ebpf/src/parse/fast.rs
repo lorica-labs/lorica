@@ -38,6 +38,90 @@ const TCP_TAIL: usize = 6;
 /// header sits at a constant offset and nothing has to be walked to find it.
 const IPV4_NO_OPTIONS: u8 = 0x45;
 
+/// One `u16` at a constant offset from a pointer the bound has already been granted on.
+///
+/// `from_be_bytes([p[i], p[i + 1]])` on an array reads two bytes, shifts, ors — and then LLVM
+/// emits a `be16` on top of the value the shift-or already put in big-endian order. Read as a
+/// `u16` and swapped once, it is one load and one `be16`.
+///
+/// # Safety
+///
+/// `at + 2` must be inside the range [`Window::window`] granted.
+#[cfg(feature = "parse-pointer")]
+#[inline(always)]
+unsafe fn be16_at(p: *const u8, at: usize) -> u16 {
+    // `read_unaligned`, because nothing says the packet starts on an even address and an
+    // aligned read the hardware tolerates is still a lie to the compiler.
+    u16::from_be(unsafe { core::ptr::read_unaligned(p.add(at).cast::<u16>()) })
+}
+
+/// # Safety
+///
+/// `at` must be inside the range [`Window::window`] granted.
+#[cfg(feature = "parse-pointer")]
+#[inline(always)]
+unsafe fn u8_at(p: *const u8, at: usize) -> u8 {
+    unsafe { core::ptr::read_unaligned(p.add(at)) }
+}
+
+#[cfg(feature = "parse-pointer")]
+#[inline(always)]
+pub fn headers(win: &Window) -> Option<(eth::L2, L3, l4::L4)> {
+    let p = win.window::<PREFIX>(0)?;
+    // SAFETY: every offset below is a literal under `PREFIX`, which is the range the line
+    // above granted. The two-byte reads end at 39 and the four-byte source at 29.
+    unsafe {
+        if be16_at(p, 12) != eth::ETH_P_IP || u8_at(p, ETH_HDR_LEN) != IPV4_NO_OPTIONS {
+            return None;
+        }
+
+        let proto = u8_at(p, 23);
+        if proto != l4::IPPROTO_UDP && proto != l4::IPPROTO_TCP {
+            return None;
+        }
+
+        let frag = ipv4::frag_state(be16_at(p, 20));
+        if frag == FragState::Later {
+            return None;
+        }
+
+        let sport = be16_at(p, 34);
+        let dport = be16_at(p, 36);
+        let (l4_len, tcp_flags, hdr_len) = if proto == l4::IPPROTO_UDP {
+            (be16_at(p, 38), 0, l4::UDP_HDR_LEN)
+        } else {
+            let tail = win.window::<TCP_TAIL>(PREFIX)?;
+            (0, u8_at(tail, 5), l4::tcp_hdr_len(u8_at(tail, 4)))
+        };
+
+        Some((
+            eth::L2 {
+                l3_off: ETH_HDR_LEN,
+                ethertype: eth::ETH_P_IP,
+                vlan_tags: 0,
+            },
+            L3 {
+                family: Family::V4,
+                src: ipv4::mapped([u8_at(p, 26), u8_at(p, 27), u8_at(p, 28), u8_at(p, 29)]),
+                ip_total_len: be16_at(p, 16),
+                frag,
+                proto,
+                l4_off: L4_OFF,
+                anomalies: 0,
+            },
+            l4::L4 {
+                sport,
+                dport,
+                l4_len,
+                tcp_flags,
+                hdr_len,
+                ..l4::L4::NONE
+            },
+        ))
+    }
+}
+
+#[cfg(not(feature = "parse-pointer"))]
 #[inline(always)]
 pub fn headers(win: &Window) -> Option<(eth::L2, L3, l4::L4)> {
     let p = win.bytes::<PREFIX>(0)?;

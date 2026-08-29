@@ -71,6 +71,12 @@ OUT=bench/results/stage-cost
 # parse, and the script then asked for a level that does not exist and reported the refusal
 # as a broken measurement. --levels stays, for measuring one level on purpose.
 LEVELS=
+# Extra eBPF features to build the measured object with, comma separated, on top of
+# `stage-cutoff`. Empty by default: the sweep measures the object that ships. It exists so
+# a variant behind a feature flag can be measured with the same instrument and in the same
+# session as its baseline, which is the only way a difference between the two is about the
+# code rather than about two afternoons.
+EBPF_EXTRA=${EBPF_EXTRA:-}
 # Empty means report only. Set it and the deepest level is compared against it and the
 # script fails on excess: that is assertion 3, armed on instructions and not on nanoseconds
 # because instructions reproduce to about one per packet where the nanoseconds drift.
@@ -128,7 +134,7 @@ ssh -o BatchMode=yes -o ConnectTimeout=25 "$TARGET_HOST" \
     || die "cannot bring the environment record back from $TARGET_HOST"
 
 bash scripts/lab/deploy.sh "$BUILD_HOST" \
-    "bash scripts/lab/target-build.sh --test stage_cost --ebpf-features stage-cutoff" \
+    "bash scripts/lab/target-build.sh --test stage_cost --ebpf-features stage-cutoff${EBPF_EXTRA:+,$EBPF_EXTRA}" \
     || die "the build on $BUILD_HOST failed"
 
 remote "$BUILD_HOST" "cat ~/$REMOTE_DIR/target/target-tests.tar" \
