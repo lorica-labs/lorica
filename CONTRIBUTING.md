@@ -40,6 +40,34 @@ bash scripts/lab/kernel-tests.sh --crate loricad --test no_alloc_in_tick
 They need `clang` and `libbpf-dev` for the bench objects the attach tests take the hook
 with. See rule (c) below for what else they need.
 
+## What belongs in this repository, and what does not
+
+**This repository holds the code, and what a third party needs in order to use it or to
+reproduce a figure. Nothing else.**
+
+Everything that describes *our* lab, *our* hypervisor or *our* hosts belongs outside it. The
+distinction is not tidiness: a reader who clones this cannot use a script that pins vCPUs of
+VM 900 on one particular Proxmox box, and a file they cannot use is a file that makes them
+wonder what else here is written for somebody else.
+
+The line runs through the middle of some directories, so it is worth stating on both sides:
+
+| in | out |
+|---|---|
+| `scripts/lab/*.sh` — they take `--iface`, `LORICA_BUILD_HOST`, `LORICA_TARGET_HOST`, and default to overridable aliases | anything hard-coding a VM id, a hypervisor name or a CPU list of ours |
+| `bench/README.md` — three machines, their roles, their requirements | the runbook that creates those three machines here |
+| `bench/results/` — the numbers, with the environment captured beside them | the analysis reports that read them |
+| `docs/{install,usage,limits,architecture}.md` | design and conduct documents |
+
+Two guards exist and neither is complete. `/docs/*` is ignored with the four user-facing pages
+named back in one by one, because a `git add -A` swept a design spec in once. **A `deploy/`
+directory holding Proxmox pin scripts for one specific hypervisor got in anyway**, past that
+guard, and lived here until somebody noticed — which is the reason this section exists rather
+than only the comment in `.gitignore`.
+
+So it is a review question, asked of every new top-level path: *could a stranger who cloned
+this use it?* If the answer is no, it goes in the agent tree.
+
 ## The three rules
 
 **(a) Run `cargo fmt --all` before every commit.** CI runs `cargo fmt --all --check` and
