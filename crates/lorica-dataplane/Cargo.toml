@@ -43,4 +43,8 @@ lorica-policy.workspace = true
 lorica-common.workspace = true
 aya.workspace = true
 libc.workspace = true
+# Reads the `.bss` offsets of the two blocklist tables off the object the agent loads. Already
+# in the tree through aya, so it adds nothing to the dependency surface, and the alternative is
+# a constant that guesses where the linker put a symbol.
+object.workspace = true
 thiserror.workspace = true

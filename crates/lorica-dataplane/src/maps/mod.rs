@@ -7,6 +7,7 @@
 //! invariant.
 
 pub mod batch;
+pub mod blocklist;
 pub mod lpm;
 pub mod mmap;
 
