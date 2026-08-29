@@ -48,6 +48,20 @@ pub enum Warning {
     AllowOnUdp { prefix: String, scope: String },
 }
 
+/// Spelled out rather than left to `Debug`, because the only thing that reads a warning is a
+/// human at a prompt and `AllowOnUdp { prefix: "10.0.0.0/8", scope: "udp:53" }` is a struct
+/// where a sentence belongs.
+impl core::fmt::Display for Warning {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::AllowOnUdp { prefix, scope } => write!(
+                f,
+                "{prefix} is allowed on {scope}, and a forged source costs an attacker nothing                  on UDP: anyone who writes that address in a header walks through this rule"
+            ),
+        }
+    }
+}
+
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum CompileError {
     #[error(

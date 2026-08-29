@@ -28,7 +28,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, bail, ensure};
 use aya::{Ebpf, EbpfLoader};
 use lorica_common::{
     BUCKET_KEY_SYMBOLS, Clock, CounterId, CounterLayout, DEFAULT_SETTINGS, OPERATOR_SETTINGS,
@@ -58,7 +58,7 @@ const DEFAULT_SOCKET: &str = "/run/lorica/control.sock";
 
 const USAGE: &str = "usage: loricad --object PATH [--socket PATH] [--counters N] [--hz N] \
                      [--batch N] [--sweep-every N] [--sweep-stride N] [--seconds N] \
-                     [--metrics ADDR|off] [--mode observe|armed] [--iface NAME]                      [--policy NAME,...]";
+                     [--metrics ADDR|off] [--mode observe|armed] [--iface NAME]                      [--policy NAME,...] [--config PATH]";
 
 struct Options {
     object: PathBuf,
@@ -93,6 +93,13 @@ struct Options {
     /// Where `/metrics` listens, or `off`. Loopback by default: the endpoint serialises the
     /// whole registry per call, so exposing it off-host is an address somebody types.
     metrics: String,
+    /// The configuration file, or nothing. Absent is the observation default with no
+    /// operator rules — which is a useful agent, and the one the quick start runs.
+    ///
+    /// Present, it decides everything it carries and the flags that would restate it are
+    /// refused rather than merged: an operator debugging why a rule does not fire should
+    /// not have to discover that a command line quietly won.
+    config: Option<PathBuf>,
     /// The policy word the program is loaded with: which stages enforce, and how the
     /// parser treats IP options, ICMP and later fragments. Zero by default, which is
     /// observation — see [`lorica_common::OPERATOR_SETTINGS`] for the names.
@@ -117,6 +124,104 @@ fn main() -> ExitCode {
         }
     }
 }
+
+/// The clock the pre-load pass compiles against.
+///
+/// **Why there is a pass with a fake clock at all.** The counter map's size comes out of the
+/// configuration and has to be known before the program is loaded, because the load is what
+/// creates the map; the deadlines in the same configuration are measured against a kernel
+/// jiffy counter that only a loaded program can read. That is a cycle, not an oversight.
+///
+/// So the file is compiled twice. This pass decides the sizes and the two load-time words and
+/// reports every error, which is the pass an operator's mistake comes back from — before
+/// anything is loaded. The pass after the load differs only in the clock, and only its
+/// entries are used. `publish` asserts the two agree on everything else rather than trusting
+/// that they must.
+const PROVISIONAL_CLOCK: Clock = Clock {
+    hz: 250,
+    jiffies: 0,
+};
+
+/// What the configuration decides that the load needs to know.
+struct Plan {
+    settings: u32,
+    signature_vectors: u32,
+    sizes: lorica_policy::MapSizes,
+    mode: Mode,
+    warnings: Vec<lorica_policy::Warning>,
+}
+
+fn read_config(path: &Path) -> Result<lorica_policy::Config> {
+    let text = std::fs::read_to_string(path)
+        .with_context(|| format!("cannot read the configuration at {}", path.display()))?;
+    lorica_policy::Config::from_toml(&text)
+        .with_context(|| format!("{} is not a valid configuration", path.display()))
+}
+
+/// The clock-free half of the compile, taken from a pass against [`PROVISIONAL_CLOCK`].
+fn plan(config: &lorica_policy::Config) -> Result<Plan> {
+    let compiled = lorica_policy::compile(config, PROVISIONAL_CLOCK, memlock_model())
+        .context("the configuration did not compile")?;
+    Ok(Plan {
+        settings: compiled.settings,
+        signature_vectors: compiled.signature_vectors,
+        sizes: compiled.sizes,
+        mode: config.mode,
+        warnings: compiled.warnings,
+    })
+}
+
+/// The memory model of this machine, and not of the one the profile was written against.
+///
+/// A per-CPU map costs eight bytes per possible processor, so the same configuration is a
+/// different number of megabytes on a four-thread VPS and a fifty-six-thread host. Charging
+/// the reference count here would let a profile pass its own audit and overrun its budget.
+fn memlock_model() -> lorica_policy::MemlockModel {
+    lorica_policy::MemlockModel::for_cpus(
+        aya::util::nr_cpus().map_or(lorica_policy::REFERENCE_CPUS, |cpus| cpus as u64),
+    )
+}
+
+/// The operator's rules, into the unified list, against the measured clock.
+///
+/// Everything the file decided that does not depend on the clock was decided by [`plan`] and
+/// is already in the loaded program. This pass recomputes it anyway — the compiler has one
+/// entry point — and asserts that it came out the same, because the alternative is trusting
+/// that a function is insensitive to an argument it takes.
+fn publish(
+    list: BorrowedFd<'_>,
+    config: &lorica_policy::Config,
+    clock: Clock,
+    planned: &Plan,
+) -> Result<()> {
+    let compiled = lorica_policy::compile(config, clock, memlock_model())
+        .context("the configuration compiled before the load and not after it")?;
+    ensure!(
+        compiled.settings == planned.settings
+            && compiled.signature_vectors == planned.signature_vectors
+            && compiled.sizes.counter_entries == planned.sizes.counter_entries,
+        "the configuration compiled to a different program before the load than after it, so          the loaded program was sized and armed for a policy that is not the one being written"
+    );
+
+    // Written as one call each rather than merged: the operator's entries own a counter slot
+    // apiece and the bogons share one, so what the file asked for stays readable in the
+    // counters without subtracting a generated table from it.
+    let chunk = LIST_CHUNK;
+    maps::lpm::load(list, &compiled.entries, chunk).context("writing the operator rules failed")?;
+    maps::lpm::load(list, &compiled.bogons, chunk).context("writing the bogon table failed")?;
+    eprintln!(
+        "loricad: {} operator entries and {} bogon prefixes in the list, room for {}",
+        compiled.entries.len(),
+        compiled.bogons.len(),
+        compiled.sizes.unified_list_entries
+    );
+    Ok(())
+}
+
+/// Entries per `BPF_MAP_UPDATE_BATCH`. One thousand is the batch the counter read settled on
+/// for the same reason — the syscall is the cost and the chunk amortises it — and this write
+/// happens once at startup, where the number is not worth its own flag.
+const LIST_CHUNK: usize = 1_000;
 
 /// [`settings_word`] with the list of what was expected attached to its refusal.
 ///
@@ -146,9 +251,14 @@ fn parse_options() -> Result<Options> {
         metrics: metrics::serve::DEFAULT_ADDR.to_owned(),
         iface: None,
         policy: DEFAULT_SETTINGS,
+        config: None,
     };
     let mut args = std::env::args().skip(1);
+    // The flags actually typed, so that `--config` can refuse the ones it would override
+    // instead of silently winning or silently losing against them.
+    let mut given: Vec<String> = Vec::new();
     while let Some(flag) = args.next() {
+        given.push(flag.clone());
         let mut value = || args.next().with_context(|| format!("{flag} needs a value"));
         match flag.as_str() {
             "--object" => options.object = PathBuf::from(value()?),
@@ -163,6 +273,7 @@ fn parse_options() -> Result<Options> {
             "--mode" => options.mode = value()?.parse().map_err(anyhow::Error::msg)?,
             "--iface" => options.iface = Some(value()?),
             "--policy" => options.policy = parse_policy(&value()?)?,
+            "--config" => options.config = Some(PathBuf::from(value()?)),
             other => bail!("unknown argument {other}\n{USAGE}"),
         }
     }
@@ -181,6 +292,19 @@ fn parse_options() -> Result<Options> {
             options.counter_slots,
             CounterId::COUNT
         );
+    }
+    // A configuration file carries all three of these, so accepting both spellings would make
+    // the answer to "why is this rule not firing" depend on which one the reader looked at.
+    // Refused rather than merged, and named individually: an error saying only "conflicting
+    // options" leaves the operator to find which.
+    if options.config.is_some() {
+        for flag in ["--policy", "--counters", "--mode"] {
+            if given.iter().any(|typed| typed == flag) {
+                bail!(
+                    "{flag} and --config both set the same thing, and the file is the one that                      can be reviewed: remove {flag} and write it in the file"
+                );
+            }
+        }
     }
     // The same predicate the control socket applies to `arm`, asked here of `--mode armed`.
     // It lives next to the socket because that is the caller nobody reads a usage string
@@ -206,6 +330,27 @@ fn run(options: Options) -> Result<()> {
 }
 
 async fn serve(mut options: Options) -> Result<()> {
+    // Read and compiled before anything is loaded, so a file with a bad prefix in it is a
+    // refusal an operator reads at a prompt rather than after twenty megabytes of maps exist.
+    let config = match &options.config {
+        Some(path) => Some(read_config(path)?),
+        None => None,
+    };
+    let plan = config.as_ref().map(plan).transpose()?;
+    if let Some(plan) = &plan {
+        // Everything the file decides that the load needs. `--policy`, `--counters` and
+        // `--mode` were refused above, so nothing here is overwriting a typed value.
+        options.policy = plan.settings;
+        options.counter_slots = plan.sizes.counter_entries;
+        options.mode = plan.mode;
+        for warning in &plan.warnings {
+            eprintln!("loricad: warning: {warning}");
+        }
+    }
+    let vectors = plan
+        .as_ref()
+        .map_or(SIGNATURE_VECTORS_ALL, |plan| plan.signature_vectors);
+
     // Computed before the load, because the load needs it: the counter map's entry count and
     // the stripe width the program indexes it with both come from here.
     let layout = maps::counter_layout(options.counter_slots).with_context(|| {
@@ -214,7 +359,7 @@ async fn serve(mut options: Options) -> Result<()> {
             options.counter_slots
         )
     })?;
-    let (ebpf, clock) = load(&options.object, &layout, options.policy)?;
+    let (ebpf, clock) = load(&options.object, &layout, options.policy, vectors)?;
     // The descriptors below are duplicates and not borrows of the loaded program, and that
     // is what makes attaching possible at all: attaching needs the program mutably, at any
     // moment for as long as the agent runs, and a borrow of its maps that lives that long
@@ -222,6 +367,12 @@ async fn serve(mut options: Options) -> Result<()> {
     // so nothing about what is read changes.
     let counters = duplicate(ebpf, maps::COUNTERS)?;
     let list = duplicate(ebpf, "UNIFIED_LIST")?;
+    // The second pass, and the one whose entries are real: the clock above was measured off
+    // the program that is now loaded, so a `ttl_secs` in the file becomes a deadline the data
+    // path can compare against.
+    if let (Some(config), Some(planned)) = (&config, &plan) {
+        publish(list, config, clock, planned)?;
+    }
     // Two readers over the same map: one stops at the named counters, one covers every
     // slot. Each owns its buffers, sized once, so neither allocates again.
     //
@@ -584,7 +735,12 @@ fn snapshot(
 /// The calibration happens here because it needs the program mutable, which it only is
 /// before the leak, and because it sleeps: a few hundred milliseconds at startup, once,
 /// where no tick is waiting on it.
-fn load(object: &Path, layout: &CounterLayout, policy: u32) -> Result<(&'static mut Ebpf, Clock)> {
+fn load(
+    object: &Path,
+    layout: &CounterLayout,
+    policy: u32,
+    vectors: u32,
+) -> Result<(&'static mut Ebpf, Clock)> {
     let bytes = std::fs::read(object)
         .with_context(|| format!("cannot read the eBPF object at {}", object.display()))?;
     // Drawn here and never written down. The bucket index is chosen by whoever sends the
@@ -599,11 +755,10 @@ fn load(object: &Path, layout: &CounterLayout, policy: u32) -> Result<(&'static 
     let mut loader = EbpfLoader::new();
     let mut ebpf = maps::size_counters(&mut loader, layout)
         .override_global(SETTINGS_SYMBOL, &policy, true)
-        // The whole catalogue, because no configuration is read here yet and the program's
-        // own initialiser is none of it. `Compiled::signature_vectors` is what goes here
-        // once the configuration reaches this path, and the vectors it leaves out are then
-        // absent from the verified program rather than skipped by it.
-        .override_global(SIGNATURE_VECTORS_SYMBOL, &SIGNATURE_VECTORS_ALL, true)
+        // `Compiled::signature_vectors` where a configuration named some, and the whole
+        // catalogue where none did. The vectors it leaves out are absent from the verified
+        // program rather than skipped by it, which is why this is a load-time word.
+        .override_global(SIGNATURE_VECTORS_SYMBOL, &vectors, true)
         .override_global(BUCKET_KEY_SYMBOLS[0], &key[0], true)
         .override_global(BUCKET_KEY_SYMBOLS[1], &key[1], true)
         .load(&bytes)

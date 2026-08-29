@@ -28,7 +28,9 @@ ATTEMPTS=${LORICA_SSH_ATTEMPTS:-4}
 # restates seven names and seven kernel releases from the code, and the test is what stops
 # them drifting. Without the directory in the tar the test cannot find the page and fails on
 # the lab for a reason that has nothing to do with what it checks.
-paths=(crates scripts bench docs Cargo.toml Cargo.lock rust-toolchain.toml rustfmt.toml clippy.toml)
+# examples is here for the same reason: a test compiles examples/lorica.toml, because an
+# annotated configuration that does not parse is worse than no example at all.
+paths=(crates scripts bench docs examples Cargo.toml Cargo.lock rust-toolchain.toml rustfmt.toml clippy.toml)
 existing=()
 for path in "${paths[@]}"; do
     [ -e "$path" ] && existing+=("$path")

@@ -1,0 +1,96 @@
+# A Lorica configuration, annotated. Nothing here is required: an agent started without
+# `--config` observes, counts and refuses nothing, which is a useful thing to run first.
+#
+# Every value in this file is refused at startup if the data path cannot honour it. A rule
+# that would not work reaches you while you are reading the file, not during an attack.
+
+# How much kernel memory this deployment may lock. Every map size is derived from the budget
+# rather than chosen, and a configuration that does not fit is refused with the two numbers.
+#
+#   vps      32 MiB   a two-to-four gigabyte VPS
+#   host    256 MiB   a dedicated host, with room for a real blocklist
+#   gateway   1 GiB   sized for somebody else's traffic
+#
+# Kernel memory is invisible in the RSS of any process. `top` will show an agent using three
+# megabytes while the kernel holds two hundred on its behalf, which is why this is a budget
+# and not a size.
+profile = "vps"
+
+# "observe" or "armed". Observe is the default and it writes no refusal into the kernel
+# whatever the detection ladder decides — it computes the whole response and reports it.
+#
+# Run observe first, against your own traffic, for long enough to see a busy hour. The
+# counters will tell you what would have been refused.
+mode = "observe"
+
+# The stages that have a knob. Everything here is off by default, which means "count it and
+# deliver the packet". Turning one on is what makes that stage able to drop.
+[settings]
+# Stage 6. The amplification catalogue: DNS ANY, NTP monlist, memcached, and seven more. Off
+# means every vector is counted and delivered.
+enforce_signatures = false
+
+# Stage 7. The leaky-bucket bank. Off means over-budget packets are counted and delivered.
+#
+# Read this one twice before setting it. Two sources necessarily share a bucket — pigeonhole,
+# not hashing quality — so arming the bank lets a bucket a legitimate source shares with an
+# attacker refuse both. The bank is a good detector and a blunt enforcer.
+enforce_buckets = false
+
+# Stage 1. IP options carry the source-routing family of attacks and are refused by default.
+accept_ip_options = false
+
+# Stage 2. ICMP echo and everything else, separately. Path MTU messages always cross.
+drop_icmp_echo = false
+drop_icmp_other = false
+
+# Stage 4. Later fragments carry no port, so they can never match a scope and are dropped.
+# Turn this on for fragmented IPsec, IKE or large VPN packets, and accept the degraded
+# (source, protocol) key that comes with it.
+allow_later_fragments = false
+
+# Names for scopes, so `udp:30120` is written once rather than on twenty rules.
+[services]
+minecraft = "tcp:25565"
+fivem = "udp:30120"
+dns = "udp:53"
+
+# The amplification vectors stage 6 carries, named by their counter without the
+# `signature_` prefix. Leaving this out is the whole catalogue, which is what you want.
+#
+# An empty list is *none* of them, and the two cannot share a spelling: a vector left out is
+# absent from the loaded program rather than skipped at run time, so the verifier removes it.
+# signatures = ["dns_any", "ntp_monlist", "memcached_stats"]
+
+# Rules. Precedence is the specificity of the address and never the order of declaration —
+# that is the one thing here that differs from iptables, so it is worth reading twice. A
+# /32 beats a /24 beats a /8, wherever they sit in this file.
+
+# A deny with no scope refuses the source entirely.
+#
+# This one is a /32 rather than the /24 around it, and the reason is the most surprising
+# refusal in this file. 203.0.113.0/24 is a documentation range and one of the built-in
+# bogons, which the agent already loads; a rule on exactly that prefix is refused, because it
+# lands on a trie key the built-in entry holds and the trie has no answer for two. A longer
+# prefix inside a bogon is accepted, and is how you write an exception to one.
+#
+# Your own rules will name real addresses and will not meet this. RFC 1918 space is
+# deliberately not a bogon — a host behind NAT legitimately sees it — so the rules below work
+# as written.
+[[rules]]
+prefix = "203.0.113.42/32"
+action = "deny"
+
+# An allow must name a scope. A bare source address is a total bypass, and is refused: an
+# allow that outlives everything is the one mistake in this file nobody can see from outside.
+[[rules]]
+prefix = "10.20.30.0/24"
+action = "allow"
+scopes = ["minecraft"]
+
+# `ttl_secs` is optional; absent means as durable as this file. Only the entries the
+# mitigation writes while running are required to expire.
+[[rules]]
+prefix = "172.20.0.0/16"
+action = "deny"
+ttl_secs = 3600
