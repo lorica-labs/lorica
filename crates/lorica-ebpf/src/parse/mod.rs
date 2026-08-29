@@ -4,15 +4,29 @@
 //! through as a silent `XDP_PASS`, commented `XXX` upstream. Not reproducing those
 //! two bypasses is what this module is for.
 //!
-//! Two paths, one result. [`fast`] handles untagged IPv4 without options carrying UDP
-//! or TCP, which is what a game server actually receives, in a straight line with one
-//! bounds check. Everything else — tags, options, extension headers, later fragments —
-//! goes to the walker, which is where the loops live. Nothing optional decides a
-//! verdict, so the two paths build the same view for the same packet and [`refuse`]
-//! then applies the same checks to both.
+//! **One path, and there used to be two.** A `fast` module handled untagged IPv4 without
+//! options carrying UDP or TCP — what a game server actually receives — in a straight line
+//! with one bounds check, and everything else went to the walker below. It was a win when it
+//! was written and a loss when it was measured again, so it is gone.
+//!
+//! The figures, on 6.8.0-138, whole program, both objects in one session and each reproduced:
+//! **1480.2 instructions a packet with the fast path and 1430.8 without it**, on the packet
+//! that is the fast path's own best case. It saved 27 instructions inside the parse and cost
+//! 76 outside it. Statically the entry point went from 994 instructions to 914, and 48 of
+//! those 80 were `core`'s byte-order conversion for fields the walker reads anyway.
+//!
+//! **Why a win became a loss without the code changing.** The measurement that justified it
+//! compared parse against parse. The whole program has since grown a striped counter map and
+//! a fingerprint check, and the entry point holds a fifty-six byte view live across seven
+//! stage calls with ten registers to do it in. A second copy of the header-reading code is
+//! not free in that frame even when it is never executed: it changes what the allocator can
+//! keep, everywhere. A stage-local measurement could not see that, and a whole-program one
+//! could.
+//!
+//! There is nothing to reinstate it for. The packet it was measured on is the only shape it
+//! ever handled, so no other traffic makes it win.
 
 pub mod eth;
-pub mod fast;
 pub mod ipv4;
 pub mod ipv6;
 pub mod l4;
@@ -139,40 +153,6 @@ impl Window {
         Some(unsafe { *(at as *const [u8; N]) })
     }
 
-    /// The same bound as [`Window::bytes`], granted on a pointer instead of copied into an
-    /// array.
-    ///
-    /// **What the array costs, and why the bound is not the reason for it.** `bytes` returns
-    /// `[u8; N]` *by value*, and the comment above justifies that by the verifier: a one-byte
-    /// read at a variable offset is refused, so a header has to be taken in one go. That
-    /// argument is about taking **one bound**, and the array takes one bound *and* makes a
-    /// copy. The copy is not free on this target — there is no forty-two-byte load, so the
-    /// array becomes forty-two one-byte loads, and forty-two bytes do not fit in ten registers
-    /// so each one is spilled to the stack and read back. Measured on the shipped object,
-    /// `bytes` is 259 of the 994 instructions of the entry point and `core`'s byte-order
-    /// conversion another 120, against 15 for every check the parse makes.
-    ///
-    /// This grants the same range and hands back the pointer, so a field is one load at a
-    /// constant offset. It is how an XDP program in C is written, and the comparison below is
-    /// the shape `find_good_pkt_pointers` recognises either way.
-    ///
-    /// # Safety
-    ///
-    /// The caller may read `N` bytes from the returned pointer and no more. Nothing in the
-    /// type system says so, which is the whole difference from `bytes` and the reason this is
-    /// used by one module rather than offered widely.
-    #[inline(always)]
-    pub fn window<const N: usize>(&self, off: usize) -> Option<*const u8> {
-        if off > MAX_OFFSET {
-            return None;
-        }
-        let at = self.start + off;
-        if at + N > self.end {
-            return None;
-        }
-        Some(at as *const u8)
-    }
-
     #[inline(always)]
     pub fn be16(&self, off: usize) -> Option<u16> {
         self.bytes::<2>(off).map(u16::from_be_bytes)
@@ -181,10 +161,7 @@ impl Window {
 
 pub fn parse(ctx: &XdpContext) -> Result<PacketView, ParseError> {
     let win = Window::of(ctx);
-    let (l2, l3, l4) = match fast::headers(&win) {
-        Some(headers) => headers,
-        None => walk(&win)?,
-    };
+    let (l2, l3, l4) = walk(&win)?;
 
     let view = PacketView {
         data: win.start as u64,
@@ -212,9 +189,8 @@ pub fn parse(ctx: &XdpContext) -> Result<PacketView, ParseError> {
     Ok(view)
 }
 
-/// Every encapsulation the fast path declined: tags, options, extension headers, and
-/// the fragments that carry no transport header at all. The loops of the module are all
-/// here.
+/// Every encapsulation: tags, options, extension headers, and the fragments that carry no
+/// transport header at all. The loops of the module are all here.
 fn walk(win: &Window) -> Result<(eth::L2, L3, L4), ParseError> {
     let l2 = eth::parse(win)?;
     let l3 = match l2.ethertype {

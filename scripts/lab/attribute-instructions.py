@@ -50,12 +50,10 @@ DEFAULT_OBJECT = "crates/lorica-ebpf/target/bpfel-unknown-none/release/lorica-eb
 # A whole file is named by passing `None` as the signature.
 REGIONS = [
     ("Window::bytes (bound + copy)", "parse/mod.rs", "pub fn bytes"),
-    ("Window::window (bound only)", "parse/mod.rs", "pub fn window"),
     ("parse() (view construction)", "parse/mod.rs", "pub fn parse"),
     ("walk()", "parse/mod.rs", "fn walk"),
     ("refuse()", "parse/mod.rs", "fn refuse"),
     ("udp_length()", "parse/mod.rs", "fn udp_length"),
-    ("fast:: (whole file)", "parse/fast.rs", None),
     ("eth:: (whole file)", "parse/eth.rs", None),
     ("ipv4:: (whole file)", "parse/ipv4.rs", None),
     ("ipv6:: (whole file)", "parse/ipv6.rs", None),
