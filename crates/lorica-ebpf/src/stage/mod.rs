@@ -145,13 +145,6 @@ pub fn run(ctx: &XdpContext) -> u32 {
     let view = match parse::parse(ctx) {
         Ok(view) => view,
         Err(err) => {
-            // Before `outcome`, and the reason is the measurement rather than the packet: a
-            // parse cut level that bumped a counter would carry a map access the levels
-            // around it do not, and the difference between two levels would be that access.
-            #[cfg(feature = "stage-cutoff")]
-            if matches!(err, parse::ParseError::Cutoff) {
-                return xdp_action::XDP_PASS;
-            }
             let (action, counter) = err.outcome();
             helpers::bump(counter);
             return action;
@@ -161,16 +154,16 @@ pub fn run(ctx: &XdpContext) -> u32 {
     #[cfg(feature = "parse-probe")]
     helpers::probe(&view);
 
-    cut!(3);
+    cut!(2);
 
     // Read once, passed down. The TTL comparison and, from the next phase, the leaky
     // buckets share this reading: taking it twice would double the one clock read the
     // per-packet budget allows outside the lookups.
     let now = helpers::now_jiffies();
 
-    cut!(4);
+    cut!(3);
     decide!(icmp::run(&view));
-    cut!(5);
+    cut!(4);
     // Both halves of stage 3, flat tables first. The order is the precedence: an address the
     // operator's snapshot has a verdict for is answered without touching the trie, and an
     // address it has nothing to say about falls through to the entries that carry deadlines.
@@ -181,11 +174,11 @@ pub fn run(ctx: &XdpContext) -> u32 {
     // renumbering on.
     decide!(blocklist::run(&view));
     decide!(lpm::run(&view, now));
-    cut!(6);
+    cut!(5);
     decide!(fragment::run(&view));
-    cut!(7);
+    cut!(6);
     decide!(urpf::run(ctx, &view));
-    cut!(8);
+    cut!(7);
 
     // Stage 6 has three answers and only two of them end the walk. Rate-limiting is not a
     // verdict, so it is routed here and not returned: the packet reaches the buckets
@@ -196,9 +189,9 @@ pub fn run(ctx: &XdpContext) -> u32 {
         settled => return settled.action(),
     };
 
-    cut!(9);
+    cut!(8);
     decide!(bucket::run(&view, now, budget));
-    cut!(10);
+    cut!(9);
 
     // The SYN cookie stage sits here, between the buckets and the counters. It is a
     // separate module on a higher kernel floor and is not part of this program.

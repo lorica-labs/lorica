@@ -51,39 +51,21 @@ const GAME_PORT: u16 = 30_120;
 /// are comparisons on fields the parse has just loaded, so they are made there and their
 /// cost is inside that level rather than in one of its own. The other labels keep the
 /// numbers of the specification, which is what an operator reads.
-const LEVELS: [(u32, &str); 10] = [
+const LEVELS: [(u32, &str); 9] = [
     (1, "entry"),
-    // Two levels for what used to be one, because `parse` was 37 % of the whole budget and
-    // the only block the ventilation could not see inside. The boundary is the one the
-    // program actually has: `read` is the window, the headers and the view, `checks` is what
-    // used to be stage 1. A third level between the headers and the view was tried and is
-    // not possible — the barrier it needs puts the view on the stack and the verifier then
-    // refuses the narrow fills that read it back, which is itself the answer: the view lives
-    // in registers, so there is no materialisation to charge for.
-    //
-    // **The split was validated before it was trusted, and the numbers are here because a
-    // reader has no other way to check it.** Packet reads are plain loads, not volatile ones,
-    // so a level whose work is dead on the cut path could have been sunk below the branch and
-    // charged to the next level. Two things say it was not. The two halves measured 209.6 and
-    // 333.4 instructions a packet, summing to 543.1 against the 546.4 the single `parse` level
-    // measured before the split — 0.6 % below, which is the direction and the size a cut level
-    // that was added rather than removed accounts for. And a second pass reproduced them at
-    // 209.6 and 332.9, inside one instruction, on the 6.8.0-138 target.
-    //
-    // What the split found is not what it was looking for. Reading every header of a
-    // steady-state UDP packet costs 210 instructions and checking it costs 333 — the checks
-    // are 61 % of the parse and 23 % of the whole program, and they are comparisons on fields
-    // already in registers. Why they cost that is not answered here, and guessing at it is
-    // what this level exists to stop.
-    (2, "parse: read"),
-    (3, "parse: checks"),
-    (4, "clock read"),
-    (5, "stage 2 ICMP"),
-    (6, "stage 3 source list"),
-    (7, "stage 4 fragments"),
-    (8, "stage 5 uRPF"),
-    (9, "stage 6 signatures"),
-    (10, "stage 7 buckets"),
+    (2, "parse"),
+    (3, "clock read"),
+    (4, "stage 2 ICMP"),
+    // Two structures answer stage 3 now: the flat class table and the probe sequence behind
+    // it, then the trie for what neither covers. They share one cutoff level on purpose —
+    // adding a level would renumber every one below it, and the two are not separable by a
+    // cutoff anyway because the second only runs on what the first sends it. Their costs are
+    // separated by `measure_lpm_depth`, whose four arms are built for exactly that.
+    (5, "stage 3 source list"),
+    (6, "stage 4 fragments"),
+    (7, "stage 5 uRPF"),
+    (8, "stage 6 signatures"),
+    (9, "stage 7 buckets"),
 ];
 
 fn steady_state_packet() -> Vec<u8> {

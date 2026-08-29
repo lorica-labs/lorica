@@ -1,0 +1,29 @@
+
+--- stage_cost-b0238028f7646e92 on 6.8.0-138-generic
+
+running 2 tests
+LORICA_STAGE_CUTOFF unset, nothing to profile
+LEVELS,13
+floor subtracted: 15 ns, repeat = 1000000, 7 interleaved passes
+test one_level_of_the_pipeline_under_a_profiler ... ok
+cumulative through    median ns  above floor   this level     spread
+entry                     13 ns         0 ns         0 ns       0 ns
+parse: read               28 ns        13 ns        13 ns       1 ns
+parse: ip length          33 ns        18 ns         5 ns       1 ns
+parse: ip options         34 ns        19 ns         1 ns       1 ns
+parse: fragment           35 ns        20 ns         1 ns       1 ns
+parse: transport          46 ns        31 ns        11 ns       3 ns
+clock read                48 ns        33 ns         2 ns       0 ns
+stage 2 ICMP              51 ns        36 ns         3 ns       1 ns
+stage 3 source list       73 ns        58 ns        22 ns       4 ns
+stage 4 fragments         75 ns        60 ns         2 ns       4 ns
+stage 5 uRPF              82 ns        67 ns         7 ns       2 ns
+stage 6 signatures       102 ns        87 ns        20 ns       6 ns
+stage 7 buckets          127 ns       112 ns        25 ns       4 ns
+
+plain object             101 ns above the floor, spread 2 ns over 7 passes
+cutoff compares cost      11 ns
+test each_stage_of_the_pipeline_costs_what_it_costs ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 31.61s
+
