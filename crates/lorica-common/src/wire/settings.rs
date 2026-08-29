@@ -59,6 +59,48 @@ pub mod setting {
 /// pass ICMP, drop later fragments.
 pub const DEFAULT_SETTINGS: u32 = 0;
 
+/// The bits an operator may set, and the name each is set by.
+///
+/// Six of the eight, because two are not the operator's to choose:
+/// [`setting::URPF_ENFORCE`] is a criterion the loader evaluates against the routing table
+/// of the ingress interface, and [`setting::MARK_OVER_BUDGET`] is a capability the loader
+/// asks the kernel about. A name for either would let an operator claim a verdict the
+/// machine cannot deliver, which is worse than not offering it.
+///
+/// The table sits beside the bits so that adding one and forgetting to name it is a visible
+/// omission in a diff rather than a flag that silently does nothing. It is the only place
+/// the names exist: the parser and the usage line both read it.
+pub const OPERATOR_SETTINGS: [(&str, u32); 6] = [
+    ("accept-ip-options", setting::ACCEPT_IP_OPTIONS),
+    ("drop-icmp-echo", setting::DROP_ICMP_ECHO),
+    ("drop-icmp-other", setting::DROP_ICMP_OTHER),
+    ("allow-later-fragments", setting::ALLOW_LATER_FRAGMENTS),
+    ("enforce-signatures", setting::ENFORCE_SIGNATURES),
+    ("enforce-buckets", setting::ENFORCE_BUCKETS),
+];
+
+/// The policy word a comma-separated list of names spells, or the first name that is not one.
+///
+/// The parsing lives beside the table rather than in the agent because the two cannot be
+/// checked against each other from anywhere else: a binary crate has no integration test that
+/// can reach into it. The error is the offending name and not a message — this crate has no
+/// allocator to build one with, and the caller has the list of what was expected right here.
+///
+/// Empty fragments are skipped, so a trailing comma is not an error. An unknown one is,
+/// rather than a warning: the word decides whether a stage drops traffic, and a typo that
+/// silently leaves a stage observing is the failure an operator finds during the attack it
+/// was meant to stop.
+pub fn settings_word(list: &str) -> Result<u32, &str> {
+    let mut word = DEFAULT_SETTINGS;
+    for name in list.split(',').map(str::trim).filter(|n| !n.is_empty()) {
+        match OPERATOR_SETTINGS.iter().find(|(known, _)| *known == name) {
+            Some((_, bit)) => word |= bit,
+            None => return Err(name),
+        }
+    }
+    Ok(word)
+}
+
 /// Where the measurement build reads the pipeline cutoff from, in the same word.
 ///
 /// The upper half of the policy word rather than a second global, because the loader

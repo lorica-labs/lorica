@@ -31,8 +31,8 @@ use std::{
 use anyhow::{Context, Result, bail};
 use aya::{Ebpf, EbpfLoader};
 use lorica_common::{
-    BUCKET_KEY_SYMBOLS, Clock, CounterId, CounterLayout, DEFAULT_SETTINGS, SETTINGS_SYMBOL,
-    SIGNATURE_VECTORS_ALL, SIGNATURE_VECTORS_SYMBOL, key_words,
+    BUCKET_KEY_SYMBOLS, Clock, CounterId, CounterLayout, DEFAULT_SETTINGS, OPERATOR_SETTINGS,
+    SETTINGS_SYMBOL, SIGNATURE_VECTORS_ALL, SIGNATURE_VECTORS_SYMBOL, key_words, settings_word,
 };
 use lorica_dataplane::{
     clock, loader,
@@ -58,7 +58,7 @@ const DEFAULT_SOCKET: &str = "/run/lorica/control.sock";
 
 const USAGE: &str = "usage: loricad --object PATH [--socket PATH] [--counters N] [--hz N] \
                      [--batch N] [--sweep-every N] [--sweep-stride N] [--seconds N] \
-                     [--metrics ADDR|off] [--mode observe|armed] [--iface NAME]";
+                     [--metrics ADDR|off] [--mode observe|armed] [--iface NAME]                      [--policy NAME,...]";
 
 struct Options {
     object: PathBuf,
@@ -93,6 +93,15 @@ struct Options {
     /// Where `/metrics` listens, or `off`. Loopback by default: the endpoint serialises the
     /// whole registry per call, so exposing it off-host is an address somebody types.
     metrics: String,
+    /// The policy word the program is loaded with: which stages enforce, and how the
+    /// parser treats IP options, ICMP and later fragments. Zero by default, which is
+    /// observation — see [`lorica_common::OPERATOR_SETTINGS`] for the names.
+    ///
+    /// Fixed at load time and not reloadable, because the program reads it as a `.bss`
+    /// global rather than a map: a word that could change under an attached program would
+    /// cost a helper call on every packet that reaches a stage with a knob. Changing it is
+    /// a restart, which the detached-by-default design makes cheap.
+    policy: u32,
     /// The interface to attach to at startup, and to stay attached to. Absent by default,
     /// because the attach tax in [`attach`] is paid on every packet whether or not anything
     /// is happening, and nothing here can decide for the operator that it is worth paying.
@@ -109,6 +118,20 @@ fn main() -> ExitCode {
     }
 }
 
+/// [`settings_word`] with the list of what was expected attached to its refusal.
+///
+/// The parsing itself is in `lorica-common`, beside the table of names, because a binary
+/// crate cannot be reached from an integration test and the two would drift unchecked.
+fn parse_policy(list: &str) -> Result<u32> {
+    settings_word(list).map_err(|unknown| {
+        let known: Vec<&str> = OPERATOR_SETTINGS.iter().map(|(name, _)| *name).collect();
+        anyhow::anyhow!(
+            "unknown policy {unknown}, expected one of {}",
+            known.join(", ")
+        )
+    })
+}
+
 fn parse_options() -> Result<Options> {
     let mut options = Options {
         object: PathBuf::new(),
@@ -122,6 +145,7 @@ fn parse_options() -> Result<Options> {
         mode: Mode::default(),
         metrics: metrics::serve::DEFAULT_ADDR.to_owned(),
         iface: None,
+        policy: DEFAULT_SETTINGS,
     };
     let mut args = std::env::args().skip(1);
     while let Some(flag) = args.next() {
@@ -138,6 +162,7 @@ fn parse_options() -> Result<Options> {
             "--metrics" => options.metrics = value()?,
             "--mode" => options.mode = value()?.parse().map_err(anyhow::Error::msg)?,
             "--iface" => options.iface = Some(value()?),
+            "--policy" => options.policy = parse_policy(&value()?)?,
             other => bail!("unknown argument {other}\n{USAGE}"),
         }
     }
@@ -189,7 +214,7 @@ async fn serve(mut options: Options) -> Result<()> {
             options.counter_slots
         )
     })?;
-    let (ebpf, clock) = load(&options.object, &layout)?;
+    let (ebpf, clock) = load(&options.object, &layout, options.policy)?;
     // The descriptors below are duplicates and not borrows of the loaded program, and that
     // is what makes attaching possible at all: attaching needs the program mutably, at any
     // moment for as long as the agent runs, and a borrow of its maps that lives that long
@@ -559,7 +584,7 @@ fn snapshot(
 /// The calibration happens here because it needs the program mutable, which it only is
 /// before the leak, and because it sleeps: a few hundred milliseconds at startup, once,
 /// where no tick is waiting on it.
-fn load(object: &Path, layout: &CounterLayout) -> Result<(&'static mut Ebpf, Clock)> {
+fn load(object: &Path, layout: &CounterLayout, policy: u32) -> Result<(&'static mut Ebpf, Clock)> {
     let bytes = std::fs::read(object)
         .with_context(|| format!("cannot read the eBPF object at {}", object.display()))?;
     // Drawn here and never written down. The bucket index is chosen by whoever sends the
@@ -573,7 +598,7 @@ fn load(object: &Path, layout: &CounterLayout) -> Result<(&'static mut Ebpf, Clo
     // applies both, and it is the only thing allowed to size that map.
     let mut loader = EbpfLoader::new();
     let mut ebpf = maps::size_counters(&mut loader, layout)
-        .override_global(SETTINGS_SYMBOL, &DEFAULT_SETTINGS, true)
+        .override_global(SETTINGS_SYMBOL, &policy, true)
         // The whole catalogue, because no configuration is read here yet and the program's
         // own initialiser is none of it. `Compiled::signature_vectors` is what goes here
         // once the configuration reaches this path, and the vectors it leaves out are then
