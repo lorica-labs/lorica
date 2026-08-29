@@ -67,6 +67,11 @@ pub struct Settings {
     /// traffic is a list of false positives waiting to be found by an outage.
     #[serde(default)]
     pub enforce_signatures: bool,
+    /// Stage 7, and off by default for the reason above. Two sources necessarily share a
+    /// leaky bucket — pigeonhole, not hashing quality — so the bank produces candidates, and
+    /// arming it lets a bucket a legitimate source shares with an attacker refuse both.
+    #[serde(default)]
+    pub enforce_buckets: bool,
 }
 
 /// Whether what the ladder decides is applied or only reported.

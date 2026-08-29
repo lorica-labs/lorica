@@ -248,5 +248,8 @@ fn settings_word(settings: &crate::config::Settings) -> u32 {
     if settings.enforce_signatures {
         word |= setting::ENFORCE_SIGNATURES;
     }
+    if settings.enforce_buckets {
+        word |= setting::ENFORCE_BUCKETS;
+    }
     word
 }
