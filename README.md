@@ -1,107 +1,103 @@
 # Lorica
 
-An XDP DDoS filter for one host, written in Rust, that **observes by default and refuses
-nothing until you tell it to**.
+An XDP packet filter for a single Linux host, written in Rust. It measures what reaches your
+machine, and refuses nothing until you tell it to.
 
-The promise, narrow on purpose: *Lorica absorbs the line your host sells you, and tells you
-what it measures at your place.* Not Mpps. Not a programmable switch. Not DPDK.
+```
+┌── kernel ─────────────────────────────────────────┐
+│  XDP  →  parse → coherence → list → fragments     │
+│          → reverse path → signatures → buckets    │
+│                    ↓ 34 counters                  │
+└────────────────────┼──────────────────────────────┘
+                     ↓  mmap, no syscall
+        agent  →  ladder  →  /metrics, journal, socket
+```
 
-**Read [docs/limits.md](docs/limits.md) first.** It has the costs, the shapes this design
-cannot hold, and the numbers we do not have. It is not an appendix — attaching an XDP program
-to virtio-net costs 58 % of receive throughput on this lab, permanently, whether or not anyone
-is attacking you, and you should know that before you install anything.
+**Read [docs/limits.md](docs/limits.md) before you install anything.** Attaching an XDP program
+to virtio-net costs 58 % of receive throughput on our lab, permanently, whether or not anyone is
+attacking you.
 
 ---
 
-## What it does
+## Status: what runs today
 
-Seven stages on the packet path, in the kernel, and one agent in userspace that watches them
-and decides.
+This repository is open while the enforcement half is still being built. The table is the whole
+truth, and the [wiki](https://github.com/lorica-labs/lorica/wiki/Status) carries the detail.
 
-The stages parse, check coherence, consult the source list, handle fragments, optionally check
-the reverse path, match a catalogue of known amplification vectors, and charge a leaky-bucket
-bank. The agent reads their counters on a tick, decides a rung on a seven-step ladder, and — if
-you have armed it — writes one exact key into the kernel's list with a deadline on it.
-
-## The one invariant worth reading before the code
-
-**A drop can never rest on state another source can move.**
-
-With 1 024 buckets and any realistic number of active sources, two sources necessarily share a
-bucket. No quality of hashing changes that; it is the pigeonhole principle. So buckets and
-probabilistic signatures produce **candidates**, and every drop is confirmed by an exact key, by
-a packet that is objectively invalid, or by a bit of the policy word.
-
-This is not a comment, it is a type: a decision that refuses traffic cannot be constructed
-without naming the exact key it refuses, and the constructor returns `None` instead. There is a
-test that tries it from outside the crate and one that tries it from the agent, and a third
-that shows the whole mechanism disarmed and re-armed with the classifier still counting.
-
-## Observation is the default, and that is the point
-
-Out of the box, Lorica **protects nothing**. It watches, counts and reports. The ladder climbs,
-the metrics move, the kernel's list does not.
-
-```
-lorica-ctl status | jq .mode     # "observe"
-```
-
-A tool that observes cannot create the destructive false positive, which is why this repository
-could be opened while the enforcement half is still young. Arming is one word — `--mode armed`,
-or `mode = "armed"` in the configuration — and [docs/limits.md §6](docs/limits.md) says what
-changes when you type it.
-
-## Metrics that an attacker cannot inflate
-
-`/metrics` carries **no label whose value is chosen by whoever sends the packet**. No source IP,
-no source port, no flow id, no observed ASN. An adversary varying their sources would otherwise
-grow your time-series database at will, turning your monitoring into an amplifier and your
-dashboards into the second casualty of the attack.
-
-The rule is testable and it is tested: the number of series is fixed at compile time, a test
-counts what the registry actually renders and fails past a checked-in ceiling, and a second test
-fails if any label name from a blacklist appears. Endpoint binds to loopback by default.
-
-Three projects reached this architecture independently, which is the strongest argument for it:
-**FastNetMon** disables per-host counters by default and pre-computes a top-10 per second,
-moving to ClickHouse past 50 000 hosts; **Cloudflare** ships `sample_limit = 200` as a default;
-**Cilium/Hubble** removed `source_ip` from its labels. If you have hit this wall yourself, you
-already know why.
-
-## Install
-
-[docs/install.md](docs/install.md). Short version: a recent kernel, `CAP_BPF` and
-`CAP_NET_ADMIN`, an eBPF object built by the nightly toolchain, and native XDP attach — if
-`ip -d link` says `xdpgeneric`, Lorica refuses rather than measuring something else.
-
-## Layout
-
-| crate | what it is |
+| | |
 |---|---|
-| `lorica-common` | every type that crosses the kernel boundary, and all per-packet arithmetic. `no_std`, no dependency |
-| `lorica-ebpf` | the XDP program. A **separate workspace**: nightly, `-Z build-std=core`, BPF ISA v3 |
-| `lorica-dataplane` | loading, attaching, map access, capability detection, and the kernel tests |
-| `lorica-policy` | the operator's configuration compiled into what the program reads |
-| `lorica-detect` | snapshots to rungs: two cadences, hysteresis, descent, cardinality. No I/O at all |
-| `lorica-escalate` | the `Escalator` trait and the webhook behind it, with the guards in front |
-| `loricad` | the agent |
-| `lorica-ctl` | a thin client. One text line over a Unix socket, prints the JSON. **Zero dependencies** |
-| `lorica-export` | conversions kept off the agent's startup path |
+| ✅ **Drops** malformed and impossible packets: truncated, bad IP/L4 length, impossible TCP flags, IP options, over-deep encapsulation, non-initial fragments | on the packet path, no configuration |
+| ✅ **Counts** everything else through 34 named counters, including all ten amplification signatures and every over-budget packet | 1 480 instructions/packet, measured |
+| ✅ **Reports** through Prometheus, a 1 Hz journal and a Unix control socket | no label an attacker can choose |
+| ⚠️ **Does not enforce** signatures, leaky buckets or reverse-path checks | the policy word is compiled in and there is no flag to change it |
+| ⚠️ **Does not load** an operator blocklist | the compiler exists, the agent does not call it |
+| ⚠️ **Does not write** a refusal into the kernel | the detection ladder tops out at rung 1 of 7 |
+
+So: **Lorica today is an instrument, not yet a mitigation.** If you deploy it and an attack
+arrives, it will show you the attack in detail and drop only the malformed part of it.
+
+## Quick start
+
+```bash
+# 1. build (userspace stable, eBPF nightly — two toolchains, see docs/install.md)
+cargo build --release --workspace
+cd crates/lorica-ebpf && cargo +nightly build --release && cd ../..
+
+# 2. run, detached — loads and verifies the program, touches no packet
+sudo ./target/release/loricad \
+     --object crates/lorica-ebpf/target/bpfel-unknown-none/release/lorica-ebpf
+
+# 3. ask it what it is doing
+sudo ./target/release/lorica-ctl status
+curl -s http://127.0.0.1:9090/metrics | grep ^lorica_
+```
+
+Add `--iface eth0` to put it in the packet path. Read
+[the attach tax](docs/limits.md#1-attaching-an-xdp-program-to-virtio-net-costs-throughput-permanently)
+first — it is the single most expensive decision in this tool.
+
+Full procedure, options and failure modes: **[docs/install.md](docs/install.md)**.
+
+## Documentation
+
+Read in this order.
+
+| | |
+|---|---|
+| [docs/install.md](docs/install.md) | prerequisites, build, run, every option and every startup refusal |
+| [docs/usage.md](docs/usage.md) | day two: reading the counters, the control socket, the metrics, arming |
+| [docs/limits.md](docs/limits.md) | what this costs, what it cannot hold, and the numbers we do not have |
+| [docs/architecture.md](docs/architecture.md) | how it works and why it is shaped this way — start here to read the code |
+| [bench/README.md](bench/README.md) | how to reproduce every published number, on three machines |
+| [bench/results/INDEX.md](bench/results/INDEX.md) | every number, mapped to the script, the raw data and the captured environment |
+| [wiki](https://github.com/lorica-labs/lorica/wiki) | the response ladder, deployment profiles, measurement method, status |
+
+## Two rules the design rests on
+
+**A drop can never rest on state another source can move.** Two sources necessarily share a
+leaky bucket — pigeonhole, not hashing quality — so buckets and signatures produce *candidates*.
+Every refusal is confirmed by an exact key or by an objectively invalid packet, and that is a
+type: a decision refusing traffic cannot be constructed without naming the key it refuses.
+
+**No metric carries a label an attacker chooses.** No source IP, port, flow id or ASN — otherwise
+an adversary rotating sources grows your TSDB at will. The series count is fixed at compile time
+and a test fails past a checked-in ceiling.
+
+Both are argued, with the measurement behind them, in
+[docs/architecture.md](docs/architecture.md).
 
 ## Contributing
 
-[CONTRIBUTING.md](CONTRIBUTING.md). One convention that is not written anywhere else and that
-every reviewer here will ask for: **each module opens on a `//!` that justifies the choice made
-and names the alternative that was rejected, with the number that rejected it.** If you cannot
-name what you did not do, the decision has not been made yet.
+[CONTRIBUTING.md](CONTRIBUTING.md). One convention worth stating here, because every reviewer
+will ask for it: **each module opens on a `//!` that justifies the choice made and names the
+alternative that was rejected, with the number that rejected it.** If you cannot name what you
+did not do, the decision has not been made yet.
 
 ## Security
 
-[SECURITY.md](SECURITY.md), which also carries the false-positive report template. The first
-question it asks is whether you were running in `observe` or `armed`, because in `observe`
-nothing was refused and a "false positive" is then something else.
+[SECURITY.md](SECURITY.md), which also carries the false-positive report template.
 
 ## Licence
 
-Dual-licensed under Apache-2.0 or MIT, at your option. See [LICENSE-APACHE](LICENSE-APACHE) and
-[LICENSE-MIT](LICENSE-MIT).
+Dual-licensed under Apache-2.0 or MIT, at your option.
+See [LICENSE-APACHE](LICENSE-APACHE) and [LICENSE-MIT](LICENSE-MIT).

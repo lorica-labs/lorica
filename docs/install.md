@@ -113,6 +113,7 @@ curl -s http://127.0.0.1:9090/metrics | head
 | `--hz N` | `10` | Ticks per second. |
 | `--batch N` | `1000` | Elements per `BPF_MAP_LOOKUP_BATCH` call. |
 | `--sweep-every N` | `1` | Ticks between two full sweeps of the counter map. `1` is every tick; above that, per-entry counters get staler and the CPU cost falls linearly. |
+| `--sweep-stride N` | `1` | Reads one full sweep is spread over. `--sweep-every` skips whole ticks and leaves the worst one where it is; this one cuts the worst read and skips nothing. Only the fallback read path has a worst read worth cutting — see [usage.md §7](usage.md). |
 | `--seconds N` | `0` | Seconds to run before exiting. `0` runs until signalled. |
 | `--metrics ADDR\|off` | `127.0.0.1:9090` | Where `/metrics` listens, or `off`. Loopback by default: a scrape serialises the whole registry, so an off-host address is a decision, not a default. |
 | `--mode observe\|armed` | `observe` | Whether a refusal is applied or only reported. |
@@ -134,7 +135,8 @@ counters, runs the detection ladder, and reports the decision it would have take
 the default on purpose: a tool that watches and reports cannot cause a destructive false
 positive.
 
-Arming is one flag, plus the slot requirement above:
+Arming is one flag, plus the slot requirement above — or `lorica-ctl arm` on a running agent.
+There is no configuration file to put it in:
 
 ```sh
 sudo ./loricad --object ./lorica-ebpf --mode armed --counters 4096
@@ -144,6 +146,12 @@ Armed, an accepted decision is written into the unified list, a decision that mo
 different prefix takes the previous one back out, and a descent withdraws what it had
 refused instead of waiting for the entry's deadline. The mode is also the first question
 any false-positive report has to answer — see `SECURITY.md`.
+
+**Today that path does not fire.** The detection ladder cannot reach a rung that refuses
+packets, because the tick publishes the named counters and not the two inputs the confirming
+rungs need. An armed agent reports rungs 0 and 1 and leaves `written` at zero. Arming is
+therefore currently a no-op, and `docs/limits.md` §6 is where that is written down with the
+other two open wires.
 
 ## Putting it in the packet path
 

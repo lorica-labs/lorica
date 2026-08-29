@@ -16,3 +16,5 @@
 # one so the guard above still catches everything else.
 !/docs/limits.md
 !/docs/install.md
+!/docs/usage.md
+!/docs/architecture.md

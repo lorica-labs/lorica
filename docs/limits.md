@@ -86,20 +86,55 @@ accidental permanent blackhole.
 
 What you lose when the agent dies is detection and reporting, not traffic.
 
-## 6. The default mode is observation only
+## 6. Out of the box it protects nothing, and three wires are still open
 
-Out of the box Lorica **protects nothing**. It watches, counts, and reports. Rungs that would
-refuse traffic are computed, counted, and not applied — `lorica-ctl status` shows the rung and
-the mode, and the metrics move while the kernel's list does not.
+Two different statements live under this heading. The first is a **choice**: observation is the
+default. The second is a **state**: parts of the enforcement half are not connected yet. Both are
+true today and only the first is permanent.
 
-That is the point of the default, and it is why this repository could be opened: a tool that
-observes cannot create the destructive false positive.
+### The choice
 
-To arm it: `--mode armed` on the command line, or `mode = "armed"` in the configuration file.
-The two spellings are the same two words, with a test that fails if they ever drift. Arming
-also needs at least one counter slot above the named counters (`--counters`), and Lorica
+`--mode observe` is the default. The agent reads the counters, runs the detection ladder, reports
+the decision it would have taken, and does not touch the kernel's list. That is the point of the
+default, and it is why this repository could be opened: a tool that watches and reports cannot
+create the destructive false positive.
+
+To arm it: `--mode armed` on the command line, or `lorica-ctl arm` on a running agent. Arming
+also needs at least one counter slot above the named counters (`--counters 4096`), and Lorica
 refuses to arm without one rather than charging its own refusals to a stage counter and reading
-them back as evidence.
+them back as evidence. `lorica-ctl status` reports `armable` beside `mode` so you do not have to
+try the command to find out.
+
+### The state — what a running agent will and will not do
+
+**It drops, on the packet path, with no configuration:** truncated frames, over-deep
+encapsulation, incoherent IP or L4 length, impossible TCP flag combinations, IP options, and
+non-initial fragments. That is a real class of traffic and it is the whole of what is enforced.
+
+**Three things are not wired, and none of them can be turned on from the command line:**
+
+1. **The signature, leaky-bucket and reverse-path stages count but do not enforce.** Their
+   enforcement is governed by a `.rodata` policy word that the agent writes as
+   `DEFAULT_SETTINGS = 0`, compiled in, with no flag and no file to change it. Ten amplification
+   vectors are matched and counted on every packet; none is refused.
+
+2. **The operator blocklist is never loaded.** `lorica-policy` compiles a configuration into the
+   two flat tables and is tested doing so, but the agent patches neither `CLASS24` nor
+   `OA_TABLE`. They stay zeroed, so stage 3's flat half answers "nothing configured" for every
+   address.
+
+3. **The detection ladder cannot reach a rung that refuses packets.** Rungs 3 and above need a
+   key whose own counter slot is rising, and rungs 5 and 6 need the bucket bank; the tick
+   publishes the 34 named counters and neither of those two inputs. Armed or not, the ladder tops
+   out at rung 1 and `written` stays at zero.
+
+**There is no configuration file.** `lorica-ctl reload` refuses and says so, rather than
+reporting a re-read that did not happen. Every setting comes from the command line or from the
+loaded object.
+
+So a deployment today is an instrument: it will show you an attack in detail, in metrics and in
+the journal, and drop only the malformed part of it. The three wires above are tracked on the
+[wiki status page](https://github.com/lorica-labs/lorica/wiki/Status).
 
 ## 7. Kernel capabilities: what an older kernel costs you
 
