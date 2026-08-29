@@ -1,0 +1,318 @@
+
+--- stage_cost-b0238028f7646e92 on 6.8.0-138-generic
+
+running 2 tests
+LORICA_STAGE_CUTOFF unset, nothing to profile
+LEVELS,11
+floor subtracted: 15 ns, repeat = 1000000, 7 interleaved passes
+test one_level_of_the_pipeline_under_a_profiler ... ok
+test each_stage_of_the_pipeline_costs_what_it_costs ... FAILED
+
+failures:
+
+failures:
+    each_stage_of_the_pipeline_costs_what_it_costs
+
+test result: FAILED. 1 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.92s
+
+
+thread 'each_stage_of_the_pipeline_costs_what_it_costs' (13724) panicked at crates/lorica-dataplane/tests/support/run.rs:407:35:
+the verifier rejected lorica_xdp: the BPF_PROG_LOAD syscall returned Permission denied (os error 13). Verifier output: 0: R1=ctx() R10=fp0
+; #[xdp]
+0: (7b) *(u64 *)(r10 -136) = r1       ; R1=ctx() R10=fp0 fp-136_w=ctx()
+1: (b4) w6 = 2                        ; R6_w=2
+; intrinsics::volatile_load(src)
+2: (18) r2 = 0xffff8ca443d1dd94       ; R2_w=map_value(map=.rodata,ks=4,vs=76,off=68)
+4: (61) r2 = *(u32 *)(r2 +0)          ; R2_w=0x40000
+; if crate::settings::stage_cutoff() == $stages {
+5: (54) w2 &= -65536                  ; R2_w=0x40000
+6: (16) if w2 == 0x10000 goto pc+557          ; R2_w=0x40000
+; let view = match parse::parse(ctx) {
+7: (61) r2 = *(u32 *)(r1 +4)          ; R1=ctx() R2_w=pkt_end()
+8: (61) r7 = *(u32 *)(r1 +0)          ; R1=ctx() R7_w=pkt(r=0)
+; if at + N > self.end {
+9: (bf) r3 = r7                       ; R3_w=pkt(r=0) R7_w=pkt(r=0)
+10: (07) r3 += 42                     ; R3_w=pkt(off=42,r=0)
+11: (bf) r8 = r2                      ; R2_w=pkt_end() R8_w=pkt_end()
+12: (2d) if r3 > r2 goto pc+130       ; R2_w=pkt_end() R3_w=pkt(off=42,r=42)
+; unsafe { mem::transmute(bytes) }
+13: (71) r1 = *(u8 *)(r7 +13)         ; R1_w=scalar(smin=smin32=0,smax=umax=smax32=umax32=255,var_off=(0x0; 0xff)) R7_w=pkt(r=42)
+14: (64) w1 <<= 8                     ; R1_w=scalar(smin=smin32=0,smax=umax=smax32=umax32=0xff00,var_off=(0x0; 0xff00))
+; Some(unsafe { *(at as *const [u8; N]) })
+15: (71) r4 = *(u8 *)(r7 +12)         ; R4_w=scalar(smin=smin32=0,smax=umax=smax32=umax32=255,var_off=(0x0; 0xff)) R7_w=pkt(r=42)
+; unsafe { mem::transmute(bytes) }
+16: (4c) w1 |= w4                     ; R1_w=scalar() R4_w=scalar(smin=smin32=0,smax=umax=smax32=umax32=255,var_off=(0x0; 0xff))
+17: (54) w1 &= 65535                  ; R1=scalar(smin=smin32=0,smax=umax=smax32=umax32=0xffff,var_off=(0x0; 0xffff))
+; if u16::from_be_bytes([p[12], p[13]]) != eth::ETH_P_IP || p[ETH_HDR_LEN] != IPV4_NO_OPTIONS {
+18: (56) if w1 != 0x8 goto pc+124     ; R1=8
+19: (71) r1 = *(u8 *)(r7 +14)         ; R1_w=scalar(smin=smin32=0,smax=umax=smax32=umax32=255,var_off=(0x0; 0xff)) R7=pkt(r=42)
+20: (56) if w1 != 0x45 goto pc+122    ; R1_w=69
+21: (71) r5 = *(u8 *)(r7 +39)         ; R5_w=scalar(smin=smin32=0,smax=umax=smax32=umax32=255,var_off=(0x0; 0xff)) R7=pkt(r=42)
+22: (71) r9 = *(u8 *)(r7 +38)         ; R7=pkt(r=42) R9_w=scalar(smin=smin32=0,smax=umax=smax32=umax32=255,var_off=(0x0; 0xff))
+23: (71) r1 = *(u8 *)(r7 +37)         ; R1_w=scalar(smin=smin32=0,smax=umax=smax32=umax32=255,var_off=(0x0; 0xff)) R7=pkt(r=42)
+24: (7b) *(u64 *)(r10 -168) = r1      ; R1_w=scalar(smin=smin32=0,smax=umax=smax32=umax32=255,var_off=(0x0; 0xff)) R10=fp0 fp-168_w=scalar(smin=smin32=0,smax=umax=smax32=umax32=255,var_off=(0x0; 0xff))
+25: (71) r1 = *(u8 *)(r7 +36)         ; R1_w=scalar(smin=smin32=0,smax=umax=smax32=umax32=255,var_off=(0x0; 0xff)) R7=pkt(r=42)
+26: (63) *(u32 *)(r10 -208) = r1      ; R1_w=scalar(smin=smin32=0,smax=umax=smax32=umax32=255,var_off=(0x0; 0xff)) R10=fp0 fp-208=????scalar(smin=smin32=0,smax=umax=smax32=umax32=255,var_off=(0x0; 0xff))
+27: (71) r1 = *(u8 *)(r7 +35)         ; R1_w=scalar(smin=smin32=0,smax=umax=smax32=umax32=255,var_off=(0x0; 0xff)) R7=pkt(r=42)
+28: (7b) *(u64 *)(r10 -160) = r1      ; R1_w=scalar(smin=smin32=0,smax=umax=smax32=umax32=255,var_off=(0x0; 0xff)) R10=fp0 fp-160_w=scalar(smin=smin32=0,smax=umax=smax32=umax32=255,var_off=(0x0; 0xff))
+29: (71) r1 = *(u8 *)(r7 +34)         ; R1_w=scalar(smin=smin32=0,smax=umax=smax32=umax32=255,var_off=(0x0; 0xff)) R7=pkt(r=42)
+30: (63) *(u32 *)(r10 -216) = r1      ; R1_w=scalar(smin=smin32=0,smax=umax=smax32=umax32=255,var_off=(0x0; 0xff)) R10=fp0 fp-216=????scalar(smin=smin32=0,smax=umax=smax32=umax32=255,var_off=(0x0; 0xff))
+31: (71) r1 = *(u8 *)(r7 +29)         ; R1_w=scalar(smin=smin32=0,smax=umax=smax32=umax32=255,var_off=(0x0; 0xff)) R7=pkt(r=42)
+32: (63) *(u32 *)(r10 -176) = r1      ; R1_w=scalar(smin=smin32=0,smax=umax=smax32=umax32=255,var_off=(0x0; 0xff)) R10=fp0 fp-176=????scalar(smin=smin32=0,smax=umax=smax32=umax32=255,var_off=(0x0; 0xff))
+33: (71) r1 = *(u8 *)(r7 +28)         ; R1_w=scalar(smin=smin32=0,smax=umax=smax32=umax32=255,var_off=(0x0; 0xff)) R7=pkt(r=42)
+34: (63) *(u32 *)(r10 -184) = r1      ; R1_w=scalar(smin=smin32=0,smax=umax=smax32=umax32=255,var_off=(0x0; 0xff)) R10=fp0 fp-184=????scalar(smin=smin32=0,smax=umax=smax32=umax32=255,var_off=(0x0; 0xff))
+35: (71) r1 = *(u8 *)(r7 +27)         ; R1_w=scalar(smin=smin32=0,smax=umax=smax32=umax32=255,var_off=(0x0; 0xff)) R7=pkt(r=42)
+36: (63) *(u32 *)(r10 -192) = r1      ; R1_w=scalar(smin=smin32=0,smax=umax=smax32=umax32=255,var_off=(0x0; 0xff)) R10=fp0 fp-192=????scalar(smin=smin32=0,smax=umax=smax32=umax32=255,var_off=(0x0; 0xff))
+37: (71) r1 = *(u8 *)(r7 +26)         ; R1_w=scalar(smin=smin32=0,smax=umax=smax32=umax32=255,var_off=(0x0; 0xff)) R7=pkt(r=42)
+38: (63) *(u32 *)(r10 -200) = r1      ; R1_w=scalar(smin=smin32=0,smax=umax=smax32=umax32=255,var_off=(0x0; 0xff)) R10=fp0 fp-200=????scalar(smin=smin32=0,smax=umax=smax32=umax32=255,var_off=(0x0; 0xff))
+39: (71) r2 = *(u8 *)(r7 +23)         ; R2_w=scalar(smin=smin32=0,smax=umax=smax32=umax32=255,var_off=(0x0; 0xff)) R7=pkt(r=42)
+40: (71) r1 = *(u8 *)(r7 +21)         ; R1_w=scalar(smin=smin32=0,smax=umax=smax32=umax32=255,var_off=(0x0; 0xff)) R7=pkt(r=42)
+41: (71) r0 = *(u8 *)(r7 +20)         ; R0_w=scalar(smin=smin32=0,smax=umax=smax32=umax32=255,var_off=(0x0; 0xff)) R7=pkt(r=42)
+42: (71) r4 = *(u8 *)(r7 +17)         ; R4_w=scalar(smin=smin32=0,smax=umax=smax32=umax32=255,var_off=(0x0; 0xff)) R7=pkt(r=42)
+43: (71) r6 = *(u8 *)(r7 +16)         ; R6_w=scalar(smin=smin32=0,smax=umax=smax32=umax32=255,var_off=(0x0; 0xff)) R7=pkt(r=42)
+44: (63) *(u32 *)(r10 -152) = r6      ; R6_w=scalar(smin=smin32=0,smax=umax=smax32=umax32=255,var_off=(0x0; 0xff)) R10=fp0 fp-152=????scalar(smin=smin32=0,smax=umax=smax32=umax32=255,var_off=(0x0; 0xff))
+45: (bf) r6 = r1                      ; R1_w=scalar(id=1,smin=smin32=0,smax=umax=smax32=umax32=255,var_off=(0x0; 0xff)) R6_w=scalar(id=1,smin=smin32=0,smax=umax=smax32=umax32=255,var_off=(0x0; 0xff))
+46: (7b) *(u64 *)(r10 -144) = r2      ; R2=scalar(smin=smin32=0,smax=umax=smax32=umax32=255,var_off=(0x0; 0xff)) R10=fp0 fp-144=scalar(smin=smin32=0,smax=umax=smax32=umax32=255,var_off=(0x0; 0xff))
+; if proto != l4::IPPROTO_UDP && proto != l4::IPPROTO_TCP {
+47: (16) if w2 == 0x11 goto pc+2      ; R2=scalar(smin=smin32=0,smax=umax=smax32=umax32=255,var_off=(0x0; 0xff))
+48: (79) r2 = *(u64 *)(r10 -144)      ; R2_w=scalar(smin=smin32=0,smax=umax=smax32=umax32=255,var_off=(0x0; 0xff)) R10=fp0 fp-144=scalar(smin=smin32=0,smax=umax=smax32=umax32=255,var_off=(0x0; 0xff))
+49: (56) if w2 != 0x6 goto pc+93      ; R2_w=6
+; unsafe { mem::transmute(bytes) }
+50: (64) w6 <<= 8                     ; R6_w=scalar(smin=smin32=0,smax=umax=smax32=umax32=0xff00,var_off=(0x0; 0xff00))
+51: (4c) w6 |= w0                     ; R0=scalar(smin=smin32=0,smax=umax=smax32=umax32=255,var_off=(0x0; 0xff)) R6_w=scalar()
+; intrinsics::bswap(self as $ActualT) as Self
+52: (bf) r0 = r6                      ; R0_w=scalar(id=2) R6_w=scalar(id=2)
+53: (dc) r0 = be16 r0                 ; R0_w=scalar()
+; let offset = word & OFFSET_MASK;
+54: (54) w0 &= 8191                   ; R0=scalar(smin=smin32=0,smax=umax=smax32=umax32=8191,var_off=(0x0; 0x1fff))
+; match (more, offset) {
+55: (56) if w0 != 0x0 goto pc+87      ; R0=0
+; let (l4_len, tcp_flags, hdr_len) = if proto == l4::IPPROTO_UDP {
+56: (79) r2 = *(u64 *)(r10 -144)      ; R2_w=scalar(smin=smin32=0,smax=umax=smax32=umax32=255,var_off=(0x0; 0xff)) R10=fp0 fp-144=scalar(smin=smin32=0,smax=umax=smax32=umax32=255,var_off=(0x0; 0xff))
+57: (56) if w2 != 0x11 goto pc+9      ; R2_w=17
+; unsafe { mem::transmute(bytes) }
+58: (64) w5 <<= 8                     ; R5_w=scalar(smin=smin32=0,smax=umax=smax32=umax32=0xff00,var_off=(0x0; 0xff00))
+59: (4c) w5 |= w9                     ; R5_w=scalar() R9=scalar(smin=smin32=0,smax=umax=smax32=umax32=255,var_off=(0x0; 0xff))
+60: (b7) r2 = 8                       ; R2_w=8
+61: (7b) *(u64 *)(r10 -320) = r2      ; R2_w=8 R10=fp0 fp-320_w=8
+62: (b4) w2 = 0                       ; R2_w=0
+; intrinsics::bswap(self as $ActualT) as Self
+63: (63) *(u32 *)(r10 -328) = r2      ; R2_w=0 R10=fp0 fp-328=????0
+64: (dc) r5 = be16 r5                 ; R5_w=scalar()
+65: (7b) *(u64 *)(r10 -336) = r5      ; R5_w=scalar() R10=fp0 fp-336_w=mmmmmmmm
+66: (05) goto pc+13
+; words as usize * 4
+80: (bf) r2 = r4                      ; R2_w=scalar(id=3,smin=smin32=0,smax=umax=smax32=umax32=255,var_off=(0x0; 0xff)) R4=scalar(id=3,smin=smin32=0,smax=umax=smax32=umax32=255,var_off=(0x0; 0xff))
+81: (dc) r6 = be64 r6                 ; R6_w=scalar()
+82: (77) r6 >>= 61                    ; R6_w=scalar(smin=smin32=0,smax=umax=smax32=umax32=7,var_off=(0x0; 0x7))
+83: (54) w6 &= 1                      ; R6_w=scalar(smin=smin32=0,smax=umax=smax32=umax32=1,var_off=(0x0; 0x1))
+84: (79) r4 = *(u64 *)(r10 -160)      ; R4_w=scalar(smin=smin32=0,smax=umax=smax32=umax32=255,var_off=(0x0; 0xff)) R10=fp0 fp-160=scalar(smin=smin32=0,smax=umax=smax32=umax32=255,var_off=(0x0; 0xff))
+; Self::from_be(Self::from_ne_bytes(bytes))
+85: (64) w4 <<= 8                     ; R4_w=scalar(smin=smin32=0,smax=umax=smax32=umax32=0xff00,var_off=(0x0; 0xff00))
+86: (61) r1 = *(u32 *)(r10 -216)      ; R1_w=scalar(smin=smin32=0,smax=umax=smax32=umax32=255,var_off=(0x0; 0xff)) R10=fp0 fp-216=????scalar(smin=smin32=0,smax=umax=smax32=umax32=255,var_off=(0x0; 0xff))
+87: (4c) w4 |= w1                     ; R1_w=scalar(smin=smin32=0,smax=umax=smax32=umax32=255,var_off=(0x0; 0xff)) R4_w=scalar()
+88: (79) r1 = *(u64 *)(r10 -168)      ; R1_w=scalar(smin=smin32=0,smax=umax=smax32=umax32=255,var_off=(0x0; 0xff)) R10=fp0 fp-168=scalar(smin=smin32=0,smax=umax=smax32=umax32=255,var_off=(0x0; 0xff))
+89: (64) w1 <<= 8                     ; R1_w=scalar(smin=smin32=0,smax=umax=smax32=umax32=0xff00,var_off=(0x0; 0xff00))
+90: (61) r3 = *(u32 *)(r10 -208)      ; R3_w=scalar(smin=smin32=0,smax=umax=smax32=umax32=255,var_off=(0x0; 0xff)) R10=fp0 fp-208=????scalar(smin=smin32=0,smax=umax=smax32=umax32=255,var_off=(0x0; 0xff))
+91: (4c) w1 |= w3                     ; R1_w=scalar() R3_w=scalar(smin=smin32=0,smax=umax=smax32=umax32=255,var_off=(0x0; 0xff))
+92: (dc) r1 = be16 r1                 ; R1_w=scalar()
+93: (7b) *(u64 *)(r10 -168) = r1      ; R1_w=scalar() R10=fp0 fp-168_w=mmmmmmmm
+94: (dc) r4 = be16 r4                 ; R4_w=scalar()
+95: (7b) *(u64 *)(r10 -160) = r4      ; R4_w=scalar() R10=fp0 fp-160_w=mmmmmmmm
+; unsafe { mem::transmute(bytes) }
+96: (64) w2 <<= 8                     ; R2_w=scalar(smin=smin32=0,smax=umax=smax32=umax32=0xff00,var_off=(0x0; 0xff00))
+97: (61) r1 = *(u32 *)(r10 -152)      ; R1_w=scalar(smin=smin32=0,smax=umax=smax32=umax32=255,var_off=(0x0; 0xff)) R10=fp0 fp-152=????scalar(smin=smin32=0,smax=umax=smax32=umax32=255,var_off=(0x0; 0xff))
+98: (4c) w2 |= w1                     ; R1_w=scalar(smin=smin32=0,smax=umax=smax32=umax32=255,var_off=(0x0; 0xff)) R2_w=scalar()
+99: (b7) r1 = 34                      ; R1_w=34
+100: (7b) *(u64 *)(r10 -344) = r1     ; R1_w=34 R10=fp0 fp-344_w=34
+101: (b7) r1 = 14                     ; R1_w=14
+102: (7b) *(u64 *)(r10 -216) = r1     ; R1_w=14 R10=fp0 fp-216_w=14
+103: (b4) w0 = 255                    ; R0_w=255
+104: (b4) w1 = 0                      ; R1_w=0
+; intrinsics::bswap(self as $ActualT) as Self
+105: (63) *(u32 *)(r10 -232) = r1     ; R1_w=0 R10=fp0 fp-232=????0
+106: (dc) r2 = be16 r2                ; R2_w=scalar()
+107: (7b) *(u64 *)(r10 -224) = r2     ; R2_w=scalar() R10=fp0 fp-224_w=mmmmmmmm
+108: (63) *(u32 *)(r10 -248) = r1     ; R1_w=0 R10=fp0 fp-248=????0
+109: (63) *(u32 *)(r10 -256) = r1     ; R1_w=0 R10=fp0 fp-256=????0
+110: (63) *(u32 *)(r10 -264) = r1     ; R1_w=0 R10=fp0 fp-264=????0
+111: (63) *(u32 *)(r10 -272) = r1     ; R1_w=0 R10=fp0 fp-272=????0
+112: (63) *(u32 *)(r10 -280) = r1     ; R1_w=0 R10=fp0 fp-280=????0
+113: (63) *(u32 *)(r10 -288) = r1     ; R1_w=0 R10=fp0 fp-288=????0
+114: (63) *(u32 *)(r10 -296) = r1     ; R1_w=0 R10=fp0 fp-296=????0
+115: (63) *(u32 *)(r10 -304) = r1     ; R1_w=0 R10=fp0 fp-304=????0
+116: (b4) w1 = 255                    ; R1_w=255
+117: (63) *(u32 *)(r10 -240) = r1     ; R1_w=255 R10=fp0 fp-240=????255
+118: (b4) w1 = 0                      ; R1_w=0
+119: (63) *(u32 *)(r10 -152) = r1     ; R1_w=0 R10=fp0 fp-152=????0
+120: (63) *(u32 *)(r10 -352) = r1     ; R1_w=0 R10=fp0 fp-352=????0
+121: (63) *(u32 *)(r10 -312) = r1     ; R1_w=0 R10=fp0 fp-312=????0
+122: (63) *(u32 *)(r10 -208) = r1     ; R1_w=0 R10=fp0 fp-208=????0
+123: (b4) w5 = 0                      ; R5_w=0
+124: (bf) r2 = r8                     ; R2_w=pkt_end() R8=pkt_end()
+; intrinsics::volatile_load(src)
+125: (18) r3 = 0xffff8ca443d1dd94     ; R3_w=map_value(map=.rodata,ks=4,vs=76,off=68)
+127: (61) r3 = *(u32 *)(r3 +0)        ; R3_w=0x40000
+; if crate::settings::stage_cutoff() == $stages {
+128: (54) w3 &= -65536                ; R3_w=0x40000
+129: (56) if w3 != 0x20000 goto pc+289        ; R3_w=0x40000
+; _ => (ext[1] as usize + 1) * 8,
+419: (bc) w8 = w0                     ; R0_w=255 R8_w=255
+; intrinsics::saturating_sub(self, rhs)
+420: (bf) r3 = r2                     ; R2_w=pkt_end() R3_w=pkt_end()
+421: (1f) r3 -= r7                    ; R3_w=scalar() R7=pkt(r=42)
+422: (b4) w0 = 1                      ; R0_w=1
+423: (2d) if r3 > r2 goto pc+1        ; R2_w=pkt_end() R3_w=scalar()
+424: (b4) w0 = 0                      ; R0=0
+425: (b7) r4 = 0                      ; R4_w=0
+426: (79) r9 = *(u64 *)(r10 -224)     ; R9_w=scalar() R10=fp0 fp-224=mmmmmmmm
+427: (56) if w0 != 0x0 goto pc+1      ; R0=0
+428: (bf) r4 = r3                     ; R3=scalar(id=4) R4_w=scalar(id=4)
+; let view = PacketView {
+429: (61) r3 = *(u32 *)(r10 -152)     ; R3_w=0 R10=fp0 fp-152=????0
+430: (73) *(u8 *)(r10 -9) = r3        ; R3_w=0 R10=fp0 fp-16=0???????
+431: (61) r3 = *(u32 *)(r10 -208)     ; R3_w=0 R10=fp0 fp-208=????0
+432: (73) *(u8 *)(r10 -10) = r3       ; R3_w=0 R10=fp0 fp-16=00??????
+433: (73) *(u8 *)(r10 -11) = r5       ; R5=0 R10=fp0 fp-16=000?????
+434: (73) *(u8 *)(r10 -12) = r1       ; R1=0 R10=fp0 fp-16=0000????
+435: (61) r1 = *(u32 *)(r10 -328)     ; R1_w=0 R10=fp0 fp-328=????0
+436: (73) *(u8 *)(r10 -13) = r1       ; R1_w=0 R10=fp0 fp-16=00000???
+437: (73) *(u8 *)(r10 -14) = r6       ; R6=scalar(smin=smin32=0,smax=umax=smax32=umax32=1,var_off=(0x0; 0x1)) R10=fp0 fp-16=00000m??
+438: (79) r1 = *(u64 *)(r10 -144)     ; R1_w=scalar(smin=smin32=0,smax=umax=smax32=umax32=255,var_off=(0x0; 0xff)) R10=fp0 fp-144=scalar(smin=smin32=0,smax=umax=smax32=umax32=255,var_off=(0x0; 0xff))
+439: (73) *(u8 *)(r10 -15) = r1       ; R1_w=scalar(smin=smin32=0,smax=umax=smax32=umax32=255,var_off=(0x0; 0xff)) R10=fp0 fp-16=00000mm?
+440: (61) r1 = *(u32 *)(r10 -352)     ; R1_w=0 R10=fp0 fp-352=????0
+441: (73) *(u8 *)(r10 -16) = r1       ; R1_w=0 R10=fp0 fp-16=00000mm0
+442: (79) r1 = *(u64 *)(r10 -336)     ; R1_w=scalar() R10=fp0 fp-336=mmmmmmmm
+443: (6b) *(u16 *)(r10 -20) = r1      ; R1_w=scalar() R10=fp0 fp-24=??mm????
+444: (6b) *(u16 *)(r10 -22) = r9      ; R9_w=scalar() R10=fp0 fp-24=??mmmm??
+445: (79) r1 = *(u64 *)(r10 -168)     ; R1_w=scalar() R10=fp0 fp-168=mmmmmmmm
+446: (6b) *(u16 *)(r10 -24) = r1      ; R1_w=scalar() R10=fp0 fp-24=??mmmmmm
+447: (79) r1 = *(u64 *)(r10 -160)     ; R1_w=scalar() R10=fp0 fp-160=mmmmmmmm
+448: (6b) *(u16 *)(r10 -26) = r1      ; R1_w=scalar() R10=fp0 fp-32=mm??????
+449: (61) r1 = *(u32 *)(r10 -176)     ; R1_w=scalar(smin=smin32=0,smax=umax=smax32=umax32=255,var_off=(0x0; 0xff)) R10=fp0 fp-176=????scalar(smin=smin32=0,smax=umax=smax32=umax32=255,var_off=(0x0; 0xff))
+450: (73) *(u8 *)(r10 -33) = r1       ; R1_w=scalar(smin=smin32=0,smax=umax=smax32=umax32=255,var_off=(0x0; 0xff)) R10=fp0 fp-40=m???????
+451: (61) r1 = *(u32 *)(r10 -184)     ; R1_w=scalar(smin=smin32=0,smax=umax=smax32=umax32=255,var_off=(0x0; 0xff)) R10=fp0 fp-184=????scalar(smin=smin32=0,smax=umax=smax32=umax32=255,var_off=(0x0; 0xff))
+452: (73) *(u8 *)(r10 -34) = r1       ; R1_w=scalar(smin=smin32=0,smax=umax=smax32=umax32=255,var_off=(0x0; 0xff)) R10=fp0 fp-40=mm??????
+453: (61) r1 = *(u32 *)(r10 -192)     ; R1_w=scalar(smin=smin32=0,smax=umax=smax32=umax32=255,var_off=(0x0; 0xff)) R10=fp0 fp-192=????scalar(smin=smin32=0,smax=umax=smax32=umax32=255,var_off=(0x0; 0xff))
+454: (73) *(u8 *)(r10 -35) = r1       ; R1_w=scalar(smin=smin32=0,smax=umax=smax32=umax32=255,var_off=(0x0; 0xff)) R10=fp0 fp-40=mmm?????
+455: (61) r1 = *(u32 *)(r10 -200)     ; R1_w=scalar(smin=smin32=0,smax=umax=smax32=umax32=255,var_off=(0x0; 0xff)) R10=fp0 fp-200=????scalar(smin=smin32=0,smax=umax=smax32=umax32=255,var_off=(0x0; 0xff))
+456: (73) *(u8 *)(r10 -36) = r1       ; R1_w=scalar(smin=smin32=0,smax=umax=smax32=umax32=255,var_off=(0x0; 0xff)) R10=fp0 fp-40=mmmm????
+457: (61) r1 = *(u32 *)(r10 -240)     ; R1_w=255 R10=fp0 fp-240=????255
+458: (73) *(u8 *)(r10 -37) = r1       ; R1_w=255 R10=fp0 fp-40=mmmmm???
+459: (73) *(u8 *)(r10 -38) = r8       ; R8=255 R10=fp0 fp-40=mmmmmm??
+460: (61) r1 = *(u32 *)(r10 -304)     ; R1_w=0 R10=fp0 fp-304=????0
+461: (73) *(u8 *)(r10 -39) = r1       ; R1_w=0 R10=fp0 fp-40=mmmmmm0?
+462: (61) r1 = *(u32 *)(r10 -296)     ; R1_w=0 R10=fp0 fp-296=????0
+463: (73) *(u8 *)(r10 -40) = r1       ; R1_w=0 R10=fp0 fp-40=mmmmmm00
+464: (61) r1 = *(u32 *)(r10 -288)     ; R1_w=0 R10=fp0 fp-288=????0
+465: (73) *(u8 *)(r10 -41) = r1       ; R1_w=0 R10=fp0 fp-48=0???????
+466: (61) r1 = *(u32 *)(r10 -280)     ; R1_w=0 R10=fp0 fp-280=????0
+467: (73) *(u8 *)(r10 -42) = r1       ; R1_w=0 R10=fp0 fp-48=00??????
+468: (61) r1 = *(u32 *)(r10 -272)     ; R1_w=0 R10=fp0 fp-272=????0
+469: (73) *(u8 *)(r10 -43) = r1       ; R1_w=0 R10=fp0 fp-48=000?????
+470: (61) r1 = *(u32 *)(r10 -264)     ; R1_w=0 R10=fp0 fp-264=????0
+471: (73) *(u8 *)(r10 -44) = r1       ; R1_w=0 R10=fp0 fp-48=0000????
+472: (61) r1 = *(u32 *)(r10 -256)     ; R1_w=0 R10=fp0 fp-256=????0
+473: (73) *(u8 *)(r10 -45) = r1       ; R1_w=0 R10=fp0 fp-48=00000???
+474: (61) r1 = *(u32 *)(r10 -248)     ; R1_w=0 R10=fp0 fp-248=????0
+475: (73) *(u8 *)(r10 -46) = r1       ; R1_w=0 R10=fp0 fp-48=000000??
+476: (61) r1 = *(u32 *)(r10 -232)     ; R1_w=0 R10=fp0 fp-232=????0
+477: (73) *(u8 *)(r10 -47) = r1       ; R1_w=0 R10=fp0 fp-48=0000000?
+478: (61) r1 = *(u32 *)(r10 -312)     ; R1_w=0 R10=fp0 fp-312=????0
+479: (73) *(u8 *)(r10 -48) = r1       ; R1_w=0 R10=fp0 fp-48=00000000
+480: (7b) *(u64 *)(r10 -56) = r2      ; R2=pkt_end() R10=fp0 fp-56_w=pkt_end()
+481: (7b) *(u64 *)(r10 -64) = r7      ; R7=pkt(r=42) R10=fp0 fp-64_w=pkt(r=42)
+482: (79) r2 = *(u64 *)(r10 -344)     ; R2_w=34 R10=fp0 fp-344=34
+483: (79) r1 = *(u64 *)(r10 -320)     ; R1_w=8 R10=fp0 fp-320=8
+; payload_off: (l3.l4_off + l4.hdr_len) as u16,
+484: (0c) w1 += w2                    ; R1_w=42 R2_w=34
+; let view = PacketView {
+485: (6b) *(u16 *)(r10 -28) = r1      ; R1_w=42 R10=fp0 fp-32=mmmm????
+; if other < self { other } else { self }
+486: (a5) if r4 < 0xffff goto pc+1    ; R4_w=scalar(id=4,umin=65535)
+487: (b7) r4 = 65535                  ; R4=0xffff
+; let view = PacketView {
+488: (6b) *(u16 *)(r10 -30) = r2      ; R2=34 R10=fp0 fp-32=mmmmmm??
+489: (79) r7 = *(u64 *)(r10 -216)     ; R7_w=14 R10=fp0 fp-216=14
+490: (6b) *(u16 *)(r10 -32) = r7      ; R7_w=14 R10=fp0 fp-32=mmmmmm14
+491: (6b) *(u16 *)(r10 -18) = r4      ; R4=0xffff R10=fp0 fp-24=mmmmmmmm
+; intrinsics::volatile_load(src)
+492: (18) r1 = 0xffff8ca443d1dd94     ; R1_w=map_value(map=.rodata,ks=4,vs=76,off=68)
+494: (61) r1 = *(u32 *)(r1 +0)        ; R1_w=0x40000
+; if crate::settings::stage_cutoff() == $stages {
+495: (54) w1 &= -65536                ; R1_w=0x40000
+496: (56) if w1 != 0x30000 goto pc+7          ; R1_w=0x40000
+; crate::intrinsics::black_box(dummy)
+504: (bf) r3 = r2                     ; R2=34 R3_w=34
+; intrinsics::saturating_sub(self, rhs)
+505: (bc) w5 = w3                     ; R3_w=34 R5_w=34
+506: (1c) w5 -= w7                    ; R5_w=20 R7_w=14
+507: (b4) w2 = 0                      ; R2_w=0
+508: (b4) w1 = 1                      ; R1_w=1
+509: (b4) w0 = 1                      ; R0_w=1
+510: (2e) if w5 > w3 goto pc+1        ; R3_w=34 R5_w=20
+511: (b4) w0 = 0                      ; R0=0
+512: (b4) w3 = 0                      ; R3_w=0
+513: (56) if w0 != 0x0 goto pc+1      ; R0=0
+514: (bc) w3 = w5                     ; R3_w=20 R5=20
+; intrinsics::saturating_sub(self, rhs)
+515: (bc) w0 = w4                     ; R0_w=0xffff R4=0xffff
+516: (54) w0 &= 65535                 ; R0_w=0xffff
+517: (bc) w5 = w0                     ; R0_w=0xffff R5_w=0xffff
+518: (1c) w5 -= w7                    ; R5_w=0xfff1 R7=14
+519: (2e) if w5 > w0 goto pc+1        ; R0_w=0xffff R5_w=0xfff1
+520: (b4) w1 = 0                      ; R1=0
+521: (56) if w1 != 0x0 goto pc+1      ; R1=0
+522: (bc) w2 = w5                     ; R2_w=0xfff1 R5=0xfff1
+523: (b4) w1 = 3                      ; R1_w=3
+; if view.ip_total_len < header_bytes || view.ip_total_len > ip_bytes {
+524: (54) w9 &= 65535                 ; R9_w=scalar(smin=smin32=0,smax=umax=smax32=umax32=0xffff,var_off=(0x0; 0xffff))
+525: (2e) if w9 > w2 goto pc+36       ; R2_w=0xfff1 R9_w=scalar(smin=smin32=0,smax=umax=smax32=umax32=0xfff1,var_off=(0x0; 0xffff))
+526: (54) w3 &= 65535                 ; R3_w=20
+527: (ae) if w9 < w3 goto pc+34       ; R3_w=20 R9_w=scalar(smin=umin=smin32=umin32=20,smax=umax=smax32=umax32=0xfff1,var_off=(0x0; 0xffff))
+528: (61) r1 = *(u32 *)(r10 -208)     ; R1_w=0 R10=fp0 fp-208=????0
+; self.anomalies & anomaly != 0
+529: (54) w1 &= 1                     ; R1=0
+; if view.has(anomaly::IP_OPTIONS_PRESENT) && !settings::accept_ip_options() {
+530: (56) if w1 != 0x0 goto pc+24     ; R1=0
+; match self.frag_raw {
+531: (a6) if w6 < 0x2 goto pc+1       ; R6=scalar(smin=smin32=0,smax=umax=smax32=umax32=1,var_off=(0x0; 0x1))
+533: (79) r1 = *(u64 *)(r10 -144)     ; R1_w=scalar(smin=smin32=0,smax=umax=smax32=umax32=255,var_off=(0x0; 0xff)) R10=fp0 fp-144=scalar(smin=smin32=0,smax=umax=smax32=umax32=255,var_off=(0x0; 0xff))
+; match view.proto {
+534: (54) w1 &= 255                   ; R1_w=scalar(smin=smin32=0,smax=umax=smax32=umax32=255,var_off=(0x0; 0xff))
+535: (16) if w1 == 0x6 goto pc+170    ; R1_w=scalar(smin=smin32=0,smax=umax=smax32=umax32=255,var_off=(0x0; 0xff))
+536: (56) if w1 != 0x11 goto pc+251   ; R1_w=17
+537: (b4) w1 = 4                      ; R1_w=4
+; if view.l4_len < UDP_HDR_LEN {
+538: (79) r2 = *(u64 *)(r10 -336)     ; R2=scalar() R10=fp0 fp-336=mmmmmmmm
+539: (a6) if w2 < 0x8 goto pc+22      ; R2=scalar(smin=0x8000000000000008,umin=umin32=8)
+; intrinsics::saturating_sub(self, rhs)
+540: (54) w4 &= 65535                 ; R4_w=0xffff
+541: (bc) w3 = w4                     ; R3_w=0xffff R4_w=0xffff
+542: (79) r2 = *(u64 *)(r10 -344)     ; R2_w=34 R10=fp0 fp-344=34
+543: (1c) w3 -= w2                    ; R2_w=34 R3_w=0xffdd
+544: (b4) w2 = 0                      ; R2_w=0
+545: (b4) w5 = 1                      ; R5_w=1
+546: (2e) if w3 > w4 goto pc+1        ; R3_w=0xffdd R4_w=0xffff
+547: (b4) w5 = 0                      ; R5=0
+548: (56) if w5 != 0x0 goto pc+1      ; R5=0
+549: (bc) w2 = w3                     ; R2_w=0xffdd R3=0xffdd
+; match self.frag_raw {
+550: (16) if w6 == 0x1 goto pc+237    ; R6=0
+551: (54) w2 &= 65535                 ; R2_w=0xffdd
+552: (79) r3 = *(u64 *)(r10 -336)     ; R3_w=scalar() R10=fp0 fp-336=mmmmmmmm
+553: (2e) if w3 > w2 goto pc+8        ; R2_w=0xffdd R3_w=scalar(smax=0x7fffffff0000ffdd,umax=0xffffffff0000ffdd,smin32=0,smax32=umax32=0xffdd,var_off=(0x0; 0xffffffff0000ffff))
+554: (05) goto pc+233
+; if flags & TCP_SYN != 0 && flags & TCP_FIN != 0 {
+788: (bf) r1 = r10                    ; R1_w=fp0 R10=fp0
+789: (07) r1 += -64                   ; R1_w=fp-64
+; Ok(view)
+790: (bf) r2 = r10                    ; R2_w=fp0 R10=fp0
+791: (07) r2 += -120                  ; R2_w=fp-120
+792: (69) r3 = *(u16 *)(r1 +0)
+invalid size of register fill
+verification time 1285 usec
+stack depth 352+0+0+0+0+0+0+0+0+0+0+0+0+0
+processed 247 insns (limit 1000000) max_states_per_insn 0 total_states 11 peak_states 11 mark_read 5
+
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace

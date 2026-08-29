@@ -42,6 +42,11 @@ pub enum ParseError {
     /// IP options present and the operator has not said they are acceptable. A policy
     /// and not a fact about the packet, which is why it is stated as one.
     IpOptions,
+    /// The measurement build stopped the parse here. Absent from the object that ships,
+    /// and intercepted by `stage::run` before `outcome` so that a cut level does not bump
+    /// a counter the levels around it do not.
+    #[cfg(feature = "stage-cutoff")]
+    Cutoff,
 }
 
 impl ParseError {
@@ -60,6 +65,11 @@ impl ParseError {
             Self::L4Length => (xdp_action::XDP_DROP, CounterId::SanityL4Length),
             Self::TcpFlags => (xdp_action::XDP_DROP, CounterId::SanityTcpFlags),
             Self::IpOptions => (xdp_action::XDP_DROP, CounterId::SanityIpOptionsRefused),
+            // Never reached: `stage::run` matches this variant first. It is here because
+            // the match is exhaustive and a wildcard would swallow a real variant added
+            // later.
+            #[cfg(feature = "stage-cutoff")]
+            Self::Cutoff => (xdp_action::XDP_PASS, CounterId::ParseUnknownEncap),
         }
     }
 }
@@ -145,13 +155,48 @@ impl Window {
     }
 }
 
+/// Ends the parse here when the measurement asked for one this deep.
+///
+/// A second macro rather than `stage::cut!` because this one returns a `Result` and that one
+/// returns an action.
+///
+/// **There is one cut inside the parse and not three, and the verifier is why.** The split
+/// this was written for was headers / view construction / checks, with `black_box` holding
+/// each phase in place so the optimiser could not sink dead work past the branch. Passing
+/// `black_box` a `&PacketView` forces the fifty-six bytes onto the stack, and the code after
+/// it reads `u16` fields back out: the verifier refuses a fill narrower than the eight-byte
+/// slot a spill occupies — `invalid size of register fill` — and the program does not load.
+///
+/// What that refusal says is the answer to the question the split was asking. The view never
+/// touches memory in the shipped program; it lives in registers and `refuse` reads it there.
+/// So "materialising the struct" is not a cost that exists to be measured, and the two
+/// separable halves are the reading and the checking.
+///
+/// Nothing holds the loads in place, and nothing needs to: what the reading half costs is the
+/// bounds comparisons, and those are control flow — `Window::bytes` returns `None` and the
+/// parse returns an error — which the optimiser may not remove. Only the raw loads could sink,
+/// and `stage_cost.rs` asserts that the two halves sum to the whole precisely so that a
+/// reordering around the instrument shows up as a failing test rather than as a ventilation.
+#[cfg(feature = "stage-cutoff")]
+macro_rules! cut_parse {
+    ($stages:expr) => {
+        if crate::settings::stage_cutoff() == $stages {
+            return Err(ParseError::Cutoff);
+        }
+    };
+}
+
+#[cfg(not(feature = "stage-cutoff"))]
+macro_rules! cut_parse {
+    ($stages:expr) => {};
+}
+
 pub fn parse(ctx: &XdpContext) -> Result<PacketView, ParseError> {
     let win = Window::of(ctx);
     let (l2, l3, l4) = match fast::headers(&win) {
         Some(headers) => headers,
         None => walk(&win)?,
     };
-
     let view = PacketView {
         data: win.start as u64,
         data_end: win.end as u64,
@@ -173,6 +218,10 @@ pub fn parse(ctx: &XdpContext) -> Result<PacketView, ParseError> {
         anomalies: l3.anomalies,
         vlan_tags: l2.vlan_tags,
     };
+
+    // Level 2: every header is read and the view is built. What is left is the checks, whose
+    // cost used to be inside the one `parse` figure with no way to see it.
+    cut_parse!(2);
 
     refuse(&view)?;
     Ok(view)
