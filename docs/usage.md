@@ -153,7 +153,59 @@ takes one program per interface, and replacing it would silently stop whatever i
 
 ---
 
-## 6. Arming
+## 6. The configuration file, and which table a rule lands in
+
+```bash
+sudo loricad --object ./lorica-ebpf --config /etc/lorica.toml
+```
+
+[`examples/lorica.toml`](../examples/lorica.toml) is annotated and compiles as it stands. It
+carries the profile, the mode, the policy bits, the named scopes, the signature selection and
+the rules. `--policy`, `--counters` and `--mode` are refused alongside it, each named: the file
+carries all three, and two places to set one thing make "why is this rule not firing" depend on
+which one you read.
+
+**Every value is checked before anything is loaded.** A bad prefix, an allow with no scope, a
+configuration that does not fit its profile's memory budget — all of them reach you at the
+prompt, with the two numbers where a budget is involved, and no map is created.
+
+### Two tables, and the file does not say which
+
+Stage 3 has two halves. An IPv4 `deny` with no scope and no `ttl_secs` goes into the two flat
+tables: 4 MiB covering every `/24` and 16 MiB of exact addresses, read in **one memory access**
+and costing no kernel memory per entry. Everything else goes into the trie, whose cost does grow
+with what you put in it — a scope, a deadline and IPv6 are the three things the flat tables have
+no room for.
+
+Which half holds a rule is decided by the rule and never written in the file. On startup the
+agent says what it did:
+
+```
+loricad: 2 prefixes in the flat tables (1 keys, 0 expanded, worst probe 0), one write
+loricad: 2 operator entries and 28 bogon prefixes in the list, room for 16414
+```
+
+Two things follow that are worth knowing before you read a dashboard:
+
+- **The counters are the same either way.** Both halves bump `lorica_lpm_drop_hit` and
+  `lorica_lpm_allow_exit`, so the number is right whichever table answered. What a flat hit
+  cannot give you is attribution to one line of your file — eight bytes a slot leave nowhere to
+  put a counter index.
+- **A less specific rule never overtakes a more specific one**, even across the two tables. The
+  flat tables are read first, so a `/24` deny placed there would answer before a `/32` allow in
+  the trie; the compiler therefore keeps that `/24` in the trie instead. Precedence is the
+  specificity of the address, always, and never the order of declaration or the structure a
+  rule compiled into.
+
+### Arming a stage is not the same thing as arming the agent
+
+`enforce_signatures` and `enforce_buckets` in `[settings]` — or `--policy` — decide whether
+**stages** refuse traffic they classify themselves. `mode` decides whether the **ladder** may
+write a refusal it worked out. The two are independent, and the next section is about the second.
+
+---
+
+## 7. Arming the ladder
 
 ```bash
 sudo lorica-ctl arm
@@ -180,7 +232,7 @@ withdrawn — the list is shared, and emptying it would remove the operator's ow
 
 ---
 
-## 7. Tuning the sweep
+## 8. Tuning the sweep
 
 Two knobs, and they are not the same knob.
 
@@ -200,12 +252,21 @@ the mapping and which it names at startup when it does.
 
 ---
 
-## 8. What has no answer yet
+## 9. What has no answer yet
 
-`lorica-ctl reload` refuses, and says why: this agent takes its settings from the loaded object
-and reads no configuration file, so there is nothing to re-read. A `reload` that answered success
-would let you conclude your edited file is in force.
+`lorica-ctl reload` refuses, and says why: a configuration file is read **once, at startup**, so
+there is nothing to re-read without a restart. A `reload` that answered success would let you
+conclude your edited file is in force. Restarting is the supported path and the design expects
+it — the policy word, the signature selection and the map sizes are all fixed at load, because
+reading them from a map instead would cost a helper call on every packet that reaches a stage
+with a knob.
 
-There is likewise no way to arm the signature, bucket or reverse-path stages, and no way to load
-an operator blocklist into the flat tables. Both are named in [limits.md](limits.md) and tracked
-in the [wiki status page](https://github.com/lorica-labs/lorica/wiki/Status).
+**The reverse-path stage cannot be armed, and deliberately has no flag.** Whether a strict check
+discriminates anything is a property of your routing table, not a preference: on a host with a
+default route it refuses nothing and costs every packet a `bpf_fib_lookup`. The agent is supposed
+to evaluate that criterion and set the bit itself, and it does not yet.
+
+**The ladder cannot refuse anything it worked out for itself.** Rungs 3 and above need a key
+whose own counter slot is rising and rungs 5 and 6 need the bucket bank, and the tick publishes
+neither. Both are named in [limits.md](limits.md) §6 and tracked on the
+[wiki status page](https://github.com/lorica-labs/lorica/wiki/Status).

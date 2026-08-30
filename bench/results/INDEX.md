@@ -87,3 +87,63 @@ for the nanoseconds.
 | Shared unlocked bank, lost updates | "charges 0.3819, so 2.62x offered" | that fixture had four cores doing nothing else; the real stage leaks **nothing** under a uniform distribution |
 | bpf_fib_lookup vs LPM lookup | 48 ns, ratio 5.3 | the fixture was low by about three: **+140 ns** on the real stage |
 | Unified list, shallow miss / deep miss / hit | 251–581 ns, whole pipelines at a ~250 ns base | re-measured on the seven-stage pipeline; the shallow-miss flatness was **the probe key** |
+
+---
+
+## Parse campaign, 30 August 2026, VM 901 on 6.8.0-138
+
+Instructions per packet, whole path, harness subtracted, on the steady-state packet: a
+legitimate UDP datagram that matches no entry and walks the pipeline to the end. Every row was
+reproduced in a second pass and both figures are given, because the interesting deltas here are
+smaller than a cycle measurement on this machine can resolve.
+
+**Read these as a chain, not as a table of alternatives.** Each row is the tree of the row above
+it plus one change, so the last row is the shipped program and the first is where the day
+started.
+
+| Change | instr/packet | reproduced | Data |
+|---|---:|---:|---|
+| baseline, fast path present, headers copied | 1480.2 | 1480.2 | `stage-cost-pointer/` (first sweep) |
+| fast path reads from a pointer instead of a copy | 1458.0 | 1458.3 | `stage-cost-pointer/` |
+| **fast path deleted** | 1430.8 | 1431.4 | `stage-cost-walker-only/` |
+| **every header read at constant offsets from the bound** | 1411.7 | 1412.5 | `stage-cost-header-cursor/` |
+| **view shrunk from 56 bytes to 40** | 1402.3 | 1401.9 | `stage-cost-view40/` |
+| flat blocklist tables populated and counted | 1403.1 | — | `stage-cost-flat-tables/` |
+
+**−77.9 instructions a packet, −5.3 %**, and the entry point from 994 static instructions to
+760. The last row is inside the reproducibility spread of the one above it: the two counter
+bumps stage 3 gained are on verdict paths, not on the 94 % path.
+
+### What the same instrument said about roads not taken
+
+| Question | Answer | Data |
+|---|---|---|
+| What does carrying the IPv6 walker cost an IPv4 packet? | **212.5 instructions, 14.9 %**, for code it executes none of | `stage-cost-no-ipv6/` (1218.2, reproduced 1218.5) |
+| What does the trie half of stage 3 cost? | **245.4 instructions, 17.4 %** | `stage-cost-no-trie/` (1166.3, reproduced 1166.0) |
+| Would putting each parser in its own subprogram help? | **No: 1794.9**, +364. The call boundaries spill more than the pressure they relieve | `stage-cost-subprograms/` |
+
+Neither of the first two is a configuration to ship. An object without the IPv6 walker passes
+every IPv6 packet, and the trie cannot be dropped while `lorica-ctl arm` can move a running
+agent to a mode that writes into it. They are the size of the register-pressure effect,
+measured — see [architecture.md §2](../../docs/architecture.md).
+
+### Retracted
+
+`stage-cost-parse-split/` and `stage-cost-refuse-split/` are the records behind a figure this
+project published and withdrew: splitting the parse level in two reported 210 instructions of
+"reading" and 333 of "checking", and static attribution says `refuse()` is thirteen instructions
+and `udp_length()` two. The 333 was reading, deferred by the optimiser to its point of use. The
+kept lesson is that **a sum test detects cost that was added and is blind to cost that was
+moved** — sinking conserves the total. They are kept rather than deleted because a retraction
+with the data removed asks the next reader to take it on trust.
+
+### Not measured, and why
+
+**Instructions per packet on 7.0.** There is no 7.0 machine in this lab that may be measured:
+the only one is the build VM, which is neither idle nor pinned. Its sweep reported 2431
+instructions a packet for a program the same kernel timed at the same nanoseconds as 6.8, so the
+counter and not the program is what differed, and no file here records it.
+
+What *is* comparable across kernels needs no PMU, and says 7.0 buys nothing on this program:
+8898 bytes JITed and 15240 translated on 6.8, 8909 and 15256 on 7.0, 110 ns against 112 with
+spreads of 5 and 8.

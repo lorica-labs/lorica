@@ -48,7 +48,7 @@ Nine cut points, seven stages, in `crates/lorica-ebpf/src/stage/mod.rs`:
 |---|---|---|---|
 | — | parse | truncation, encapsulation depth, IP/L4 length coherence, TCP flag validity, IP options | **yes**, unconditionally |
 | 2 | ICMP | echo and non-echo policy; path-MTU and neighbour discovery always pass | behind a policy bit |
-| 3 | source list | two flat tables, then the LPM trie. Operator verdicts and detection entries | **yes** — but both structures are empty until something loads them |
+| 3 | source list | two flat tables, then the LPM trie. Operator verdicts and detection entries | **yes**, for what `--config` names; empty without one |
 | 4 | fragments | first fragment passes and is counted; later fragments have no transport header | **yes**, drops later fragments |
 | 5 | reverse path | `bpf_fib_lookup` against the ingress interface | behind a policy bit |
 | 6 | signatures | ten amplification and coherence vectors | counted; enforcement behind a policy bit |
@@ -57,8 +57,12 @@ Nine cut points, seven stages, in `crates/lorica-ebpf/src/stage/mod.rs`:
 **The policy bits are a `.rodata` word patched at load.** The verifier reads `.rodata` as
 constant, so a vector or a stage that is not armed is *removed from the program before it is
 JITed* rather than skipped at run time — the size of the object is a function of the
-configuration. Today the agent writes `DEFAULT_SETTINGS = 0` and offers no way to change it; see
-[limits.md §6](limits.md).
+configuration, which on this target is also a function of its speed.
+
+The word comes from `--policy` or from the `[settings]` block of a configuration file, and the
+names are the same in both. Two of its eight bits are the loader's rather than the operator's:
+the reverse-path bit is a criterion evaluated against the routing table, and the mark bit is a
+kernel capability. Both stay clear today — see [limits.md §6](limits.md).
 
 ### What the verifier forced
 
@@ -78,6 +82,25 @@ Each is worth reading if you write eBPF:
 - **No division anywhere on the packet path**, asserted by a test that decodes all four BPF
   divide forms out of the object. Every quotient is a shift, and every conversion that is not one
   happens once in userspace. → `crates/lorica-dataplane/tests/helper_budget.rs`
+- **Headers are read at constant offsets from a granted bound, never copied out of it.** The
+  verifier refuses a one-byte read at a variable offset, so a header has to be taken under **one**
+  bound — but taking it as `[u8; N]` *by value* is a second thing, and this target has no
+  forty-byte load: the array becomes forty one-byte loads, and forty bytes do not fit in ten
+  registers, so each is spilled as it arrives and read back. `Window::header::<N>` grants the
+  range and keeps the pointer; `N` travels in the type and every offset is checked against it in
+  an inline `const`, so the accessors are safe and the `unsafe` is three lines with a compiler-
+  checked proof. → `crates/lorica-ebpf/src/parse/mod.rs`
+
+**Ten registers are the constraint behind most of this program's cost, which is not obvious and
+is worth stating once.** The entry point holds the parsed view live across seven stage calls, so
+code that a packet *never executes* still costs it: what is merely present changes what the
+allocator can keep. Three measurements make the point. Deleting a fast path for untagged IPv4
+that saved 27 instructions inside the parse cost 76 outside it, so removing it was worth **−49
+instructions a packet on its own best case**. Shrinking the view from 56 bytes to 40, by handing
+the two packet pointers to the one stage that reads them, was worth another 9. And carrying the
+IPv6 walker — 139 instructions an IPv4 packet runs none of — costs that packet **212**. The
+lesson generalises: on this target, deleting code and giving the compiler shapes it can fold
+beats every micro-optimisation tried beside them.
 
 ### The static budgets
 
@@ -87,7 +110,7 @@ Three ceilings are checked in CI against the compiled object, not against intent
 |---|---|---|
 | helper calls present in the packet path | **6 of 6** — list, bank, counters, clock, reverse path, processor id | `tests/helper_budget.rs` |
 | kfunc calls | 0 | same |
-| JITed bytes | 9 995 of 10 491 | `tests/jited_size.rs` |
+| JITed bytes | 8 898 of 10 491 | `tests/jited_size.rs` |
 | division/modulo instructions | 0 | `tests/helper_budget.rs` |
 
 ---
@@ -123,11 +146,30 @@ Two results from simulation are worth citing, both reproducible with
 - **Hopscotch is infeasible here, and that is proved rather than argued.** H=8 requires every key
   within `[home, home+8)`; no draw in two thousand has a maximum probe length below 8.
 
+**Which rules land here is decided by the compiler and never written in the file.** A slot is
+eight bytes: a key, a verdict, a probe length and a fingerprint. There is no room for a scope,
+no room for a deadline and no room for a counter index, so a rule comes here when it needs none
+of the three — IPv4, `deny`, no scope, no `ttl_secs` — and stays in the trie otherwise. That is
+the shape a blocklist has, which is why the split falls where it does rather than anywhere else.
+
+One rule constrains it, and it is a correctness rule rather than a preference. Stage 3 reads
+these tables **first** and the trie only for what they had no verdict for, so a `/24` deny placed
+here answers before a `/32` allow in the trie is ever consulted — precedence by specificity
+inverted, on exactly the pair of rules an operator writes because they expect the longer to win.
+So a prefix goes flat only when nothing longer inside it stays behind, decided against the whole
+configuration and the bogon table before any rule is placed.
+
+Both halves bump the same counters, so a dashboard does not depend on which structure a rule
+compiled into. And a flat rule occupies no slot of the unified list and none of the counter map:
+a million-address blocklist costs the fixed 20 MiB above and nothing per entry.
+
 A bucketised cuckoo alternative — two buckets of eight lanes, eight-bit signatures compared eight
 at a time with a zero-byte search — is implemented behind
-`--features blocklist-cuckoo` and measures **8 387 JITed bytes against 9 995, and 315 fewer
-instructions**. It is not the default: what decides the switch is cycles per packet on traffic
-that reaches the table, and that campaign has not run.
+`--features blocklist-cuckoo` and measured, at the time, **8 387 JITed bytes against 9 995 and
+315 fewer instructions**. It is not the default: what decides the switch is cycles per packet on
+traffic that reaches the table, and that campaign has not run. Both figures predate the parse
+work that took the shipped object to 8 898 bytes, so the comparison needs re-running before it
+decides anything.
 → `crates/lorica-common/src/blocklist/cuckoo.rs`
 
 ### The leaky-bucket bank — shared, lock-free, on cache lines
@@ -152,8 +194,9 @@ non-detection, never a conformant flow wrongly refused.
 
 Reading fifty thousand counter slots ten times a second through `BPF_MAP_LOOKUP_BATCH` cost
 **10.8 % of a core**, and none of it was avoidable inside the syscall: two `copy_to_user` calls
-and a `cond_resched()` per element. The kernel refuses `BPF_F_MMAPABLE` on a per-CPU map, so the
-map became one flat `ARRAY` of `stripe × cpus` u64, laid out CPU-major:
+and a `cond_resched()` per element. The kernel refuses `BPF_F_MMAPABLE` on a per-CPU map — asked
+again directly on 7.0 and answered `EINVAL`, so this is the design and not a floor a newer kernel
+lifts — and the map became one flat `ARRAY` of `stripe × cpus` u64, laid out CPU-major:
 
 ```
 index = cpu × stripe + slot        stripe rounded up to a 64-byte cache line

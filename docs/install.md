@@ -108,12 +108,14 @@ curl -s http://127.0.0.1:9090/metrics | head
 | Option | Default | What it does |
 | --- | --- | --- |
 | `--object PATH` | *required* | The eBPF object to load. |
+| `--config PATH` | none | The configuration: profile, mode, policy bits, named scopes, signature selection and rules. [`examples/lorica.toml`](../examples/lorica.toml) is annotated and compiles as it stands. Read once, at startup. |
+| `--policy NAME,...` | none | Policy bits from the command line, for a deployment with no file: `accept-ip-options`, `drop-icmp-echo`, `drop-icmp-other`, `allow-later-fragments`, `enforce-signatures`, `enforce-buckets`. An unknown name is refused rather than ignored. |
 | `--socket PATH` | `/run/lorica/control.sock` | Where the control socket is bound. |
 | `--counters N` | `34` | Counter slots the map is sized for. The 34 named counters come first; every slot above them belongs to one entry of the unified list. |
 | `--hz N` | `10` | Ticks per second. |
 | `--batch N` | `1000` | Elements per `BPF_MAP_LOOKUP_BATCH` call. |
 | `--sweep-every N` | `1` | Ticks between two full sweeps of the counter map. `1` is every tick; above that, per-entry counters get staler and the CPU cost falls linearly. |
-| `--sweep-stride N` | `1` | Reads one full sweep is spread over. `--sweep-every` skips whole ticks and leaves the worst one where it is; this one cuts the worst read and skips nothing. Only the fallback read path has a worst read worth cutting — see [usage.md §7](usage.md). |
+| `--sweep-stride N` | `1` | Reads one full sweep is spread over. `--sweep-every` skips whole ticks and leaves the worst one where it is; this one cuts the worst read and skips nothing. Only the fallback read path has a worst read worth cutting — see [usage.md §8](usage.md). |
 | `--seconds N` | `0` | Seconds to run before exiting. `0` runs until signalled. |
 | `--metrics ADDR\|off` | `127.0.0.1:9090` | Where `/metrics` listens, or `off`. Loopback by default: a scrape serialises the whole registry, so an off-host address is a decision, not a default. |
 | `--mode observe\|armed` | `observe` | Whether a refusal is applied or only reported. |
@@ -121,6 +123,9 @@ curl -s http://127.0.0.1:9090/metrics | head
 Four startup refusals, so you can recognise them:
 
 - `--hz 0`, `--batch 0` or `--sweep-every 0` never tick, read nothing, or never sweep.
+- **`--config` refuses `--policy`, `--counters` and `--mode` alongside it**, each named. The
+  file carries all three, and a file and a command line that both set one thing make the answer
+  to "why is this rule not firing" depend on which one you looked at.
 - `--counters` below the 34 named counters is refused rather than clamped.
 - `--mode armed` needs at least one slot **above** the named counters — pass `--counters 35`
   or more. An armed agent with no room above them would charge its own refusals to a stage
@@ -135,11 +140,12 @@ counters, runs the detection ladder, and reports the decision it would have take
 the default on purpose: a tool that watches and reports cannot cause a destructive false
 positive.
 
-Arming is one flag, plus the slot requirement above — or `lorica-ctl arm` on a running agent.
-There is no configuration file to put it in:
+Arming is one flag, plus the slot requirement above — or `mode = "armed"` in a configuration
+file, or `lorica-ctl arm` on a running agent:
 
 ```sh
 sudo ./loricad --object ./lorica-ebpf --mode armed --counters 4096
+sudo ./loricad --object ./lorica-ebpf --config /etc/lorica.toml   # mode lives in the file
 ```
 
 Armed, an accepted decision is written into the unified list, a decision that moves to a
@@ -147,11 +153,15 @@ different prefix takes the previous one back out, and a descent withdraws what i
 refused instead of waiting for the entry's deadline. The mode is also the first question
 any false-positive report has to answer — see `SECURITY.md`.
 
-**Today that path does not fire.** The detection ladder cannot reach a rung that refuses
-packets, because the tick publishes the named counters and not the two inputs the confirming
-rungs need. An armed agent reports rungs 0 and 1 and leaves `written` at zero. Arming is
-therefore currently a no-op, and `docs/limits.md` §6 is where that is written down with the
-other two open wires.
+**Today that path does not fire, and `--mode` is not the flag that makes a filter refuse
+anything.** The detection ladder cannot reach a rung that refuses packets, because the tick
+publishes the named counters and not the two inputs the confirming rungs need. An armed agent
+reports rungs 0 and 1 and leaves `written` at zero.
+
+What *does* refuse traffic is what you name yourself: the rules of a configuration file, and
+the stages you arm with `--policy` or `[settings]`. Those are a different mechanism from
+`--mode`, which governs only what the ladder is allowed to write on its own initiative.
+`docs/limits.md` §6 keeps the two apart and tracks what is still open.
 
 ## Putting it in the packet path
 

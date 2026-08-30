@@ -27,14 +27,16 @@ truth, and the [wiki](https://github.com/lorica-labs/lorica/wiki/Status) carries
 | | |
 |---|---|
 | ✅ **Drops** malformed and impossible packets: truncated, bad IP/L4 length, impossible TCP flags, IP options, over-deep encapsulation, non-initial fragments | on the packet path, no configuration |
-| ✅ **Counts** everything else through 34 named counters, including all ten amplification signatures and every over-budget packet | 1 480 instructions/packet, measured |
+| ✅ **Counts** everything else through 34 named counters, including all ten amplification signatures and every over-budget packet | 1 402 instructions/packet, measured |
 | ✅ **Reports** through Prometheus, a 1 Hz journal and a Unix control socket | no label an attacker can choose |
-| ⚠️ **Does not enforce** signatures, leaky buckets or reverse-path checks | the policy word is compiled in and there is no flag to change it |
-| ⚠️ **Does not load** an operator blocklist | the compiler exists, the agent does not call it |
-| ⚠️ **Does not write** a refusal into the kernel | the detection ladder tops out at rung 1 of 7 |
+| ✅ **Refuses** the sources your configuration names | `--config`, into two flat tables read in one memory access |
+| ✅ **Enforces** the amplification catalogue and the leaky buckets, when you ask it to | `--policy enforce-signatures,enforce-buckets` |
+| ⚠️ **Does not check the reverse path** | the criterion evaluator exists and the agent never runs it |
+| ⚠️ **Does not refuse anything it worked out for itself** | the detection ladder tops out at rung 1 of 7 |
 
-So: **Lorica today is an instrument, not yet a mitigation.** If you deploy it and an attack
-arrives, it will show you the attack in detail and drop only the malformed part of it.
+So: **Lorica today enforces what you tell it to and nothing it decided on its own.** Point it at
+a configuration and it will refuse those sources at one memory access an address; leave the
+ladder to find an attacker for you and it will describe one in detail and refuse nobody.
 
 ## Quick start
 
@@ -50,7 +52,14 @@ sudo ./target/release/loricad \
 # 3. ask it what it is doing
 sudo ./target/release/lorica-ctl status
 curl -s http://127.0.0.1:9090/metrics | grep ^lorica_
+
+# 4. give it rules. examples/lorica.toml is annotated and compiles as it stands
+sudo ./target/release/loricad --object ... --config examples/lorica.toml
 ```
+
+`--config` is where the rules, the profile and the policy bits live; without it the agent
+observes and refuses nothing but malformed packets. `--policy enforce-signatures,enforce-buckets`
+arms the same two stages from the command line when there is no file to write.
 
 Add `--iface eth0` to put it in the packet path. Read
 [the attach tax](docs/limits.md#1-attaching-an-xdp-program-to-virtio-net-costs-throughput-permanently)
@@ -60,7 +69,17 @@ Full procedure, options and failure modes: **[docs/install.md](docs/install.md)*
 
 ## Documentation
 
-Read in this order.
+**[The wiki](https://github.com/lorica-labs/lorica/wiki)** is the place to start if you want to
+know what this does before you decide to run it: the
+[status board](https://github.com/lorica-labs/lorica/wiki/Status) says what is wired and what is
+not, the [response ladder](https://github.com/lorica-labs/lorica/wiki/Response-ladder) explains
+how a refusal is decided and confirmed, the
+[deployment profiles](https://github.com/lorica-labs/lorica/wiki/Deployment-profiles) explain the
+memory budget every map size is derived from, and the
+[measurement method](https://github.com/lorica-labs/lorica/wiki/Measurement-method) is how every
+number in this repository was produced.
+
+The files below are the operator's path, in this order.
 
 | | |
 |---|---|
@@ -70,7 +89,7 @@ Read in this order.
 | [docs/architecture.md](docs/architecture.md) | how it works and why it is shaped this way — start here to read the code |
 | [bench/README.md](bench/README.md) | how to reproduce every published number, on three machines |
 | [bench/results/INDEX.md](bench/results/INDEX.md) | every number, mapped to the script, the raw data and the captured environment |
-| [wiki](https://github.com/lorica-labs/lorica/wiki) | the response ladder, deployment profiles, measurement method, status |
+| [the wiki](https://github.com/lorica-labs/lorica/wiki) | the response ladder, the deployment profiles, the measurement method, the status board |
 
 ## Two rules the design rests on
 

@@ -111,30 +111,36 @@ try the command to find out.
 encapsulation, incoherent IP or L4 length, impossible TCP flag combinations, IP options, and
 non-initial fragments. That is a real class of traffic and it is the whole of what is enforced.
 
-**Three things are not wired, and none of them can be turned on from the command line:**
+**Two things are still not wired, and one of them is the interesting half of the product:**
 
-1. **The signature, leaky-bucket and reverse-path stages count but do not enforce.** Their
-   enforcement is governed by a `.rodata` policy word that the agent writes as
-   `DEFAULT_SETTINGS = 0`, compiled in, with no flag and no file to change it. Ten amplification
-   vectors are matched and counted on every packet; none is refused.
+1. **The reverse-path check counts but does not enforce.** Its bit is the loader's and not the
+   operator's, because whether a strict check discriminates anything is a property of the
+   routing table and not a preference: on a host with a default route it would refuse nothing
+   and cost every packet a `bpf_fib_lookup`. The evaluator that reads that criterion exists and
+   is tested, and the agent never runs it, so the bit stays clear on every load. There is no
+   flag for it and there should not be one — what is missing is the agent asking the question.
 
-2. **The operator blocklist is never loaded.** `lorica-policy` compiles a configuration into the
-   two flat tables and is tested doing so, but the agent patches neither `CLASS24` nor
-   `OA_TABLE`. They stay zeroed, so stage 3's flat half answers "nothing configured" for every
-   address.
-
-3. **The detection ladder cannot reach a rung that refuses packets.** Rungs 3 and above need a
+2. **The detection ladder cannot reach a rung that refuses packets.** Rungs 3 and above need a
    key whose own counter slot is rising, and rungs 5 and 6 need the bucket bank; the tick
-   publishes the 34 named counters and neither of those two inputs. Armed or not, the ladder tops
-   out at rung 1 and `written` stays at zero.
+   publishes the 34 named counters and neither of those two inputs. Armed or not, the ladder
+   tops out at rung 1 and `written` stays at zero. **This is the one that matters**: it is the
+   difference between a filter you aim and a filter that aims itself.
 
-**There is no configuration file.** `lorica-ctl reload` refuses and says so, rather than
-reporting a re-read that did not happen. Every setting comes from the command line or from the
-loaded object.
+**What is wired, and was not when this page was first written:**
 
-So a deployment today is an instrument: it will show you an attack in detail, in metrics and in
-the journal, and drop only the malformed part of it. The three wires above are tracked on the
-[wiki status page](https://github.com/lorica-labs/lorica/wiki/Status).
+- **The policy word is yours.** `--policy enforce-signatures,enforce-buckets`, or the
+  `[settings]` block of a configuration file. Ten amplification vectors and the leaky-bucket
+  bank refuse traffic when you arm them, and count it when you do not.
+- **The operator blocklist loads.** `--config PATH` compiles a file and publishes it before the
+  program is attached. An IPv4 `deny` with no scope and no TTL goes into the two flat tables —
+  one memory access an address, and no kernel memory per entry — and everything else goes into
+  the trie. Which table a rule lands in is decided by the rule, never written in the file, and
+  the counters are the same either way.
+- **There is a configuration file**, and `examples/lorica.toml` is an annotated one that
+  compiles as it stands. `lorica-ctl reload` still refuses: the file is read once, at startup.
+
+So a deployment today refuses what you named and nothing it worked out for itself. The two wires
+above are tracked on the [wiki status page](https://github.com/lorica-labs/lorica/wiki/Status).
 
 ## 7. Kernel capabilities: what an older kernel costs you
 
@@ -190,9 +196,11 @@ Two things this page will update when they are resolved:
   the packet path can read that 20 MiB copy while it is in flight. We have not yet established
   whether the kernel's copy gives eight-byte granularity, which would settle it, or whether
   swapping the attached program is the answer.
-- **The blocklist stage reports no per-stage counters yet.** Its verdicts are correct and
-  tested; they simply do not appear among the per-stage counters on `/metrics`. If you need to
-  know how often your list is answering, that is a gap today.
+- **A flat-table hit is not attributable to one rule of your file.** It is counted — both
+  halves of stage 3 bump `lorica_lpm_drop_hit` and `lorica_lpm_allow_exit`, so the number is
+  right whichever table answered — but a flat slot is eight bytes with nowhere to put a counter
+  index. Per-entry attribution stays with the trie, and it was never available at the size the
+  flat tables exist for: a million entries is a million slots times every processor.
 
 ## 9. `/metrics` will never carry a label an attacker chooses
 

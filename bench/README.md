@@ -90,8 +90,34 @@ Every script writes a timestamped environment record next to its result via `scr
 | Hot attach outage (<7 ms) | `scripts/lab/measure-hot-attach.sh` | `bench/results/hot-attach/hot-attach.csv` + control CSVs | `bench/results/hot-attach/env-*.txt` |
 | XDP_TX ceiling (≥290 kpps) | `scripts/lab/measure-xdp-tx.sh` | `bench/results/xdp-tx/xdp-tx.csv` | `bench/results/xdp-tx/env-*.txt` |
 | fsync p99 (6.26 ms), cold read (1.4 GB/s) | `scripts/lab/measure-storage.sh` | `bench/results/storage/storage.json`, `fsync-fio.json` | `bench/results/storage/env-*.txt` |
+| Instructions per packet, per stage | `scripts/lab/measure-stage-cost.sh` | `bench/results/stage-cost-*/stage-cost.csv` | `bench/results/stage-cost-*/env-*.txt` |
 
 `bench/results/INDEX.md` restates this mapping for the data already in the tree.
+
+## Two instruments, and neither answers the other's question
+
+`measure-stage-cost.sh` measures what a packet **executes**, by cutting the pipeline after
+stage *k* and differencing two whole-path readings. `EBPF_EXTRA=feature` builds the measured
+object with an extra eBPF feature, so a variant behind a flag is measured with the same
+instrument and in the same session as its baseline — the only way a difference between two
+builds is about the code rather than about two afternoons.
+
+`scripts/lab/attribute-instructions.py` measures what is **present**, by source region, out of
+`llvm-objdump --line-numbers` and the DWARF the release profile already emits. No kernel, no
+target, no privileges.
+
+**The first is the wrong instrument inside a stage**, and this project learned that by
+publishing a wrong figure. A cut level is a branch: work whose result is dead on the cut path
+may be sunk below it and charged to the next level, and that does not show up in a check that
+the levels sum to the whole, because moving cost between levels does not change the total. Use
+the sweep between stages and the attribution inside one.
+
+**The second cannot tell you what a packet runs.** A fifth of the entry point is IPv6 code an
+IPv4 packet executes none of. Read a region's figure as an upper bound.
+
+One caveat that cost an afternoon: `--ebpf-features` does **not** reach `jited_size`.
+`build_ebpf` builds the object that ships without any feature, by design, and the size test
+reads that one.
 
 ## What is excluded, and why the numbers are honest
 
