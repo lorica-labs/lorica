@@ -1,0 +1,33 @@
+group,A
+events,cycles,instructions,cache-misses,L1-dcache-load-misses
+seconds,8
+pps,200000
+passes,3
+queues,1 (restored to 4)
+
+--- idle baseline, no traffic
+0,84359350,38992664,152348,1017433,ok
+
+--- pass 1, arm spread
+1616886,3773244880,3713354489,604770,155340252,ok
+
+--- pass 1, arm single
+1611052,4787548852,4258172113,159788,180066893,ok
+
+--- pass 2, arm single
+1600000,4764466831,4254088125,263128,179775440,ok
+
+--- pass 2, arm spread
+1609347,5121987980,4327712242,840102,186724871,ok
+
+--- pass 3, arm spread
+1612251,5104175006,4303557488,630984,188503699,ok
+
+--- pass 3, arm single
+1612619,4819373258,4275825479,206498,181167399,ok
+
+per packet                         spread         single     difference
+cycles                          2841.0407      2926.8810       -85.8403
+instructions                    2527.1648      2626.8599       -99.6951
+cache-misses                       0.3346         0.0357         0.2988
+L1-dcache-load-misses            109.0252       111.5245        -2.4993

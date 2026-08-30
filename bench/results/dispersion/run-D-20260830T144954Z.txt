@@ -1,0 +1,31 @@
+group,D
+events,cycles,instructions,mem_load_uops_l3_hit_retired.xsnp_hitm,L1-icache-load-misses
+seconds,8
+pps,200000
+passes,3
+queues,1 (restored to 4)
+
+--- idle baseline, no traffic
+0,85984072,42699931,14005,1045,ok
+
+--- warm-up, discarded from the reduction
+1610534,5227779703,4351058986,2576426,2100,ok
+
+--- pass 1, arm spread
+1613328,5254997642,4373373014,2576348,1420,ok
+
+--- pass 1, arm single
+1599864,4958104178,4372210811,2578502,1801,ok
+
+--- pass 2, arm single
+1611721,4903855671,4329933508,2567208,1482,ok
+
+--- pass 2, arm spread
+1610136,5278680405,4403677259,2575299,1486,ok
+
+--- pass 3, arm spread
+1612923,5228538986,4352995887,2569612,2089,ok
+
+--- pass 3, arm single
+1600000,4961113823,4349896241,2575930,1083,ok
+

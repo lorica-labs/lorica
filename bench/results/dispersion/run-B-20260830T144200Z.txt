@@ -1,0 +1,36 @@
+group,B
+events,cycles,instructions,cycle_activity.stalls_l3_miss,cycle_activity.stalls_mem_any
+seconds,8
+pps,200000
+passes,3
+queues,1 (restored to 4)
+
+--- idle baseline, no traffic
+0,absent,absent,absent,absent,ok
+
+--- warm-up, discarded from the reduction
+5796,absent,absent,absent,absent,ok
+
+--- pass 1, arm spread
+5860,absent,absent,absent,absent,ok
+
+--- pass 1, arm single
+5862,absent,absent,absent,absent,ok
+
+--- pass 2, arm single
+6199,absent,absent,absent,absent,ok
+
+--- pass 2, arm spread
+6048,absent,absent,absent,absent,ok
+
+--- pass 3, arm spread
+6170,absent,absent,absent,absent,ok
+
+--- pass 3, arm single
+7894,absent,absent,absent,absent,ok
+
+per packet                         spread         single     difference
+cycles                             0.0000         0.0000         0.0000
+instructions                       0.0000         0.0000         0.0000
+cycle_activity.stalls_l3_miss         0.0000         0.0000         0.0000
+cycle_activity.stalls_mem_any         0.0000         0.0000         0.0000

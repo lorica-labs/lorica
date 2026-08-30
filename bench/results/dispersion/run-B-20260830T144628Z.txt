@@ -1,0 +1,36 @@
+group,B
+events,cycles,instructions,cycle_activity.stalls_ldm_pending,cycle_activity.stalls_l2_pending
+seconds,8
+pps,200000
+passes,3
+queues,1 (restored to 4)
+
+--- idle baseline, no traffic
+0,90269817,44347077,27899147,19042284,ok
+
+--- warm-up, discarded from the reduction
+1611423,5115301406,4284442830,1224841825,621826410,ok
+
+--- pass 1, arm spread
+1611822,5081055712,4275765578,1199369075,599258851,ok
+
+--- pass 1, arm single
+1600000,4765269167,4242826247,967609556,395648643,ok
+
+--- pass 2, arm single
+1605418,4766133134,4227632345,972796722,400876273,ok
+
+--- pass 2, arm spread
+1610364,5108586854,4302699553,1217612145,603164890,ok
+
+--- pass 3, arm spread
+1613555,5078348460,4298555701,1193105565,581561957,ok
+
+--- pass 3, arm single
+1600000,4800795903,4258586707,976468440,396729151,ok
+
+per packet                         spread         single     difference
+cycles                          3101.3203      2926.1531       175.1672
+instructions                    2635.3727      2621.2088        14.1638
+cycle_activity.stalls_ldm_pending       729.2345       589.5798       139.6548
+cycle_activity.stalls_l2_pending       357.1033       236.4263       120.6770
