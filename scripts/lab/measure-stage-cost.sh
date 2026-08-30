@@ -170,7 +170,13 @@ remote "$TARGET_HOST" "command -v $PERF >/dev/null" \
 # shellcheck source=scripts/lab/test-run-level.sh
 . scripts/lab/test-run-level.sh
 
-echo 'stages,label,ns_raw,ns_above_floor,ns_this_level,cycles,instructions,ipc,llc_misses,llc_misses_per_packet' > "$csv"
+# `LORICA_EXTRA_EVENTS` appends one column per event, named for the event, and nothing when
+# it is empty -- the default, so an ordinary run has the header it always had. Which events
+# this load may usefully borrow, and why it borrows rather than owns them, is in
+# test-run-level.sh; the instrument for the cycle regime is measure-dispersion.sh.
+extra_header=
+for event in ${LORICA_EXTRA_EVENTS//,/ }; do extra_header="$extra_header,$event"; done
+echo "stages,label,ns_raw,ns_above_floor,ns_this_level,cycles,instructions,ipc,llc_misses,llc_misses_per_packet$extra_header" > "$csv"
 
 previous_above=0
 rows=0
@@ -220,9 +226,17 @@ for level in ${LEVELS//,/ }; do
     this=$((above - previous_above))
     previous_above=$above
 
-    printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n' \
+    # A multiplexed counter is named at the level it happened on and never folded quietly into
+    # the table: perf prints a scaled estimate exactly like a count, and the ceilings below are
+    # asserted on the instruction column.
+    if [ -n "${TR_MULTIPLEXED:-}" ]; then
+        printf 'level %s: perf multiplexed %s-- this row carries scaled estimates\n' \
+            "$level" "$TR_MULTIPLEXED" >&2
+    fi
+
+    printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s%s\n' \
         "$level" "$label" "$ns_raw" "$above" "$this" \
-        "$cycles" "$instructions" "$ipc" "$llc" "$llc_per_pkt" >> "$csv"
+        "$cycles" "$instructions" "$ipc" "$llc" "$llc_per_pkt" "${TR_EXTRA:-}" >> "$csv"
     rows=$((rows + 1))
 done
 

@@ -1,0 +1,3 @@
+stages,label,ns_raw,ns_above_floor,ns_this_level,cycles,instructions,ipc,llc_misses,llc_misses_per_packet,cycle_activity.stalls_ldm_pending,cycle_activity.stalls_l2_pending
+1,entry,13,0,0,503821023,775576096,1.539,236759,0.2368,39004016,14991102
+9,stage 7 buckets,141,126,126,1070668487,2177543192,2.034,266259,0.2663,78411897,29050932
