@@ -1,0 +1,218 @@
+captured-utc  2026-08-30T00:10:03Z
+host          carapace-target
+iface         enp6s19
+
+===== uname -a =====
+Linux carapace-target 6.8.0-138-generic #138-Ubuntu SMP PREEMPT_DYNAMIC Fri Jul 31 22:41:49 UTC 2026 x86_64 x86_64 x86_64 GNU/Linux
+
+===== lscpu =====
+Architecture:                            x86_64
+CPU op-mode(s):                          32-bit, 64-bit
+Address sizes:                           46 bits physical, 48 bits virtual
+Byte Order:                              Little Endian
+CPU(s):                                  4
+On-line CPU(s) list:                     0-3
+Vendor ID:                               GenuineIntel
+Model name:                              Intel(R) Xeon(R) CPU E5-2683 v3 @ 2.00GHz
+CPU family:                              6
+Model:                                   63
+Thread(s) per core:                      1
+Core(s) per socket:                      4
+Socket(s):                               1
+Stepping:                                2
+BogoMIPS:                                3999.99
+Flags:                                   fpu vme de pse tsc msr pae mce cx8 apic sep mtrr pge mca cmov pat pse36 clflush mmx fxsr sse sse2 ss ht syscall nx pdpe1gb rdtscp lm constant_tsc arch_perfmon rep_good nopl xtopology cpuid tsc_known_freq pni pclmulqdq vmx ssse3 fma cx16 pdcm pcid sse4_1 sse4_2 x2apic movbe popcnt tsc_deadline_timer aes xsave avx f16c rdrand hypervisor lahf_lm abm cpuid_fault pti ssbd ibrs ibpb stibp tpr_shadow flexpriority ept vpid ept_ad fsgsbase tsc_adjust bmi1 avx2 smep bmi2 erms invpcid xsaveopt arat vnmi umip md_clear flush_l1d arch_capabilities
+Virtualization:                          VT-x
+Hypervisor vendor:                       KVM
+Virtualization type:                     full
+L1d cache:                               128 KiB (4 instances)
+L1i cache:                               128 KiB (4 instances)
+L2 cache:                                16 MiB (4 instances)
+L3 cache:                                16 MiB (1 instance)
+NUMA node(s):                            1
+NUMA node0 CPU(s):                       0-3
+Vulnerability Gather data sampling:      Not affected
+Vulnerability Indirect target selection: Not affected
+Vulnerability Itlb multihit:             Not affected
+Vulnerability L1tf:                      Mitigation; PTE Inversion; VMX flush not necessary, SMT disabled
+Vulnerability Mds:                       Mitigation; Clear CPU buffers; SMT Host state unknown
+Vulnerability Meltdown:                  Mitigation; PTI
+Vulnerability Mmio stale data:           Mitigation; Clear CPU buffers; SMT Host state unknown
+Vulnerability Reg file data sampling:    Not affected
+Vulnerability Retbleed:                  Not affected
+Vulnerability Spec rstack overflow:      Not affected
+Vulnerability Spec store bypass:         Mitigation; Speculative Store Bypass disabled via prctl
+Vulnerability Spectre v1:                Mitigation; usercopy/swapgs barriers and __user pointer sanitization
+Vulnerability Spectre v2:                Mitigation; Retpolines; IBPB conditional; IBRS_FW; STIBP disabled; RSB filling; PBRSB-eIBRS Not affected; BHI Retpoline
+Vulnerability Srbds:                     Not affected
+Vulnerability Tsa:                       Not affected
+Vulnerability Tsx async abort:           Not affected
+Vulnerability Vmscape:                   Not affected
+
+===== /proc/cmdline =====
+BOOT_IMAGE=/vmlinuz-6.8.0-138-generic root=/dev/mapper/ubuntu--vg-ubuntu--lv ro clocksource=tsc tsc=reliable
+
+===== clocksource =====
+current   tsc
+available kvm-clock tsc acpi_pm 
+/dev/ptp0
+/dev/ptp_kvm
+
+===== ethtool -i enp6s19 =====
+driver: virtio_net
+version: 1.0.0
+firmware-version: 
+expansion-rom-version: 
+bus-info: 0000:06:13.0
+supports-statistics: yes
+supports-test: no
+supports-eeprom-access: no
+supports-register-dump: no
+supports-priv-flags: no
+
+===== ethtool -k enp6s19 =====
+Features for enp6s19:
+rx-checksumming: on [fixed]
+tx-checksumming: on
+	tx-checksum-ipv4: off [fixed]
+	tx-checksum-ip-generic: on
+	tx-checksum-ipv6: off [fixed]
+	tx-checksum-fcoe-crc: off [fixed]
+	tx-checksum-sctp: off [fixed]
+scatter-gather: on
+	tx-scatter-gather: on
+	tx-scatter-gather-fraglist: off [fixed]
+tcp-segmentation-offload: on
+	tx-tcp-segmentation: on
+	tx-tcp-ecn-segmentation: on
+	tx-tcp-mangleid-segmentation: off
+	tx-tcp6-segmentation: on
+generic-segmentation-offload: on
+generic-receive-offload: on
+large-receive-offload: off [fixed]
+rx-vlan-offload: off [fixed]
+tx-vlan-offload: off [fixed]
+ntuple-filters: off [fixed]
+receive-hashing: off [fixed]
+highdma: on [fixed]
+rx-vlan-filter: on [fixed]
+vlan-challenged: off [fixed]
+tx-lockless: off [fixed]
+netns-local: off [fixed]
+tx-gso-robust: on [fixed]
+tx-fcoe-segmentation: off [fixed]
+tx-gre-segmentation: off [fixed]
+tx-gre-csum-segmentation: off [fixed]
+tx-ipxip4-segmentation: off [fixed]
+tx-ipxip6-segmentation: off [fixed]
+tx-udp_tnl-segmentation: off [fixed]
+tx-udp_tnl-csum-segmentation: off [fixed]
+tx-gso-partial: off [fixed]
+tx-tunnel-remcsum-segmentation: off [fixed]
+tx-sctp-segmentation: off [fixed]
+tx-esp-segmentation: off [fixed]
+tx-udp-segmentation: off
+tx-gso-list: off [fixed]
+fcoe-mtu: off [fixed]
+tx-nocache-copy: off
+loopback: off [fixed]
+rx-fcs: off [fixed]
+rx-all: off [fixed]
+tx-vlan-stag-hw-insert: off [fixed]
+rx-vlan-stag-hw-parse: off [fixed]
+rx-vlan-stag-filter: off [fixed]
+l2-fwd-offload: off [fixed]
+hw-tc-offload: off [fixed]
+esp-hw-offload: off [fixed]
+esp-tx-csum-hw-offload: off [fixed]
+rx-udp_tunnel-port-offload: off [fixed]
+tls-hw-tx-offload: off [fixed]
+tls-hw-rx-offload: off [fixed]
+rx-gro-hw: on
+tls-hw-record: off [fixed]
+rx-gro-list: off
+macsec-hw-offload: off [fixed]
+rx-udp-gro-forwarding: off
+hsr-tag-ins-offload: off [fixed]
+hsr-tag-rm-offload: off [fixed]
+hsr-fwd-offload: off [fixed]
+hsr-dup-offload: off [fixed]
+
+===== ethtool -l enp6s19 =====
+Channel parameters for enp6s19:
+Pre-set maximums:
+RX:		n/a
+TX:		n/a
+Other:		n/a
+Combined:	4
+Current hardware settings:
+RX:		n/a
+TX:		n/a
+Other:		n/a
+Combined:	4
+
+===== ip -d link show enp6s19 =====
+3: enp6s19: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc mq state UP mode DEFAULT group default qlen 1000
+    link/ether bc:24:11:ea:18:e5 brd ff:ff:ff:ff:ff:ff promiscuity 0  allmulti 0 minmtu 68 maxmtu 1500 addrgenmode eui64 numtxqueues 4 numrxqueues 4 gso_max_size 65536 gso_max_segs 65535 tso_max_size 65536 tso_max_segs 65535 gro_max_size 65536 parentbus virtio parentdev virtio2 
+
+===== tuning =====
+nmi_watchdog        0
+randomize_va_space  2
+thp                 always [madvise] never
+perf_event_paranoid 1
+bpf_stats_enabled   0
+governor            no cpufreq in guest
+irqbalance          inactive
+
+===== frequency and idle policy =====
+scaling_driver      n/a
+scaling_governor    n/a
+scaling_min_freq    n/a
+scaling_max_freq    n/a
+no_turbo            n/a
+governors off cpu0  n/a
+idle states cpu0    n/a
+cpu_dma_latency us  n/a
+
+===== speculative mitigations =====
+gather_data_sampling       Not affected
+indirect_target_selection  Not affected
+itlb_multihit              Not affected
+l1tf                       Mitigation: PTE Inversion; VMX: flush not necessary, SMT disabled
+mds                        Mitigation: Clear CPU buffers; SMT Host state unknown
+meltdown                   Mitigation: PTI
+mmio_stale_data            Mitigation: Clear CPU buffers; SMT Host state unknown
+reg_file_data_sampling     Not affected
+retbleed                   Not affected
+spec_rstack_overflow       Not affected
+spec_store_bypass          Mitigation: Speculative Store Bypass disabled via prctl
+spectre_v1                 Mitigation: usercopy/swapgs barriers and __user pointer sanitization
+spectre_v2                 Mitigation: Retpolines; IBPB: conditional; IBRS_FW; STIBP: disabled; RSB filling; PBRSB-eIBRS: Not affected; BHI: Retpoline
+srbds                      Not affected
+tsa                        Not affected
+tsx_async_abort            Not affected
+vmscape                    Not affected
+
+===== numa allocation counters =====
+numa_hit 44879959
+numa_miss 0
+numa_foreign 0
+numa_local 44879959
+numa_other 0
+available: 1 nodes (0)
+node 0 cpus: 0 1 2 3
+node 0 size: 7873 MB
+node 0 free: 6628 MB
+node distances:
+node   0 
+  0:  10 
+
+===== versions =====
+bpftool v7.4.0
+using libbpf v1.4
+Ubuntu clang version 18.1.3 (1ubuntu1)
+ethtool version 6.7
+os  Ubuntu 24.04.4 LTS
+
+===== loaded xdp programs =====
+"xdp":{"mode":2,"prog":{"id":21}

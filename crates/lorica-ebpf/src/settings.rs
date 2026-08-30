@@ -85,7 +85,11 @@ static SIGNATURE_VECTORS: u32 = 0;
 /// entries an operator listed, so an unpatched load has to keep the trie: a loader that
 /// forgot this word must fail loud in the size assertion rather than quiet in the verdict.
 #[unsafe(no_mangle)]
+#[cfg(not(feature = "measure-without-trie"))]
 static BLOCKLIST_TRIE: u32 = 1;
+/// See the `measure-without-trie` feature.
+#[cfg(feature = "measure-without-trie")]
+static BLOCKLIST_TRIE: u32 = 0;
 
 /// Dead words the bucket update reads while it holds the bucket open, so the leak of the
 /// bank can be measured against the width of its read-modify-write window.

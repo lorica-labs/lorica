@@ -49,6 +49,10 @@ signature-dfa = []
 # register allocator has more to work with. `ipv6::parse` is 214 of the 914 instructions there
 # and an IPv4 packet runs none of them, so the size of that effect is worth a number.
 measure-without-ipv6 = []
+# Loads the program with the trie half of stage 3 cleared, so a measurement can say what that
+# half costs. **A measurement and not a configuration**: the agent decides the word at load
+# time, and the point of the number is to know whether deciding it is worth the code.
+measure-without-trie = []
 stage-cutoff = []
 # Puts each parser back in a subprogram of its own, so it has a JIT symbol a `perf`
 # campaign can attribute cycles to. Instrumentation, not a property of the program: the
