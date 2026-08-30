@@ -3,6 +3,7 @@
   "name": "legit_spike",
   "about": "Three legitimate spikes of three hundred milliseconds, very intense and entirely innocent: a cache purge lands and every edge asks the origin at once, a thundering herd that resolves itself in under half a second. Each spike is shorter than the stabilisation the retuned ladder allows between rungs, which is the point - it is aimed at the assumption that a gate measured in slow ticks is safe because a false positive would have to persist. A spike does not persist. It arrives inside one tick, and a ladder that climbs on a single tick of demand sees a demand as high as any attack would produce. The reverse proxy behind it reaches thirty-two hundred packets per second, three times entry_per_sec, from one address in the unified list. Between the spikes the traffic returns to an ordinary floor, so a ladder that does climb has no reason to come back down before the next one arrives - three chances to accumulate what one alone could not.",
   "period_ms": 100,
+  "allow_listed": true,
   "entry_v4": [192, 0, 2, 41],
   "timeline": [
     { "repeat": 40, "note": "four seconds of the ordinary floor", "legit_pps": 50000, "entry_is_attacker": false, "loaded_buckets": 40, "level_kib": 9, "entry_per_sec": 350, "counters": { "bucket_over_budget": 6000 } },

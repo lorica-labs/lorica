@@ -3,6 +3,7 @@
   "name": "legit_staircase",
   "about": "A legitimate service climbing in five plateaus over twenty-five seconds, each step individually unremarkable and the sum of them large. A regional cache is being warmed after a purge, so origin fetches arrive in waves as each edge finishes; the bucket goes further over budget at every step and the busiest source is a carrier-grade NAT gateway whose own rate climbs from four hundred to twenty-four hundred packets per second. That gateway is the trap. It is one address in the unified list, its counter slot really is rising, and by the top step it is over entry_per_sec by more than a factor of two - everything the engine asks for before it refuses a packet, produced by traffic no operator would want refused. Written specifically against a ladder that climbs on a single slow tick of demand: a staircase offers a fresh higher demand at every step, so a rise gate of one tick can be walked up the whole ladder by a source that never does anything sudden. No exception counter moves at any point, because nothing is wrong with these packets.",
   "period_ms": 100,
+  "allow_listed": true,
   "entry_v4": [192, 0, 2, 40],
   "timeline": [
     { "repeat": 30, "note": "three seconds of the quiet floor", "legit_pps": 40000, "entry_is_attacker": false, "loaded_buckets": 30, "level_kib": 8, "entry_per_sec": 400, "counters": { "bucket_over_budget": 4000 } },

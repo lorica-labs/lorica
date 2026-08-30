@@ -307,7 +307,10 @@ fn parse_options() -> Result<Options> {
         counter_slots: CounterId::COUNT,
         hz: 10,
         batch: 1_000,
-        bank_every: 10,
+        // Five and not ten: the detector's profile cadence is 500 ms, and a slow tick that
+        // sees an unchanged bank computes its loaded share at the bank's resolution rather
+        // than its own. The two have to move together — see `SLOW_PERIOD_NS`.
+        bank_every: 5,
         sweep_every: 1,
         sweep_stride: 1,
         seconds: 0,

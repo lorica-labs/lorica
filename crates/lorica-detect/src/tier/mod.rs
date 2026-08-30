@@ -111,6 +111,20 @@ pub struct Config {
     /// Whether rung 1 can actually mark. `false` does not change which rung is reached or
     /// when — see [`Hysteresis`] — it only makes rung 1 a no-op that is counted.
     pub qdisc_available: bool,
+    /// Consecutive slow ticks a higher demand must hold before the ladder takes one rung.
+    ///
+    /// **One, lowered from two, and it was the binding constraint on the whole climb.** A sweep
+    /// of 54 tunings found that every point at two left at least one scenario never answered,
+    /// whatever the other gates were set to, and that lowering it was what unlocked detection
+    /// rather than relaxing [`Config::insufficient_ticks`] — which the same sweep found is not
+    /// binding at all here, since the one-rung-at-a-time walk already spends more ticks at or
+    /// above `Limit` than that gate asks for.
+    ///
+    /// The descent is unaffected and stays asymmetric: `fall_ticks` is five, so a lower demand
+    /// must hold five times longer than a higher one, and [`Config::hold_ticks`] still refuses
+    /// any transition within two ticks of the last. Those two are what keep the ladder from
+    /// hunting, and the sweep measured the cost of this change at exactly one direction
+    /// reversal across the six attack scenarios, on `pulse_gaps`.
     pub rise_ticks: u32,
     pub hold_ticks: u32,
     pub fall_ticks: u32,
@@ -146,7 +160,7 @@ impl Default for Config {
             rtbh_prefix: None,
             rtbh_enabled: false,
             qdisc_available: false,
-            rise_ticks: 2,
+            rise_ticks: 1,
             hold_ticks: 2,
             fall_ticks: 5,
             slow_period_ns: SLOW_PERIOD_NS,

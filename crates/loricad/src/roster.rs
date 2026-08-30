@@ -19,7 +19,7 @@
 //! detector notices because the length changes — see `Engine::hottest_entry`, which drops its
 //! history rather than reinterpret deltas across two different allocations.
 
-use lorica_common::{CounterId, LpmKey, LpmValue};
+use lorica_common::{Action, CounterId, LpmKey, LpmValue};
 
 /// One entry and the slot the compiler gave it.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -38,16 +38,44 @@ impl Roster {
     /// Reads the pairing off the compiled entries.
     ///
     /// Sorted by slot and not left in the compiler's order, so a caller walking a sweep can go
-    /// forward through both at once. Entries whose slot is at or below the named counters are
-    /// dropped: those slots belong to the named catalogue, and a rule pointed at one would make
-    /// a stage counter read as one source's traffic. The policy compiler refuses to emit one —
-    /// `an_entry_pointed_at_a_named_counter_is_refused` — so this is a second check on an
-    /// invariant that already holds, kept because the cost is a comparison and the failure it
-    /// would catch is silent.
+    /// forward through both at once. Two kinds of entry are dropped rather than seated.
+    ///
+    /// **Slots at or below the named counters**, because those belong to the named catalogue and
+    /// a rule pointed at one would make a stage counter read as one source's traffic. The policy
+    /// compiler refuses to emit one — `an_entry_pointed_at_a_named_counter_is_refused` — so this
+    /// is a second check on an invariant that already holds, kept because the cost is a
+    /// comparison and the failure it would catch is silent.
+    ///
+    /// **Entries whose action is [`Action::Allow`]**, and this one is not a second check on
+    /// anything: without it the detector blackholes a `/24` around an allow-listed source. Every
+    /// dropping rung is gated on `Confirmation::ExactKey`, which asks for a seated key whose own
+    /// slot is rising above `entry_per_sec`; `Engine::hottest_entry` takes the maximum over the
+    /// seats and has no way to ask what the operator decided about one, because a `Seat` is a key
+    /// and a slot. So a carrier-grade NAT gateway, a reverse proxy or a partner network — all
+    /// ordinary, all busier than a per-source rate an attacker is caught at — became the evidence
+    /// for refusing themselves. Measured before the filter, at the shipped defaults: **11 090 000
+    /// legitimate packets refused on `legit_staircase`, at rung 4**, and the same shape on
+    /// `legit_noisy`. See `docs/mesures/14-frontiere-reactivite-faux-positifs.md` in the agent
+    /// tree, and `the_defect_this_filter_exists_for_is_real` in `pulse_replay.rs`, which fails if
+    /// the filter is removed.
+    ///
+    /// **Only `Allow`, and the other four stay.** `Continue`, `RateLimit` and `Mark` all leave the
+    /// packet flowing through the later stages — they are the entries that decided nothing or
+    /// decided to mitigate, and a source under a mitigation that is not working is exactly what
+    /// the rung above is for. `Drop` is already refused and widening it is the point of
+    /// `DropBroad`. `Allow` is the only action that means *the operator has answered this
+    /// question*, and it is the only one whose counter can never be evidence.
+    ///
+    /// The counter slot itself is still allocated by the compiler for an allow rule, deliberately
+    /// — a single global counter would not say *which* allow-listed source traversed the
+    /// pipeline. Nothing here changes that: the slot exists and is counted, it is simply never
+    /// offered to the detector as a reason to refuse a packet.
     pub fn from_entries(entries: &[(LpmKey, LpmValue)]) -> Self {
         let mut seats: Vec<Seat> = entries
             .iter()
-            .filter(|(_, value)| value.counter_idx >= CounterId::COUNT)
+            .filter(|(_, value)| {
+                value.counter_idx >= CounterId::COUNT && value.action != Action::Allow
+            })
             .map(|(key, value)| Seat {
                 key: *key,
                 slot: value.counter_idx,
@@ -68,13 +96,17 @@ impl Roster {
 
 #[cfg(test)]
 mod tests {
-    use lorica_common::{Action, Deadline};
+    use lorica_common::Deadline;
 
     use super::*;
 
     fn entry(addr: u8, slot: u32) -> (LpmKey, LpmValue) {
+        acting(addr, slot, Action::Drop)
+    }
+
+    fn acting(addr: u8, slot: u32, action: Action) -> (LpmKey, LpmValue) {
         let mut value = LpmValue::zeroed();
-        value.action = Action::Drop;
+        value.action = action;
         value.counter_idx = slot;
         value.deadline = Deadline::never();
         (LpmKey::host_v4([10, 0, 0, addr]), value)
@@ -148,5 +180,61 @@ mod tests {
             after.seats()[0].key,
             "the fixture did not actually renumber anything, so it proves nothing"
         );
+    }
+
+    /// **An allow-listed source is never seated, whatever its counter does.**
+    ///
+    /// The seat is what makes a key confirmable, and a confirmed key is what unlocks the rungs
+    /// that drop. An `Allow` entry that gets one turns a busy legitimate source — a CGNAT
+    /// gateway, a reverse proxy — into the evidence for refusing it, and the widening at rung 4
+    /// takes a `/24` of its neighbours with it.
+    ///
+    /// Written against the action and not against a rate, because the property is not "an allow
+    /// rule is never busy enough" — it is often busier than an attacker — it is "an allow rule is
+    /// never evidence".
+    #[test]
+    fn an_allow_listed_entry_is_never_seated() {
+        let roster = Roster::from_entries(&[
+            acting(1, CounterId::COUNT, Action::Allow),
+            acting(2, CounterId::COUNT + 1, Action::Drop),
+            acting(3, CounterId::COUNT + 2, Action::Allow),
+        ]);
+        assert_eq!(roster.len(), 1, "an allow rule took a seat");
+        assert_eq!(roster.seats()[0].key, LpmKey::host_v4([10, 0, 0, 2]));
+    }
+
+    /// The other four actions keep their seat, and each for its own reason.
+    ///
+    /// `Drop` is already refused and widening it is what rung 4 is for. `RateLimit` and `Mark`
+    /// are mitigations, and a source under a mitigation that is not reducing its rate is the
+    /// exact case `insufficient_ticks` measures. `Continue` decided nothing and leaves the packet
+    /// to the later stages, so it is not exculpatory either. Excluding any of them would make the
+    /// ladder unable to escalate on the sources it was built to escalate on.
+    #[test]
+    fn every_action_but_allow_keeps_its_seat() {
+        let kept = [
+            Action::Continue,
+            Action::Drop,
+            Action::RateLimit,
+            Action::Mark,
+        ];
+        for (i, action) in kept.into_iter().enumerate() {
+            let roster =
+                Roster::from_entries(&[acting(i as u8, CounterId::COUNT + i as u32, action)]);
+            assert_eq!(roster.len(), 1, "{action:?} lost its seat");
+        }
+    }
+
+    /// Slot order survives the filter: the seats a caller walks against a sweep must still be
+    /// ascending after an allow rule is removed from the middle of the run.
+    #[test]
+    fn removing_an_allow_entry_leaves_the_rest_in_slot_order() {
+        let roster = Roster::from_entries(&[
+            acting(3, CounterId::COUNT + 2, Action::Drop),
+            acting(1, CounterId::COUNT, Action::Drop),
+            acting(2, CounterId::COUNT + 1, Action::Allow),
+        ]);
+        let slots: Vec<u32> = roster.seats().iter().map(|s| s.slot).collect();
+        assert_eq!(slots, vec![CounterId::COUNT, CounterId::COUNT + 2]);
     }
 }

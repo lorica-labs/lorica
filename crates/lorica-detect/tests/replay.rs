@@ -35,9 +35,19 @@ use serde::Deserialize;
 /// | fixture | measured | ceiling |
 /// |---|---:|---:|
 /// | `flash_crowd` | 2 | 4 |
-/// | `pulse_wave` | 2 | 4 |
+/// | `pulse_wave` | 3 | 6 |
 /// | `attack_end` | 8 | 10 |
-/// | `sub_second_burst` | 0 | 2 |
+/// | `sub_second_burst` | 1 | 2 |
+///
+/// **Re-measured after the ladder was retuned**, which is the case the margin was reserved for:
+/// `rise_ticks` went to one and the profile cadence to 500 ms, so the ladder now takes a rung on
+/// a single slow tick of demand and takes it twice as often in wall-clock. `pulse_wave` moved
+/// from 2 changes to 3 and, more to the point, from peak rung 2 to peak rung 3 — it now reaches
+/// `DropSurgical` on a fixture that carries real invalid packets and a hot entry, which is the
+/// gain the retune was for and not a regression. `sub_second_burst` moved from 0 to 1 at the
+/// fast cadence for the same reason. Neither exceeded its old ceiling; `pulse_wave`'s is doubled
+/// from its new measurement rather than left at 4, so the next parameter change is not a build
+/// break at one transition of drift.
 ///
 /// `tests` proves it discriminates: with `hold_ticks` and `fall_ticks` cut to let the ladder
 /// chase every slow tick, `pulse_wave` produces 20 transitions against this 4. The previous
@@ -47,7 +57,7 @@ use serde::Deserialize;
 fn transition_ceiling(fixture: &str) -> u64 {
     match fixture {
         "flash_crowd" => 4,
-        "pulse_wave" => 4,
+        "pulse_wave" => 6,
         "attack_end" => 10,
         "sub_second_burst" => 2,
         other => panic!("no re-baselined transition ceiling for fixture {other}"),

@@ -25,7 +25,28 @@
 pub const FAST_PERIOD_NS: u64 = 100_000_000;
 
 /// The profile cadence: escalation, hysteresis and the descent all count in these.
-pub const SLOW_PERIOD_NS: u64 = 1_000_000_000;
+///
+/// **Halved from one second, and the measurement that moved it.** Every gate on the ladder
+/// counts in these, so this constant multiplies all of them: at one second the first refused
+/// packet arrived seven seconds after an attack began, and a perfectly attributable source
+/// attacking for six seconds was never refused at all — the climb had not finished. A sweep of
+/// 54 tunings across nine scenarios put the whole cost of that in the wall-clock length of a
+/// tick rather than in any single gate. See `docs/mesures/14-frontiere-reactivite-faux-positifs.md`
+/// in the agent tree.
+///
+/// **It buys the time back without buying noise, which is why it is 500 ms and not 250.** At
+/// 250 ms the ladder samples more troughs, breaks more of the consecutive streaks `rise_ticks`
+/// asks for, and one scenario stops being answered at all while the oscillation count
+/// quadruples. 500 ms was the shortest period at which the six scenarios kept a single
+/// direction reversal between them.
+///
+/// **It costs nothing in I/O and one coupling.** Snapshots already arrive every
+/// [`FAST_PERIOD_NS`]; a slow window is a filter over data the tick has already read, so
+/// halving it is arithmetic and not a syscall. But the bank is read on its own cadence —
+/// `loricad`'s `--bank-every` — and a slow tick that sees an unchanged bank computes a share at
+/// the bank's resolution rather than at this one. The two move together, which is why that
+/// default is 5 and not 10.
+pub const SLOW_PERIOD_NS: u64 = 500_000_000;
 
 /// A rate derived from a running total sampled at least `period_ns` apart.
 ///

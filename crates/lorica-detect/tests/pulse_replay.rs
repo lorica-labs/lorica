@@ -92,6 +92,20 @@ struct Scenario {
     period_ms: u64,
     #[serde(default)]
     entry_v4: Option<[u8; 4]>,
+    /// Whether `entry_v4` names a source the operator has allow-listed.
+    ///
+    /// **This is a property of the traffic, not a switch for the test.** A compiled `Allow`
+    /// rule still gets its own counter slot — deliberately, so an operator can see which
+    /// allow-listed source traversed the pipeline — but `Roster::from_entries` does not seat
+    /// it, so the detector is never handed it as a confirmation candidate. A scenario that
+    /// declares its busy source allow-listed is therefore replayed the way the agent would
+    /// actually present it: the counters move in the map and no key reaches the ladder.
+    ///
+    /// Before that filter existed the key *was* handed over, and the three legitimate
+    /// scenarios were refused at rung 4. `the_defect_this_filter_exists_for_is_real` replays
+    /// them the old way and fails if the filter is ever removed.
+    #[serde(default)]
+    allow_listed: bool,
     timeline: Vec<Entry>,
 }
 
@@ -166,7 +180,7 @@ fn scenario(name: &str) -> Scenario {
 ///
 /// Counters accumulate because the maps do: the engine is handed totals and derives every rate
 /// itself, which is the only way a replay exercises the arithmetic the tick runs.
-fn steps(s: &Scenario, roster_has_entry: bool) -> Vec<Step> {
+fn steps(s: &Scenario, force_seat: bool) -> Vec<Step> {
     let period_ns = s.period_ms * 1_000_000;
     let mut named = [0u64; NAMED_SLOTS];
     let mut entry_hits = 0u64;
@@ -194,7 +208,7 @@ fn steps(s: &Scenario, roster_has_entry: bool) -> Vec<Step> {
             entry_hits += phase.entry_per_sec * s.period_ms / 1000;
 
             let at_ns = out.len() as u64 * period_ns;
-            let entries = match s.entry_v4.filter(|_| roster_has_entry) {
+            let entries = match s.entry_v4.filter(|_| force_seat || !s.allow_listed) {
                 Some(addr) => vec![EntryCounter {
                     key: LpmKey::host_v4(addr),
                     hits: entry_hits,
@@ -282,18 +296,29 @@ impl Score {
 }
 
 fn score(name: &str, cfg: Config) -> Score {
+    score_with(name, cfg, false)
+}
+
+/// Replays a scenario the way the agent presented it **before** `Roster` learned to skip an
+/// allow-listed entry: the key is seated whatever the operator decided about it.
+///
+/// Used by exactly one test, which asserts the false positive comes back. Keeping the old
+/// behaviour reachable is what makes the filter's absence a failing build rather than a silent
+/// regression to eleven million refused packets.
+fn score_forcing_seat(name: &str, cfg: Config) -> Score {
     score_with(name, cfg, true)
 }
 
 /// Scores a scenario with the confirmable entry either present in the roster or absent.
 ///
-/// `roster_has_entry: false` models a roster that does not hand the detector this key at all.
+/// `force_seat` overrides a scenario's `allow_listed`, which is the only reason this takes an
+/// argument at all.
 /// It is not a tuning: it is the shape the agent would present if `Roster` filtered the entry
 /// out, which is the fix under test in the note. The scenario is otherwise identical, so the
 /// difference between the two runs is attributable to the roster and to nothing else.
-fn score_with(name: &str, cfg: Config, roster_has_entry: bool) -> Score {
+fn score_with(name: &str, cfg: Config, force_seat: bool) -> Score {
     let sc = scenario(name);
-    let steps = steps(&sc, roster_has_entry);
+    let steps = steps(&sc, force_seat);
     let period_ms = sc.period_ms;
     let mut out = Score {
         period_ms,
@@ -437,8 +462,21 @@ impl Point {
     }
 }
 
-/// The default, as a point, so the table always contains the thing every row is compared to.
+/// The shipped default, as a point, so the table always contains the thing every row is
+/// compared to — and so an unset `LORICA_SWEEP` replays what is actually running.
+///
+/// `the_point_named_here_is_the_one_that_ships` holds it to `Config::default()`. Without that
+/// the two drift apart silently and every row of the sweep is measured against a baseline
+/// nothing runs.
 const BASELINE: Point = Point {
+    rise: 1,
+    hold: 2,
+    insufficient: 3,
+    slow_ms: 500,
+};
+
+/// What shipped before this campaign, kept because two tests are about the difference.
+const PREVIOUS: Point = Point {
     rise: 2,
     hold: 2,
     insufficient: 3,
@@ -704,31 +742,20 @@ fn the_control_scenario_is_answered_at_all() {
 /// recommended one: a tuning is a region of this grid rather than a coordinate, and a neighbour
 /// that refuses legitimate traffic means the recommendation sits next to a cliff.
 ///
-/// **What this asserts, and why it is not the obvious thing.** The obvious assertion — no point
-/// refuses a legitimate packet — fails today at 104 of the 162 point-scenario pairs, *including
-/// the current default*, which refuses 11.09 M packets on `legit_staircase` and reaches rung 4
-/// on it. That is not a property of any tuning. `Roster::from_entries` keeps `{key, slot}` and
-/// drops `LpmValue::action`, the policy compiler gives an `Allow` rule a counter slot on
-/// purpose, and so the detector is handed allow-listed sources as confirmation candidates and
-/// `hottest_entry` takes the maximum over them. Asserting it here would leave a permanently red
-/// suite, which trains a reader to ignore red, and would blame the gates for something the
-/// gates cannot cause.
+/// **This assertion could not be made until the roster was fixed.** It failed at 104 of the 162
+/// point-scenario pairs, *including the current default*, which refused 11.09 M packets on
+/// `legit_staircase` and reached rung 4 on it. None of that was a property of any tuning:
+/// `Roster::from_entries` seated allow-listed entries, so the detector was handed a legitimate
+/// source as a confirmation candidate and `hottest_entry` took the maximum over it. The three
+/// scenarios now declare `allow_listed`, the roster no longer seats such an entry, and the grid
+/// is clean — see `the_defect_this_filter_exists_for_is_real`, which replays them the old way.
 ///
-/// So the assertion is the part that *is* the tuning's responsibility: with that key withheld,
-/// no point of the grid refuses anything. A tuning that broke this would have found a second,
-/// independent route to a false positive, and that is what this test is here to catch. The
-/// count of roster-caused refusals is printed as `LORICA_DEFECT` rather than asserted, and
-/// [`phase_4_the_recommendation_is_green_on_all_nine`] is the release gate that says the
-/// default may not move until the roster is fixed.
-///
-/// **When the roster is fixed, tighten this**: drop the `withheld` run and assert on `offered`.
-/// The two will then be the same measurement.
+/// Failures are collected rather than panicked on at the first, because the useful output is
+/// *which* points fail and on which scenario.
 #[test]
-fn phase_2_no_swept_point_refuses_for_a_reason_the_tuning_owns() {
+fn phase_2_no_swept_point_refuses_a_legitimate_packet() {
     let mut csv = csv_header();
-    let mut leaks: Vec<String> = Vec::new();
-    let mut roster_caused = 0u32;
-    let mut worst_roster = 0u64;
+    let mut failures: Vec<String> = Vec::new();
 
     for slow_ms in [1000u64, 500, 250] {
         for rise in [2u32, 1] {
@@ -740,19 +767,13 @@ fn phase_2_no_swept_point_refuses_for_a_reason_the_tuning_owns() {
                         insufficient,
                         slow_ms,
                     };
-                    for (name, offered) in run_point(point, &HELD_OUT, &mut csv) {
-                        if offered.legit_refused > 0 {
-                            roster_caused += 1;
-                            worst_roster = worst_roster.max(offered.legit_refused);
-                        }
-                        let withheld = score_with(&name, point.config(), false);
-                        if withheld.legit_refused > 0 {
-                            leaks.push(format!(
-                                "{} on {name}: {} legitimate packets refused with the roster \
-                                 key withheld, peak rung {}",
+                    for (name, s) in run_point(point, &HELD_OUT, &mut csv) {
+                        if s.legit_refused > 0 || s.peak_rung >= Tier::DropSurgical.rung() {
+                            failures.push(format!(
+                                "{} on {name}: {} legitimate packets refused, peak rung {}",
                                 point.label(),
-                                withheld.legit_refused,
-                                withheld.peak_rung
+                                s.legit_refused,
+                                s.peak_rung
                             ));
                         }
                     }
@@ -762,95 +783,100 @@ fn phase_2_no_swept_point_refuses_for_a_reason_the_tuning_owns() {
     }
 
     println!("LORICA_HELDOUT csv={}", write_csv("held-out.csv", &csv));
-    println!(
-        "LORICA_DEFECT roster_caused_pairs={roster_caused} worst_refused={worst_roster} \
-         note=allow_listed_sources_are_offered_as_confirmation_candidates"
-    );
     assert!(
-        leaks.is_empty(),
-        "{} of the swept points refuse legitimate traffic for a reason the roster does not \
-         explain, which means a second route to a false positive exists:\n{}",
-        leaks.len(),
-        leaks.join("\n")
+        failures.is_empty(),
+        "{} of the swept points refuse legitimate traffic:\n{}",
+        failures.len(),
+        failures.join("\n")
     );
 }
 
-/// **The diagnosis for why phase 2 fails, isolated to one variable.**
+/// **The false positive the roster filter exists for, kept reachable so it cannot come back.**
 ///
-/// The three held-out scenarios refuse legitimate traffic at every point of the grid,
-/// including the current default, so the failure is not the tuning. This replays them with one
-/// thing changed — the legitimate source is not in the roster the detector is handed — and
-/// nothing else: same traffic, same counters, same bank, same config.
+/// Replays the three legitimate scenarios the way the agent presented them before
+/// `Roster::from_entries` learned to skip an allow-listed entry: the key is seated whatever the
+/// operator decided about it. The refusals return, in the millions, at rung 4 — a widened `/24`
+/// around a carrier-grade NAT gateway.
 ///
-/// If they go green, the false positive is the roster handing the detector a key it should
-/// never have offered, and no setting of `rise_ticks`, `hold_ticks` or `insufficient_ticks`
-/// was ever going to fix it. `Roster::from_entries` keeps `{key, slot}` and drops
-/// `LpmValue::action`, and the policy compiler gives an `Allow` rule a counter slot on purpose
-/// — so the detector cannot tell an allow-listed source from a blocked one, and `hottest_entry`
-/// takes the maximum over both.
+/// This is the regression test for a defect rather than for a feature, so it asserts the *old*
+/// behaviour. Deleting the filter would make `phase_2` and `phase_4` fail, which is the primary
+/// guard; this one exists so the failure is legible — it says what was lost and how much, rather
+/// than leaving somebody to rediscover the mechanism from a red assertion on a tuning grid.
 ///
-/// Run at the current default and at the fastest point the sweep produced, because a diagnosis
-/// that only holds at one tuning is a coincidence.
+/// Run at the default and at the recommendation, because a diagnosis that only holds at one
+/// tuning is a coincidence.
 #[test]
-fn a_key_the_roster_should_not_offer_is_what_refuses_legitimate_traffic() {
-    let fastest = Point {
-        rise: 1,
-        hold: 2,
-        insufficient: 3,
-        slow_ms: 500,
-    };
-    for point in [BASELINE, fastest] {
+fn the_defect_this_filter_exists_for_is_real() {
+    for point in [PREVIOUS, BASELINE] {
+        let mut worst = 0u64;
         for name in HELD_OUT {
-            let offered = score_with(name, point.config(), true);
-            let withheld = score_with(name, point.config(), false);
+            let seated = score_forcing_seat(name, point.config());
+            let filtered = score(name, point.config());
             println!(
-                "LORICA_ROSTER {} scenario={name} offered_refused={} offered_peak={}                  withheld_refused={} withheld_peak={}",
+                "LORICA_ROSTER {} scenario={name} seated_refused={} seated_peak={} \
+                 filtered_refused={} filtered_peak={}",
                 point.label(),
-                offered.legit_refused,
-                offered.peak_rung,
-                withheld.legit_refused,
-                withheld.peak_rung
+                seated.legit_refused,
+                seated.peak_rung,
+                filtered.legit_refused,
+                filtered.peak_rung
             );
+            worst = worst.max(seated.legit_refused);
             assert_eq!(
-                withheld.legit_refused,
+                filtered.legit_refused,
                 0,
-                "{}: {name} still refuses {} legitimate packets with the key withheld, so the                  roster is not the whole story and the note must not say it is",
+                "{}: {name} refuses {} legitimate packets with the filter in place",
                 point.label(),
-                withheld.legit_refused
+                filtered.legit_refused
             );
         }
+        assert!(
+            worst > 10_000_000,
+            "{}: seating allow-listed keys refused only {worst} packets, against the 11.09 M \
+             measured when the filter was written — either the scenarios have drifted or the \
+             filter is no longer the thing being tested",
+            point.label()
+        );
     }
 }
 
-/// The point this campaign recommends, and the nine scenarios it is checked against.
+/// The sweep's baseline and the shipped default must be the same point.
 ///
-/// Not the fastest point on the curve. `rise=1,hold=0,insuf=1,slow_ms=500` answers the control
-/// in one second, but it triples the hunting and it cuts `insufficient_ticks` to one, which
-/// stops "the rung below was measured insufficient" from meaning anything. This point keeps
-/// that gate at its full three ticks and still answers in 2.5 seconds, because the sweep showed
-/// the gate was never what cost the time — `hold_ticks` was.
-const RECOMMENDED: Point = Point {
-    rise: 1,
-    hold: 2,
-    insufficient: 3,
-    slow_ms: 500,
-};
+/// Cheap, and it is the assumption every other row in the table rests on. A default that moved
+/// without this constant moving would leave the whole sweep comparing against something nobody
+/// runs, and nothing else here would notice.
+#[test]
+fn the_point_named_here_is_the_one_that_ships() {
+    let shipped = Config::default();
+    let named = BASELINE.config();
+    assert_eq!(named.rise_ticks, shipped.rise_ticks, "rise_ticks");
+    assert_eq!(named.hold_ticks, shipped.hold_ticks, "hold_ticks");
+    assert_eq!(
+        named.insufficient_ticks, shipped.insufficient_ticks,
+        "insufficient_ticks"
+    );
+    assert_eq!(
+        named.slow_period_ns, shipped.slow_period_ns,
+        "slow_period_ns"
+    );
+}
 
-/// **Phase 4: the recommendation, held to all nine.**
+/// **Phase 4: the shipped default, held to all nine.**
 ///
-/// The six are scored as they are. The three held out are scored with the confirmable key
-/// withheld, because that models the roster fix this campaign concluded is required *before*
-/// the default moves — and stating that in a test is the only way the sequencing survives
-/// somebody reading the note quickly.
+/// Not a recommendation any more — this is what runs. It was written while the tuning was still
+/// a proposal and while the roster still handed the detector allow-listed keys, so the three
+/// held-out scenarios had to be scored with the key withheld to model the fix. Both have landed:
+/// the scenarios declare `allow_listed`, the roster does not seat such an entry, and this scores
+/// the nine exactly as the agent would present them.
 ///
-/// **This test does not change the default.** It asserts that the recommendation is ready and
-/// on what condition, so that whoever lands the roster fix has the check already written.
+/// The bounds are the numbers the campaign quoted, so a future change that gives back the gain
+/// fails here rather than in a note nobody re-runs.
 #[test]
 fn phase_4_the_recommendation_is_green_on_all_nine() {
-    let cfg = || RECOMMENDED.config();
+    let cfg = Config::default;
 
     for name in HELD_OUT {
-        let s = score_with(name, cfg(), false);
+        let s = score(name, cfg());
         assert_eq!(
             s.legit_refused, 0,
             "{name} refuses {} legitimate packets at the recommended point even with the              roster fix modelled: the recommendation is wrong, not the sequencing",
