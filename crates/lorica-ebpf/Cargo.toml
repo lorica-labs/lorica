@@ -69,6 +69,31 @@ name = "lorica-ebpf"
 path = "src/main.rs"
 
 [profile.release]
+# **Three and not a size level, and the two obvious ways to ask for a smaller object were both
+# tried and both do nothing.** Worth writing down, because the mechanism this program is most
+# sensitive to is size: the entry point holds the parsed view live across seven stage calls
+# with ten registers, so code that a packet never executes still costs it — carrying the IPv6
+# walker costs an IPv4 packet 212 instructions of the 1402 it spends.
+#
+# `opt-level = "s"` and `"z"` do not build at all. `bpf-linker` refuses the flag outright: *the
+# optimization level "Os" is no longer supported, use O2 in conjunction with the optsize
+# attribute instead*.
+#
+# `#[optimize(size)]` on the cold path — the attribute that error message names, available on
+# the nightly this crate already needs — changes nothing. Applied to `ipv6::parse`, the object
+# came out byte for byte the same: 760 instructions in the entry point and 139 in the walker,
+# before and after. LLVM's size mode has no decision to make about a bounded loop that is
+# already what it is.
+#
+# A third was tried at the source level and is also worth naming: reading the sixteen-byte
+# RakNet magic as two `u64` comparisons instead of a `[u8; 16]` by value — the exact change that
+# was worth 22 instructions a packet in the parser — moved the signature stage from 327 to 326
+# instructions. One. The pattern pays where a header is taken apart field by field and not where
+# a run of bytes is compared against a constant, because the second is a shape LLVM already had
+# an answer for.
+#
+# What does move this program is deleting code and giving the compiler shapes it can fold. That
+# is what the parse work of 30 August 2026 did, and it is where the next one should look.
 opt-level = 3
 lto = true
 codegen-units = 1
