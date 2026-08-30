@@ -23,6 +23,7 @@
 //! what brings the 512-byte stack limit within reach, and the largest thing held here is
 //! a sixteen-byte MAGIC.
 
+use aya_ebpf::programs::XdpContext;
 use lorica_common::{FragState, PacketView};
 
 use crate::{
@@ -165,7 +166,7 @@ const LOOP_PAIRS: [(u16, u16); 7] = [
 pub struct Branch;
 
 impl SignatureBackend for Branch {
-    fn classify(view: &PacketView) -> Option<VectorId> {
+    fn classify(ctx: &XdpContext, view: &PacketView) -> Option<VectorId> {
         // Read once and passed down. Ten reads of the same word would each be a load the
         // verifier keeps — a `read_volatile` is never folded, and the instruction before a
         // branch is a visited instruction whatever the branch resolves to. One read and ten
@@ -176,7 +177,7 @@ impl SignatureBackend for Branch {
         // flood is made of, so they answer first and the coherence checks, which every
         // packet reaches, are the ones a matching packet never gets to.
         if armed & AMP_MASK != 0
-            && let Some(vector) = amplification(view, armed)
+            && let Some(vector) = amplification(ctx, view, armed)
         {
             return Some(vector);
         }
@@ -220,7 +221,7 @@ const fn stated_l4_len(view: &PacketView) -> u16 {
 /// packet read of the stage happens only for a datagram already coming from that port at
 /// that size. A flood of anything else pays two compares for it.
 #[cfg_attr(feature = "profiling", inline(never))]
-fn amplification(view: &PacketView, armed: u32) -> Option<VectorId> {
+fn amplification(ctx: &XdpContext, view: &PacketView, armed: u32) -> Option<VectorId> {
     if view.proto != IPPROTO_UDP {
         return None;
     }
@@ -243,14 +244,16 @@ fn amplification(view: &PacketView, armed: u32) -> Option<VectorId> {
     if armed & VectorId::AmpA2s.bit() != 0
         && view.sport == A2S_PORT
         && payload >= A2S_FLOOR
-        && view.payload_bytes::<4>(0) == Some(SOURCE_QUERY_MAGIC)
+        && view.payload_bytes::<4>(ctx.data() as u64, ctx.data_end() as u64, 0)
+            == Some(SOURCE_QUERY_MAGIC)
     {
         return Some(VectorId::AmpA2s);
     }
     if armed & VectorId::AmpRaknet.bit() != 0
         && view.sport == RAKNET_PORT
         && payload >= RAKNET_FLOOR
-        && view.payload_bytes::<16>(RAKNET_PONG_MAGIC_OFF) == Some(RAKNET_MAGIC)
+        && view.payload_bytes::<16>(ctx.data() as u64, ctx.data_end() as u64, RAKNET_PONG_MAGIC_OFF)
+            == Some(RAKNET_MAGIC)
     {
         return Some(VectorId::AmpRaknet);
     }

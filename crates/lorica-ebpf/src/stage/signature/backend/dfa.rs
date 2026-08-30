@@ -26,6 +26,7 @@
 //! kernel that has `gotox`. Not before: a table over ten vectors would be slower than
 //! ten compares on this floor.
 
+use aya_ebpf::programs::XdpContext;
 use lorica_common::PacketView;
 
 use crate::stage::signature::{backend::SignatureBackend, catalog::VectorId};
@@ -33,7 +34,7 @@ use crate::stage::signature::{backend::SignatureBackend, catalog::VectorId};
 pub struct Dfa;
 
 impl SignatureBackend for Dfa {
-    fn classify(_view: &PacketView) -> Option<VectorId> {
+    fn classify(_ctx: &XdpContext, _view: &PacketView) -> Option<VectorId> {
         None
     }
 }

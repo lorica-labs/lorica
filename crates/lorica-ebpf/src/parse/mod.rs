@@ -233,8 +233,6 @@ pub fn parse(ctx: &XdpContext) -> Result<PacketView, ParseError> {
     let (l2, l3, l4) = walk(&win)?;
 
     let view = PacketView {
-        data: win.start as u64,
-        data_end: win.end as u64,
         src: l3.src,
         l3_off: l2.l3_off as u16,
         l4_off: l3.l4_off as u16,

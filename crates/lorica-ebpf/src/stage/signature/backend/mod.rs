@@ -14,19 +14,20 @@
 pub mod branch;
 pub mod dfa;
 
+use aya_ebpf::programs::XdpContext;
 use lorica_common::PacketView;
 
 use crate::stage::signature::catalog::VectorId;
 
 pub trait SignatureBackend {
     /// The first vector of the catalogue the packet matches, or nothing.
-    fn classify(view: &PacketView) -> Option<VectorId>;
+    fn classify(ctx: &XdpContext, view: &PacketView) -> Option<VectorId>;
 }
 
 /// The skeleton is held to the shared signature here rather than by being called: it
 /// is compiled on every build, so it cannot drift out of the trait unnoticed while
 /// waiting for the kernel that makes it worth writing.
-const _: fn(&PacketView) -> Option<VectorId> = <dfa::Dfa as SignatureBackend>::classify;
+const _: fn(&XdpContext, &PacketView) -> Option<VectorId> = <dfa::Dfa as SignatureBackend>::classify;
 
 #[cfg(not(feature = "signature-dfa"))]
 pub use branch::Branch as Selected;

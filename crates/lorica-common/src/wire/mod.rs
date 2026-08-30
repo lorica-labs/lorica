@@ -33,5 +33,10 @@ const _: () = assert!(size_of::<LpmKey>() == 20);
 const _: () = assert!(align_of::<LpmKey>() == 4);
 const _: () = assert!(size_of::<EventHeader>() == 16);
 const _: () = assert!(align_of::<EventHeader>() == 8);
-const _: () = assert!(size_of::<PacketView>() == 56);
-const _: () = assert!(align_of::<PacketView>() == 8);
+// Forty bytes and two-aligned, and it was fifty-six and eight-aligned while it carried the
+// two packet pointers. Losing them lost the `u64` that set the alignment, and nothing needs
+// the old one: a map value is page-aligned whatever this says, and the eight bytes of padding
+// the struct used to carry were eight bytes the entry point held live across seven stage
+// calls with ten registers to do it in.
+const _: () = assert!(size_of::<PacketView>() == 40);
+const _: () = assert!(align_of::<PacketView>() == 2);

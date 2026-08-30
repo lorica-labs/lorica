@@ -68,10 +68,6 @@ pub const MAX_OFFSET: usize = 9216;
 #[repr(C)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct PacketView {
-    /// The start of the packet, as the verifier hands it to the program.
-    pub data: u64,
-    /// One past the last byte. The two together are what a bounds check compares.
-    pub data_end: u64,
     pub src: [u8; 16],
     pub l3_off: u16,
     pub l4_off: u16,
@@ -107,7 +103,7 @@ impl PacketView {
     /// offset is zero. A four-byte MAGIC is readable; a one-byte type check at a
     /// variable offset is not, and never will be.
     #[inline(always)]
-    pub fn payload_bytes<const N: usize>(&self, at: u16) -> Option<[u8; N]> {
+    pub fn payload_bytes<const N: usize>(&self, data: u64, data_end: u64, at: u16) -> Option<[u8; N]> {
         const {
             assert!(
                 N >= 2,
@@ -118,8 +114,8 @@ impl PacketView {
         if off > MAX_OFFSET {
             return None;
         }
-        let ptr = self.data as usize + off;
-        if ptr + N > self.data_end as usize {
+        let ptr = data as usize + off;
+        if ptr + N > data_end as usize {
             return None;
         }
         // SAFETY: the comparison above is the shape the verifier recognises for a

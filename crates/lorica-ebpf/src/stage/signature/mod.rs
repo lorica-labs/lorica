@@ -14,6 +14,7 @@
 pub mod backend;
 pub mod catalog;
 
+use aya_ebpf::programs::XdpContext;
 use lorica_common::PacketView;
 
 use crate::{
@@ -25,8 +26,8 @@ use crate::{
 };
 
 #[inline(never)]
-pub fn run(view: &PacketView) -> Outcome {
-    let Some(vector) = Selected::classify(view) else {
+pub fn run(ctx: &XdpContext, view: &PacketView) -> Outcome {
+    let Some(vector) = Selected::classify(ctx, view) else {
         return Outcome::Continue;
     };
 

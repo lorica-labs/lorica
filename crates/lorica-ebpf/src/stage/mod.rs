@@ -183,7 +183,7 @@ pub fn run(ctx: &XdpContext) -> u32 {
     // Stage 6 has three answers and only two of them end the walk. Rate-limiting is not a
     // verdict, so it is routed here and not returned: the packet reaches the buckets
     // carrying which budget it is charged against.
-    let budget = match signature::run(&view) {
+    let budget = match signature::run(ctx, &view) {
         Outcome::Continue => Budget::Normal,
         Outcome::RateLimit => Budget::Suspect,
         settled => return settled.action(),
