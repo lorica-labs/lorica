@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "name": "mixed_vectors",
+  "about": "Three vectors at once rather than in turn: a SYN flood carrying flag combinations no stack emits, amplified UDP from DNS and memcached reflectors, and an ICMP flood underneath both. Six exception counters move together and the bucket is over budget on all of it, while one source keeps hitting its own slot. This is the easy case and it is here as the control: if the ladder does not climb promptly and hold on a signal this unambiguous, no reading of the other five means anything, because a slow or hesitant response there could as easily be the tuning as the scenario. Detect_ticks is the column that matters, and it is the number the other scenarios are compared against.",
+  "period_ms": 100,
+  "entry_v4": [198, 51, 100, 44],
+  "timeline": [
+    { "repeat": 20, "note": "two seconds of quiet", "legit_pps": 30000, "loaded_buckets": 35, "level_kib": 9, "counters": { "bucket_over_budget": 5000 } },
+    { "repeat": 80, "note": "eight seconds of everything at once", "legit_pps": 30000, "attack_pps": 1400000, "loaded_buckets": 780, "level_kib": 52, "entry_per_sec": 320000, "counters": { "bucket_over_budget": 1400000, "signature_impossible_tcp_flags": 500000, "sanity_tcp_flags": 500000, "signature_amp_dns": 300000, "signature_amp_memcached": 200000, "icmp_echo_dropped": 250000, "icmp_other_dropped": 150000, "urpf_no_route": 400000 } },
+    { "repeat": 120, "note": "twelve seconds of quiet, long enough to measure the release", "legit_pps": 30000, "loaded_buckets": 35, "level_kib": 9, "counters": { "bucket_over_budget": 5000 } }
+  ]
+}

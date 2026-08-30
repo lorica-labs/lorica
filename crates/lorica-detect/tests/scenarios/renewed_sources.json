@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "name": "renewed_sources",
+  "about": "The same volume delivered twice, once by a source that stays and once by sources that do not. The first half is a stable attacker: its own counter slot rises for six seconds and the ladder has something it can name. The second half is the same rate spread across the whole bank and renewed faster than a slot can be attributed, so every pressure signal is identical and no per-entry counter moves at all. The two halves are in one run because the contrast is the measurement: read the under_mitigated column split against detect_ticks and the trade this design makes is stated in numbers. Nothing is refused in the second half, and that is the intended behaviour rather than a gap - a refusal there would have to rest on a bucket level, 1 024 buckets against any realistic source count means two sources share one, and the packet it dropped would as likely belong to whoever else hashed there. The cost of that choice is exactly the second half's under-mitigation, and this scenario exists to keep the cost visible rather than to argue it away.",
+  "period_ms": 100,
+  "entry_v4": [203, 0, 113, 77],
+  "timeline": [
+    { "repeat": 20, "note": "two seconds of quiet", "legit_pps": 30000, "loaded_buckets": 35, "level_kib": 9, "counters": { "bucket_over_budget": 5000 } },
+    { "repeat": 60, "note": "six seconds from one source that stays put", "legit_pps": 30000, "attack_pps": 800000, "loaded_buckets": 260, "level_kib": 44, "entry_per_sec": 260000, "counters": { "bucket_over_budget": 800000, "signature_amp_ssdp": 300000, "urpf_wrong_interface": 250000 } },
+    { "repeat": 40, "note": "four seconds of quiet between the halves", "legit_pps": 30000, "loaded_buckets": 35, "level_kib": 9, "counters": { "bucket_over_budget": 5000 } },
+    { "repeat": 60, "note": "six seconds of the same rate from sources renewed faster than a slot can be attributed: the bank is loaded end to end and no entry counter moves", "legit_pps": 30000, "attack_pps": 800000, "loaded_buckets": 1024, "level_kib": 44, "entry_per_sec": 0, "counters": { "bucket_over_budget": 800000, "signature_amp_ssdp": 300000, "urpf_wrong_interface": 250000 } },
+    { "repeat": 100, "note": "ten seconds of quiet", "legit_pps": 30000, "loaded_buckets": 35, "level_kib": 9, "counters": { "bucket_over_budget": 5000 } }
+  ]
+}

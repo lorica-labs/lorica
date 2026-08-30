@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "name": "flash_crowd_legit",
+  "about": "The most important of the six, and the only one with a hard assertion attached. A stream launches, a match starts, a link is posted: legitimate traffic goes up twenty-fold in one second and stays there. Every packet parses, passes reverse-path, matches no signature and belongs to a source doing nothing an operator would object to - the only thing that moves is the bucket, because the traffic genuinely is over the configured budget, which is what a flash crowd is. That is exactly what makes it the false-positive test: every pressure signal the engine has is real and pointing up, and none of them names a source. No single source exceeds entry_per_sec, because a crowd is many sources rather than a big one, which is the structural difference between this and an attack and the only one the engine can act on. The ladder is permitted to mark and to limit. It must not refuse a packet, and a_flash_crowd_refuses_nothing fails the build if it does. A failure here does not invalidate this scenario - it invalidates the ladder, because this is the shape operators meet most often and the one where a false positive costs the most.",
+  "period_ms": 100,
+  "entry_v4": [192, 0, 2, 15],
+  "timeline": [
+    { "repeat": 30, "note": "three seconds of an ordinary evening", "legit_pps": 45000, "entry_is_attacker": false, "loaded_buckets": 40, "level_kib": 10, "entry_per_sec": 300, "counters": { "bucket_over_budget": 5000 } },
+    { "repeat": 10, "note": "one second of ramp: the link has been posted", "legit_pps": 300000, "entry_is_attacker": false, "loaded_buckets": 420, "level_kib": 30, "entry_per_sec": 500, "counters": { "bucket_over_budget": 400000 } },
+    { "repeat": 120, "note": "twelve seconds at the plateau: nine hundred thousand legitimate packets per second, the bank almost entirely loaded, and not one exception counter moving", "legit_pps": 900000, "entry_is_attacker": false, "loaded_buckets": 990, "level_kib": 56, "entry_per_sec": 600, "counters": { "bucket_over_budget": 2000000 } },
+    { "repeat": 60, "note": "six seconds of decay as the crowd disperses", "legit_pps": 200000, "entry_is_attacker": false, "loaded_buckets": 200, "level_kib": 20, "entry_per_sec": 400, "counters": { "bucket_over_budget": 150000 } },
+    { "repeat": 30, "note": "back to an ordinary evening", "legit_pps": 45000, "entry_is_attacker": false, "loaded_buckets": 40, "level_kib": 10, "entry_per_sec": 300, "counters": { "bucket_over_budget": 5000 } }
+  ]
+}

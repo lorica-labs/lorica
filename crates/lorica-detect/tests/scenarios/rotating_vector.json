@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "name": "rotating_vector",
+  "about": "One attacker, one target, and a different vector every pulse: amplified DNS, then NTP, then SSDP, then memcached, then impossible TCP flags, then fragment abuse. The source keeps hitting its own counter slot throughout, so the evidence that justifies a refusal is continuous even though no single exception counter is. This is the shape a rented booter produces when it cycles its method list, and it is a trap for any detector that keys its state on the vector rather than on the source: six counters each rising for one pulse and flat for five look like six small incidents rather than one sustained attack. The ladder should read it as the latter - climbing once and holding across the rotation, not restarting at each change - and the reversals column is where that shows.",
+  "period_ms": 100,
+  "entry_v4": [198, 51, 100, 22],
+  "timeline": [
+    { "repeat": 20, "note": "two seconds of quiet", "legit_pps": 25000, "loaded_buckets": 30, "level_kib": 8, "counters": { "bucket_over_budget": 4000 } },
+    { "repeat": 20, "note": "vector 1: amplified DNS", "legit_pps": 25000, "attack_pps": 700000, "loaded_buckets": 500, "level_kib": 40, "entry_per_sec": 150000, "counters": { "bucket_over_budget": 700000, "signature_amp_dns": 400000 } },
+    { "repeat": 20, "note": "vector 2: amplified NTP", "legit_pps": 25000, "attack_pps": 700000, "loaded_buckets": 500, "level_kib": 40, "entry_per_sec": 150000, "counters": { "bucket_over_budget": 700000, "signature_amp_ntp": 400000 } },
+    { "repeat": 20, "note": "vector 3: SSDP", "legit_pps": 25000, "attack_pps": 700000, "loaded_buckets": 500, "level_kib": 40, "entry_per_sec": 150000, "counters": { "bucket_over_budget": 700000, "signature_amp_ssdp": 400000 } },
+    { "repeat": 20, "note": "vector 4: memcached", "legit_pps": 25000, "attack_pps": 700000, "loaded_buckets": 500, "level_kib": 40, "entry_per_sec": 150000, "counters": { "bucket_over_budget": 700000, "signature_amp_memcached": 400000 } },
+    { "repeat": 20, "note": "vector 5: impossible TCP flags", "legit_pps": 25000, "attack_pps": 700000, "loaded_buckets": 500, "level_kib": 40, "entry_per_sec": 150000, "counters": { "bucket_over_budget": 700000, "signature_impossible_tcp_flags": 400000 } },
+    { "repeat": 20, "note": "vector 6: fragment abuse", "legit_pps": 25000, "attack_pps": 700000, "loaded_buckets": 500, "level_kib": 40, "entry_per_sec": 150000, "counters": { "bucket_over_budget": 700000, "signature_frag_abuse": 400000, "fragment_later_dropped": 400000 } },
+    { "repeat": 100, "note": "ten seconds of quiet after the last vector", "legit_pps": 25000, "loaded_buckets": 30, "level_kib": 8, "counters": { "bucket_over_budget": 4000 } }
+  ]
+}

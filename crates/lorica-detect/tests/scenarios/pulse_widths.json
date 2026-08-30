@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "name": "pulse_widths",
+  "about": "Three pulse trains of the same shape and three different widths, sampled at 50 ms so the narrowest is one tick wide. Five pulses of 50 ms at 5% duty, then five of 100 ms at 10%, then five of 300 ms at 30%, each cycle exactly one second so a pulse never straddles two slow ticks. The question this asks is not whether the ladder mitigates - it is what the slow cadence can see at all. The ladder moves on a one-second window and needs rise_ticks of it, so a pulse narrower than that window is averaged into it rather than seen, and the duty cycle rather than the peak is what reaches the engine. Read the detect_ticks and missed_pulses columns together: a train that is entirely missed at 5% and answered at 30% locates the floor of what this cadence can respond to.",
+  "period_ms": 50,
+  "entry_v4": [203, 0, 113, 7],
+  "timeline": [
+    { "repeat": 20, "note": "one second of quiet before the first train", "legit_pps": 40000, "loaded_buckets": 30, "level_kib": 8, "counters": { "bucket_over_budget": 4000 } },
+    { "cycles": 5, "phases": [
+      { "repeat": 1, "note": "50 ms on", "legit_pps": 40000, "attack_pps": 2000000, "loaded_buckets": 700, "level_kib": 48, "entry_per_sec": 400000, "counters": { "bucket_over_budget": 2000000, "signature_amp_dns": 300000, "urpf_wrong_interface": 200000 } },
+      { "repeat": 19, "note": "950 ms off", "legit_pps": 40000, "loaded_buckets": 30, "level_kib": 8, "counters": { "bucket_over_budget": 4000 } }
+    ] },
+    { "cycles": 5, "phases": [
+      { "repeat": 2, "note": "100 ms on", "legit_pps": 40000, "attack_pps": 2000000, "loaded_buckets": 700, "level_kib": 48, "entry_per_sec": 400000, "counters": { "bucket_over_budget": 2000000, "signature_amp_dns": 300000, "urpf_wrong_interface": 200000 } },
+      { "repeat": 18, "note": "900 ms off", "legit_pps": 40000, "loaded_buckets": 30, "level_kib": 8, "counters": { "bucket_over_budget": 4000 } }
+    ] },
+    { "cycles": 5, "phases": [
+      { "repeat": 6, "note": "300 ms on", "legit_pps": 40000, "attack_pps": 2000000, "loaded_buckets": 700, "level_kib": 48, "entry_per_sec": 400000, "counters": { "bucket_over_budget": 2000000, "signature_amp_dns": 300000, "urpf_wrong_interface": 200000 } },
+      { "repeat": 14, "note": "700 ms off", "legit_pps": 40000, "loaded_buckets": 30, "level_kib": 8, "counters": { "bucket_over_budget": 4000 } }
+    ] },
+    { "repeat": 60, "note": "three seconds of quiet, long enough for the descent to complete", "legit_pps": 40000, "loaded_buckets": 30, "level_kib": 8, "counters": { "bucket_over_budget": 4000 } }
+  ]
+}

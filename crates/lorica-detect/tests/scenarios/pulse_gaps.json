@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "name": "pulse_gaps",
+  "about": "One pulse width, three gaps. Bursts of 300 ms carrying the same traffic every time, separated first by one second, then by three, then by ten. The width is held constant on purpose so the only variable is the pause, and the pause is the variable the hysteresis is tuned against: fall_ticks defaults to five slow ticks, so a one-second gap is inside the descent and a ten-second gap is comfortably outside it. What the run should show is a ladder that holds through the short gaps rather than chasing them - the transitions and reversals columns are the ones to read - and that does eventually release, which the hold_ticks column reports. A ladder that released after every gap would re-climb from Observe on the next pulse and answer each one late; a ladder that never released would be mitigating an attack that ended ten seconds earlier.",
+  "period_ms": 100,
+  "entry_v4": [203, 0, 113, 7],
+  "timeline": [
+    { "repeat": 20, "note": "two seconds of quiet", "legit_pps": 20000, "loaded_buckets": 30, "level_kib": 8, "counters": { "bucket_over_budget": 4000 } },
+    { "cycles": 4, "phases": [
+      { "repeat": 3, "note": "300 ms pulse", "legit_pps": 20000, "attack_pps": 900000, "loaded_buckets": 620, "level_kib": 44, "entry_per_sec": 200000, "counters": { "bucket_over_budget": 900000, "signature_amp_ntp": 120000, "urpf_no_route": 90000 } },
+      { "repeat": 10, "note": "one second gap, inside the descent", "legit_pps": 20000, "loaded_buckets": 30, "level_kib": 8, "counters": { "bucket_over_budget": 4000 } }
+    ] },
+    { "cycles": 3, "phases": [
+      { "repeat": 3, "note": "300 ms pulse", "legit_pps": 20000, "attack_pps": 900000, "loaded_buckets": 620, "level_kib": 44, "entry_per_sec": 200000, "counters": { "bucket_over_budget": 900000, "signature_amp_ntp": 120000, "urpf_no_route": 90000 } },
+      { "repeat": 30, "note": "three second gap, at the edge of the descent", "legit_pps": 20000, "loaded_buckets": 30, "level_kib": 8, "counters": { "bucket_over_budget": 4000 } }
+    ] },
+    { "cycles": 2, "phases": [
+      { "repeat": 3, "note": "300 ms pulse", "legit_pps": 20000, "attack_pps": 900000, "loaded_buckets": 620, "level_kib": 44, "entry_per_sec": 200000, "counters": { "bucket_over_budget": 900000, "signature_amp_ntp": 120000, "urpf_no_route": 90000 } },
+      { "repeat": 100, "note": "ten second gap, well outside it", "legit_pps": 20000, "loaded_buckets": 30, "level_kib": 8, "counters": { "bucket_over_budget": 4000 } }
+    ] }
+  ]
+}
