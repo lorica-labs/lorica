@@ -53,6 +53,24 @@ measure-without-ipv6 = []
 # half costs. **A measurement and not a configuration**: the agent decides the word at load
 # time, and the point of the number is to know whether deciding it is worth the code.
 measure-without-trie = []
+# Issues the CLASS24 access right after the parse and consumes it at stage 3, so the miss has
+# the clock read and stage 2 to overlap with.
+#
+# **Measured, and it returns nothing.** Under a dispersed flood the access costs 175.6 cycles a
+# packet without this and 179.2 with it -- a difference of -3.5 against a pass-to-pass spread of
+# +/-20, which is no effect. The prediction written before the run said the same and for the
+# reason the run confirms: there are only 50 to 130 instructions of independent work between the
+# two points, which is 25 to 65 cycles of cover at this program's IPC, and the value has to
+# survive two bpf-to-bpf calls in ten registers to collect any of it. If the true gain sits at
+# the bottom of that range the campaign cannot see it; if it sat at the top it would have shown.
+#
+# Two costs it does have: +9 instructions in the object, and the resulting BTF **fails
+# `BPF_BTF_LOAD` on 6.8** where the shipped object's loads. The program still verifies and runs.
+#
+# Kept rather than deleted because it costs nothing when off and is worth one more run on bare
+# metal: the cover stays about 65 cycles whatever the miss costs, so a machine where the access
+# reaches DRAM rather than L3 would show it more clearly than this one can.
+hoist-class24 = []
 stage-cutoff = []
 # Puts each parser back in a subprogram of its own, so it has a JIT symbol a `perf`
 # campaign can attribute cycles to. Instrumentation, not a property of the program: the

@@ -60,6 +60,47 @@ use crate::maps::OA_TABLE;
 use crate::{helpers, stage::Outcome};
 
 #[inline(never)]
+/// The `CLASS24` access on its own, so a caller can issue it earlier than it consumes it.
+///
+/// **Why this is separable and `probe` is not.** This is a slice index with no `read_volatile`
+/// between the bound and the load, so nothing pins where it is emitted. `probe` carries a
+/// deliberate barrier that keeps the 6.8 verifier from losing the bound at the final `XOR`, and
+/// moving it would cost the program its ability to load. Nothing here touches `probe`.
+///
+/// Returns `None` for anything that is not IPv4, which is the same early exit `run` makes.
+#[cfg(feature = "hoist-class24")]
+#[inline(always)]
+pub fn class_of(view: &PacketView) -> Option<(u32, Class24)> {
+    if view.family() != Family::V4 {
+        return None;
+    }
+    let addr = u32::from_be_bytes([view.src[12], view.src[13], view.src[14], view.src[15]]);
+    // SAFETY: as in `run`.
+    let table =
+        unsafe { core::slice::from_raw_parts((&raw const CLASS24).cast::<u8>(), CLASS24_BYTES) };
+    Some((addr, class24_get(table, addr)))
+}
+
+/// Stage 3a from a verdict the caller already has.
+#[cfg(feature = "hoist-class24")]
+pub fn run_hoisted(hoisted: Option<(u32, Class24)>) -> Outcome {
+    let Some((addr, class)) = hoisted else {
+        return Outcome::Continue;
+    };
+    match class {
+        Class24::None => Outcome::Continue,
+        Class24::Deny => {
+            helpers::bump(CounterId::LpmDropHit);
+            Outcome::Drop
+        }
+        Class24::Allow => {
+            helpers::bump(CounterId::LpmAllowExit);
+            Outcome::Pass
+        }
+        Class24::Table => verdict(probe(addr)),
+    }
+}
+
 pub fn run(view: &PacketView) -> Outcome {
     if view.family() != Family::V4 {
         return Outcome::Continue;

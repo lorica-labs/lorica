@@ -1,0 +1,43 @@
+group,A
+events,cycles,instructions,cache-misses,L1-dcache-load-misses
+seconds,8
+pps,200000
+passes,4
+queues,1 (restored to 4)
+ebpf_features,hoist-class24
+
+--- idle baseline, no traffic
+0,94912326,47008095,144141,1195385,ok
+
+--- warm-up, discarded from the reduction
+1612246,5079897320,4310948026,584263,187355403,ok
+
+--- pass 1, arm spread
+1608775,5055740289,4283667351,721705,187733875,ok
+
+--- pass 1, arm single
+1570597,4658388796,4149171671,183031,176600867,ok
+
+--- pass 2, arm single
+1611291,4774704188,4267884383,180686,181679477,ok
+
+--- pass 2, arm spread
+1611229,5035034668,4287124051,596183,187456171,ok
+
+--- pass 3, arm spread
+1610475,5050266198,4292126652,644318,187425882,ok
+
+--- pass 3, arm single
+1570357,4616044541,4142986014,191065,175692578,ok
+
+--- pass 4, arm single
+1609590,4768912533,4258134035,207311,180449528,ok
+
+--- pass 4, arm spread
+1613096,5067806742,4308865806,559815,188894154,ok
+
+per packet                         spread         single     difference
+cycles                          3077.3598      2898.2834       179.0764
+instructions                    2635.7653      2614.0483        21.7171
+cache-misses                       0.3019         0.0292         0.2728
+L1-dcache-load-misses            115.8873       111.5466         4.3407

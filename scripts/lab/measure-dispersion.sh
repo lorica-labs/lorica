@@ -116,6 +116,9 @@ TARGET_HOST=${LORICA_TARGET_HOST:-lab-target}
 GEN_HOST=${LORICA_GEN_HOST:-lab-gen}
 REMOTE_DIR=${LORICA_REMOTE_DIR:-src}
 RUN_DIR=${LORICA_RUN_DIR:-disp}
+# Features the measured eBPF object is built with, so a variant behind a flag is measured with
+# the same instrument and in the same session as its baseline. Empty measures what ships.
+EBPF_EXTRA=${EBPF_EXTRA:-}
 
 # The single source address of arm B. Inside a documentation range on purpose: it is a bogon,
 # so it can never collide with a rule an operator might have loaded, and the arm is about the
@@ -180,7 +183,7 @@ dst_ip=$(on_target "ip -4 -br addr show $IFACE | awk '{print \$3}' | cut -d/ -f1
 bash scripts/lab/deploy.sh "$BUILD_HOST" \
     'export PATH=$HOME/.cargo/bin:$PATH; cd $HOME/'"$REMOTE_DIR"' \
      && cargo build --release --target x86_64-unknown-linux-musl -p loricad \
-     && cd crates/lorica-ebpf && cargo +nightly build --release' \
+     && cd crates/lorica-ebpf && cargo +nightly build --release'"${EBPF_EXTRA:+ --features $EBPF_EXTRA}" \
     || die "the build on $BUILD_HOST failed"
 
 on_target "mkdir -p ~/$RUN_DIR"
@@ -307,8 +310,8 @@ check_delivered() {
 # session does not hand the whole drift to one arm.
 # ---------------------------------------------------------------------------------------------
 {
-    printf 'group,%s\nevents,%s\nseconds,%s\npps,%s\npasses,%s\nqueues,1 (restored to %s)\n' \
-        "$GROUP" "$EVENTS" "$SECONDS_RUN" "$PPS" "$PASSES" "$queues"
+    printf 'group,%s\nevents,%s\nseconds,%s\npps,%s\npasses,%s\nqueues,1 (restored to %s)\nebpf_features,%s\n' \
+        "$GROUP" "$EVENTS" "$SECONDS_RUN" "$PPS" "$PASSES" "$queues" "${EBPF_EXTRA:-none}"
 } > "$log"
 
 printf 'pass,arm,packets,%s,enabled\n' "$EVENTS" > "$csv"

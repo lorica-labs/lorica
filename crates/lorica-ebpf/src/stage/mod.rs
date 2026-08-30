@@ -154,6 +154,18 @@ pub fn run(ctx: &XdpContext) -> u32 {
     #[cfg(feature = "parse-probe")]
     helpers::probe(&view);
 
+    // **The load is issued here and consumed at stage 3, and that is the whole experiment.**
+    // `addr` is available the moment the parse ends; today the access is emitted where it is
+    // used, so its latency is entirely exposed. Issuing it here interposes the clock read and
+    // stage 2 -- independent work the out-of-order window can overlap the miss with.
+    //
+    // Measured at 176 cycles a packet under a dispersed flood, against 50 to 130 instructions
+    // of cover here, which is 25 to 65 cycles at this program's IPC. So the ceiling on what
+    // this can return is about a third of the stall, and the value has to survive two
+    // bpf-to-bpf calls in ten registers to collect it.
+    #[cfg(feature = "hoist-class24")]
+    let hoisted = blocklist::class_of(&view);
+
     cut!(2);
 
     // Read once, passed down. The TTL comparison and, from the next phase, the leaky
@@ -172,6 +184,9 @@ pub fn run(ctx: &XdpContext) -> u32 {
     // the cost of both. Adding a level would renumber every label after it, and a stage
     // whose whole claim is that it costs one memory access is not the one to spend a
     // renumbering on.
+    #[cfg(feature = "hoist-class24")]
+    decide!(blocklist::run_hoisted(hoisted));
+    #[cfg(not(feature = "hoist-class24"))]
     decide!(blocklist::run(&view));
     decide!(lpm::run(&view, now));
     cut!(5);
