@@ -44,7 +44,9 @@ use support::{
 /// **The slot of headroom is spent, deliberately, and by the counter map.** It was five for a
 /// long time and the sixth is `bpf_get_smp_processor_id`, which the counter bump now needs:
 /// the counters are a flat array striped by processor rather than a `PERCPU_ARRAY`, because
-/// the kernel refuses `BPF_F_MMAPABLE` on per-CPU maps and mapping them is what took the
+/// the kernel refuses `BPF_F_MMAPABLE` on per-CPU maps — **still, on 7.0.0-30, asked directly
+/// with a `BPF_MAP_CREATE` and answered `EINVAL` on 30 August 2026, so this is not a floor
+/// that a newer kernel lifts** — and mapping them is what took the
 /// agent's sweep from milliseconds to microseconds. The verifier does not inline that helper
 /// before 6.10, so on the 6.8 floor it is a real call on the packet path — a cost paid on
 /// every counted packet to remove a cost the agent was paying at 13 % of a core. The
