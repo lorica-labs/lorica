@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "name": "legit_staircase",
+  "about": "A legitimate service climbing in five plateaus over twenty-five seconds, each step individually unremarkable and the sum of them large. A regional cache is being warmed after a purge, so origin fetches arrive in waves as each edge finishes; the bucket goes further over budget at every step and the busiest source is a carrier-grade NAT gateway whose own rate climbs from four hundred to twenty-four hundred packets per second. That gateway is the trap. It is one address in the unified list, its counter slot really is rising, and by the top step it is over entry_per_sec by more than a factor of two - everything the engine asks for before it refuses a packet, produced by traffic no operator would want refused. Written specifically against a ladder that climbs on a single slow tick of demand: a staircase offers a fresh higher demand at every step, so a rise gate of one tick can be walked up the whole ladder by a source that never does anything sudden. No exception counter moves at any point, because nothing is wrong with these packets.",
+  "period_ms": 100,
+  "entry_v4": [192, 0, 2, 40],
+  "timeline": [
+    { "repeat": 30, "note": "three seconds of the quiet floor", "legit_pps": 40000, "entry_is_attacker": false, "loaded_buckets": 30, "level_kib": 8, "entry_per_sec": 400, "counters": { "bucket_over_budget": 4000 } },
+    { "repeat": 50, "note": "step 1: the first edges start refilling", "legit_pps": 150000, "entry_is_attacker": false, "loaded_buckets": 180, "level_kib": 20, "entry_per_sec": 800, "counters": { "bucket_over_budget": 120000 } },
+    { "repeat": 50, "note": "step 2: over entry_per_sec for the first time, and still perfectly ordinary", "legit_pps": 300000, "entry_is_attacker": false, "loaded_buckets": 330, "level_kib": 28, "entry_per_sec": 1200, "counters": { "bucket_over_budget": 300000 } },
+    { "repeat": 50, "note": "step 3: past limit_share on the bank", "legit_pps": 500000, "entry_is_attacker": false, "loaded_buckets": 520, "level_kib": 36, "entry_per_sec": 1600, "counters": { "bucket_over_budget": 600000 } },
+    { "repeat": 50, "note": "step 4", "legit_pps": 700000, "entry_is_attacker": false, "loaded_buckets": 700, "level_kib": 44, "entry_per_sec": 2000, "counters": { "bucket_over_budget": 900000 } },
+    { "repeat": 50, "note": "step 5: the plateau, the gateway at more than twice entry_per_sec", "legit_pps": 850000, "entry_is_attacker": false, "loaded_buckets": 860, "level_kib": 52, "entry_per_sec": 2400, "counters": { "bucket_over_budget": 1400000 } },
+    { "repeat": 80, "note": "eight seconds of decay as the caches finish", "legit_pps": 120000, "entry_is_attacker": false, "loaded_buckets": 90, "level_kib": 14, "entry_per_sec": 600, "counters": { "bucket_over_budget": 40000 } },
+    { "repeat": 30, "note": "back to the floor", "legit_pps": 40000, "entry_is_attacker": false, "loaded_buckets": 30, "level_kib": 8, "entry_per_sec": 400, "counters": { "bucket_over_budget": 4000 } }
+  ]
+}

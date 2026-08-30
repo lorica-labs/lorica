@@ -133,12 +133,8 @@ fn entries_for_every_slot() -> Vec<(lorica_common::LpmKey, lorica_common::LpmVal
             let n = slot - CounterId::COUNT;
             let mut value = lorica_common::LpmValue::zeroed();
             value.counter_idx = slot;
-            let key = lorica_common::LpmKey::host_v4([
-                10,
-                (n >> 16) as u8,
-                (n >> 8) as u8,
-                n as u8,
-            ]);
+            let key =
+                lorica_common::LpmKey::host_v4([10, (n >> 16) as u8, (n >> 8) as u8, n as u8]);
             (key, value)
         })
         .collect()

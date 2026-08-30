@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "name": "legit_noisy",
+  "about": "Thirty seconds of legitimate traffic that will not settle: it wanders across every threshold the ladder uses without ever committing to being above one. The bank share crosses limit_share and falls back, the over-budget rate rises and drops, and a busy legitimate source oscillates between eight hundred and thirteen hundred packets per second - across entry_per_sec, repeatedly, in both directions. This is what an ordinary busy hour looks like at the resolution the engine samples it, and it is the scenario aimed at the descent rather than at the climb. The current tuning survives it by arithmetic that a retune would remove: insufficient_ticks counts consecutive slow ticks in which the rung below failed to reduce the offending rate, and a rate that keeps dropping resets that counter before it arms. Shorten the gate far enough and the reset stops arriving in time, so the wander itself becomes sufficient evidence. Nothing here is an attack, nothing here is even unusual, and the run must end with no packet refused.",
+  "period_ms": 100,
+  "entry_v4": [192, 0, 2, 42],
+  "timeline": [
+    { "repeat": 20, "note": "two seconds of the floor", "legit_pps": 60000, "entry_is_attacker": false, "loaded_buckets": 50, "level_kib": 10, "entry_per_sec": 500, "counters": { "bucket_over_budget": 8000 } },
+    { "cycles": 10, "phases": [
+      { "repeat": 8, "note": "over the line: share past limit_share, source past entry_per_sec", "legit_pps": 480000, "entry_is_attacker": false, "loaded_buckets": 300, "level_kib": 30, "entry_per_sec": 1300, "counters": { "bucket_over_budget": 520000 } },
+      { "repeat": 4, "note": "and back under, before anything can arm", "legit_pps": 220000, "entry_is_attacker": false, "loaded_buckets": 150, "level_kib": 18, "entry_per_sec": 800, "counters": { "bucket_over_budget": 90000 } },
+      { "repeat": 6, "note": "over again, a little higher", "legit_pps": 560000, "entry_is_attacker": false, "loaded_buckets": 340, "level_kib": 32, "entry_per_sec": 1250, "counters": { "bucket_over_budget": 600000 } },
+      { "repeat": 7, "note": "and under again, a little lower", "legit_pps": 180000, "entry_is_attacker": false, "loaded_buckets": 120, "level_kib": 16, "entry_per_sec": 850, "counters": { "bucket_over_budget": 60000 } }
+    ] },
+    { "repeat": 60, "note": "six seconds of the floor to close", "legit_pps": 60000, "entry_is_attacker": false, "loaded_buckets": 50, "level_kib": 10, "entry_per_sec": 500, "counters": { "bucket_over_budget": 8000 } }
+  ]
+}

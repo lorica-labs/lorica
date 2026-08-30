@@ -114,6 +114,18 @@ pub struct Config {
     pub rise_ticks: u32,
     pub hold_ticks: u32,
     pub fall_ticks: u32,
+    /// The profile cadence, in nanoseconds. Every counter above — `rise_ticks`,
+    /// `hold_ticks`, `fall_ticks`, `insufficient_ticks`, `saturation_ticks` — counts in
+    /// these, so this is the one parameter that scales the whole ladder in time rather than
+    /// changing its shape.
+    ///
+    /// **A field rather than [`SLOW_PERIOD_NS`] directly, because it governs two different
+    /// things and they have to be measurable apart.** Shortening it speeds the climb, by
+    /// making every gate above shorter in wall-clock while leaving all of them the same
+    /// number of ticks; and it reduces aliasing, by sampling the bank and the entry rates
+    /// more often so a pulse shorter than the window is no longer averaged into it. Those
+    /// are two distinct effects with two distinct costs, and a constant cannot be swept.
+    pub slow_period_ns: u64,
 }
 
 impl Default for Config {
@@ -137,6 +149,7 @@ impl Default for Config {
             rise_ticks: 2,
             hold_ticks: 2,
             fall_ticks: 5,
+            slow_period_ns: SLOW_PERIOD_NS,
         }
     }
 }
@@ -211,10 +224,11 @@ pub struct Engine {
 impl Engine {
     pub fn new(cfg: Config) -> Self {
         let hyst = Hysteresis::new(cfg.rise_ticks, cfg.hold_ticks, cfg.fall_ticks);
+        let slow_period_ns = cfg.slow_period_ns;
         Self {
             cfg,
             burst: Window::new(FAST_PERIOD_NS),
-            slow: Window::new(SLOW_PERIOD_NS),
+            slow: Window::new(slow_period_ns),
             hyst,
             prev_named: [0; NAMED_SLOTS],
             prev_entries: Vec::new(),

@@ -68,6 +68,21 @@ const SCENARIOS: [&str; 6] = [
     "renewed_sources",
 ];
 
+/// **Phase 2: the three held out of the tuning.**
+///
+/// Written after the sweep, against the direction the sweep pointed, and deliberately not used
+/// to choose anything. A tuning found by optimising against `SCENARIOS` cannot be validated by
+/// `SCENARIOS` — that is fitting a parameter to a test set and calling the fit a result — so
+/// these three exist only to refuse a tuning, never to select one.
+///
+/// All three carry a legitimate source whose own counter slot crosses `entry_per_sec`, because
+/// that is the only shape that can produce a false positive at all: every dropping rung is
+/// gated on `Confirmation::ExactKey`, so a scenario built purely of bucket pressure is green at
+/// every tuning by construction and would prove nothing. A carrier-grade NAT gateway, a reverse
+/// proxy in front of an origin and a busy hour are all ordinary, and all three of them exceed a
+/// per-source rate an attacker would.
+const HELD_OUT: [&str; 3] = ["legit_staircase", "legit_spike", "legit_noisy"];
+
 #[derive(Deserialize)]
 struct Scenario {
     version: u32,
@@ -151,7 +166,7 @@ fn scenario(name: &str) -> Scenario {
 ///
 /// Counters accumulate because the maps do: the engine is handed totals and derives every rate
 /// itself, which is the only way a replay exercises the arithmetic the tick runs.
-fn steps(s: &Scenario) -> Vec<Step> {
+fn steps(s: &Scenario, roster_has_entry: bool) -> Vec<Step> {
     let period_ns = s.period_ms * 1_000_000;
     let mut named = [0u64; NAMED_SLOTS];
     let mut entry_hits = 0u64;
@@ -179,7 +194,7 @@ fn steps(s: &Scenario) -> Vec<Step> {
             entry_hits += phase.entry_per_sec * s.period_ms / 1000;
 
             let at_ns = out.len() as u64 * period_ns;
-            let entries = match s.entry_v4 {
+            let entries = match s.entry_v4.filter(|_| roster_has_entry) {
                 Some(addr) => vec![EntryCounter {
                     key: LpmKey::host_v4(addr),
                     hits: entry_hits,
@@ -216,41 +231,77 @@ fn steps(s: &Scenario) -> Vec<Step> {
     out
 }
 
-/// The seven numbers, plus what they were computed over.
-#[derive(Default)]
+/// The columns, per scenario and per sweep point.
+///
+/// Every delay is in milliseconds from the first tick the scenario declares as attack, and
+/// also reported in **slow ticks** by the sweep. Both are needed and they answer different
+/// questions: the tick count is the gate arithmetic — how many slow ticks `rise_ticks`,
+/// `hold_ticks` and `insufficient_ticks` cost between them — and the millisecond figure is
+/// that count multiplied by the period. Reporting only milliseconds would make a shorter
+/// window look like a cheaper gate, which it is not.
+#[derive(Default, Clone, Copy)]
 struct Score {
+    period_ms: u64,
+    slow_ms: u64,
     ticks: u64,
-    /// Ticks from the first attack tick to the first tick a refusing rung was in force.
-    /// `None` when the ladder never refused while the attack ran.
-    detect_ticks: Option<u64>,
+    /// From the first attack tick to the tick each rung was first in force.
+    mark_ms: Option<u64>,
+    limit_ms: Option<u64>,
+    /// To the first tick a refusing rung was in force. `None` when the ladder never refused
+    /// while the attack ran.
+    detect_ms: Option<u64>,
     peak_rung: u8,
     /// Rung changes that reversed direction. A climb followed by a climb is the ladder
-    /// working; a climb followed by a descent followed by a climb is it hunting, and only the
-    /// second is what a mis-tuned hysteresis produces.
+    /// working; a climb, a descent and a climb is it hunting, and only the second is what a
+    /// mis-tuned hysteresis produces.
     reversals: u64,
+    /// Reversals that happened while the scenario declares an attack in progress. **This is
+    /// the oscillation number.** The plain `reversals` count includes the descent at the end
+    /// of a run, which is the ladder doing its job, so a tuning that only descends more
+    /// finely reads as noisier than it is. Hunting is a reversal with an attack still on.
+    reversals_under_attack: u64,
     transitions: u64,
     /// Pulses during which no refusing rung was ever in force.
     missed_pulses: u64,
     pulses: u64,
-    /// Ticks a refusing rung stayed in force after the last attack tick.
-    hold_ticks: u64,
+    /// How long a refusing rung stayed in force after the last attack tick.
+    hold_ms: u64,
     /// Legitimate packets refused: the scenario's legitimate rate, over the ticks a refusing
     /// rung was in force while the confirmable entry was **not** the attacker.
     legit_refused: u64,
     /// Attack packets that passed because no refusing rung was in force.
     under_mitigated: u64,
-    /// Legitimate packets refused, which is the same quantity as `legit_refused` and is
-    /// reported under both names because an operator asks the two questions differently.
-    over_mitigated: u64,
+}
+
+impl Score {
+    /// The delay to the first refusal expressed in slow ticks, which is the number the gates
+    /// actually produce and the only one comparable across periods.
+    fn detect_slow_ticks(&self) -> Option<u64> {
+        self.detect_ms.map(|ms| ms / self.slow_ms.max(1))
+    }
 }
 
 fn score(name: &str, cfg: Config) -> Score {
-    let sc = scenario(name);
-    let steps = steps(&sc);
-    let mut engine = Engine::new(cfg);
-    let period_ms = sc.period_ms;
+    score_with(name, cfg, true)
+}
 
-    let mut out = Score::default();
+/// Scores a scenario with the confirmable entry either present in the roster or absent.
+///
+/// `roster_has_entry: false` models a roster that does not hand the detector this key at all.
+/// It is not a tuning: it is the shape the agent would present if `Roster` filtered the entry
+/// out, which is the fix under test in the note. The scenario is otherwise identical, so the
+/// difference between the two runs is attributable to the roster and to nothing else.
+fn score_with(name: &str, cfg: Config, roster_has_entry: bool) -> Score {
+    let sc = scenario(name);
+    let steps = steps(&sc, roster_has_entry);
+    let period_ms = sc.period_ms;
+    let mut out = Score {
+        period_ms,
+        slow_ms: cfg.slow_period_ns / 1_000_000,
+        ..Score::default()
+    };
+    let mut engine = Engine::new(cfg);
+
     let mut previous = Tier::Observe;
     let mut direction: i8 = 0;
     let mut first_attack: Option<usize> = None;
@@ -263,18 +314,23 @@ fn score(name: &str, cfg: Config) -> Score {
         let tier = engine.observe(&step.snapshot).tier();
         out.ticks += 1;
         out.peak_rung = out.peak_rung.max(tier.rung());
+        let attacking = step.attack_pps > 0;
 
         if tier != previous {
             out.transitions += 1;
             let now: i8 = if tier > previous { 1 } else { -1 };
             if direction != 0 && now != direction {
                 out.reversals += 1;
+                // Still under attack, so this is the ladder changing its mind about traffic
+                // that has not changed — which is what a mis-tuned hysteresis does.
+                if attacking {
+                    out.reversals_under_attack += 1;
+                }
             }
             direction = now;
             previous = tier;
         }
 
-        let attacking = step.attack_pps > 0;
         if attacking {
             first_attack.get_or_insert(i);
             last_attack = Some(i);
@@ -285,11 +341,6 @@ fn score(name: &str, cfg: Config) -> Score {
             }
             if tier.drops() {
                 pulse_answered = true;
-                if out.detect_ticks.is_none()
-                    && let Some(start) = first_attack
-                {
-                    out.detect_ticks = Some((i - start) as u64);
-                }
             } else {
                 out.under_mitigated += step.attack_pps * period_ms / 1000;
             }
@@ -300,8 +351,23 @@ fn score(name: &str, cfg: Config) -> Score {
             }
         }
 
-        // A refusal while the confirmable entry is not the attacker is the false positive this
-        // whole design exists to avoid, and the flash crowd is the scenario that produces it.
+        // Timed from the first attack tick and not from the run, so a scenario that opens
+        // with quiet is not credited with the quiet.
+        if let Some(start) = first_attack {
+            let since = (i - start) as u64 * period_ms;
+            if tier >= Tier::Mark {
+                out.mark_ms.get_or_insert(since);
+            }
+            if tier >= Tier::Limit {
+                out.limit_ms.get_or_insert(since);
+            }
+            if tier.drops() && attacking {
+                out.detect_ms.get_or_insert(since);
+            }
+        }
+
+        // A refusal while the confirmable entry is not the attacker is the false positive
+        // this whole design exists to avoid.
         if tier.drops() && !step.entry_is_attacker {
             out.legit_refused += step.legit_pps * period_ms / 1000;
         }
@@ -309,77 +375,256 @@ fn score(name: &str, cfg: Config) -> Score {
             && i > last
             && tier.drops()
         {
-            out.hold_ticks += 1;
+            out.hold_ms += period_ms;
         }
     }
-    out.over_mitigated = out.legit_refused;
     out
 }
 
-/// Runs the six and writes the CSV beside them.
+/// One sweep point: what was changed from [`Config::default`], and how it is written down.
 ///
-/// One test and not six, because the deliverable is the table: a reader comparing scenarios
-/// wants them produced by one pass of one engine configuration, and six tests would let one of
-/// them be skipped without the table saying so.
-#[test]
-fn the_six_scenarios_score_the_current_tuning() {
-    let mut csv = String::from(
-        "scenario,ticks,pulses,detect_ticks,peak_rung,transitions,reversals,missed_pulses,\
-         hold_ticks,legit_refused,under_mitigated,over_mitigated\n",
-    );
+/// A struct of four numbers rather than a closure over `Config`, because a point has to be
+/// printable, reproducible from its printed form, and comparable to its neighbours. The
+/// `label` is what appears in the CSV and in `LORICA_POINT`, and it is also what
+/// `LORICA_SWEEP` accepts: any row of the table can be re-run on its own from what the table
+/// prints, which is the whole of requirement (c).
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct Point {
+    rise: u32,
+    hold: u32,
+    insufficient: u32,
+    slow_ms: u64,
+}
 
-    for name in SCENARIOS {
-        let s = score(name, Config::default());
-        let detect = s
-            .detect_ticks
-            .map_or_else(|| "never".to_owned(), |t| t.to_string());
-        println!(
-            "LORICA_PULSE scenario={name} ticks={} pulses={} detect_ticks={detect} \
-             peak_rung={} transitions={} reversals={} missed={} hold_ticks={} \
-             legit_refused={} under_mitigated={}",
-            s.ticks,
-            s.pulses,
-            s.peak_rung,
-            s.transitions,
-            s.reversals,
-            s.missed_pulses,
-            s.hold_ticks,
-            s.legit_refused,
-            s.under_mitigated
-        );
-        csv.push_str(&format!(
-            "{name},{},{},{detect},{},{},{},{},{},{},{},{}\n",
-            s.ticks,
-            s.pulses,
-            s.peak_rung,
-            s.transitions,
-            s.reversals,
-            s.missed_pulses,
-            s.hold_ticks,
-            s.legit_refused,
-            s.under_mitigated,
-            s.over_mitigated
-        ));
+impl Point {
+    fn config(self) -> Config {
+        Config {
+            rise_ticks: self.rise,
+            hold_ticks: self.hold,
+            insufficient_ticks: self.insufficient,
+            slow_period_ns: self.slow_ms * 1_000_000,
+            ..Config::default()
+        }
     }
 
-    // `CARGO_TARGET_TMPDIR` and not the source tree: the CSV is a product of the run and
-    // belongs where a build product goes, so a replay never leaves the working tree dirty.
-    let path = format!("{}/pulse-scores.csv", env!("CARGO_TARGET_TMPDIR"));
-    std::fs::write(&path, &csv).unwrap_or_else(|e| panic!("{path}: {e}"));
-    println!("LORICA_PULSE csv={path}");
+    fn label(self) -> String {
+        format!(
+            "rise={},hold={},insuf={},slow_ms={}",
+            self.rise, self.hold, self.insufficient, self.slow_ms
+        )
+    }
+
+    /// Parses a label back into a point, for `LORICA_SWEEP`.
+    fn parse(text: &str) -> Self {
+        let mut p = BASELINE;
+        for field in text.split(',') {
+            let (key, value) = field
+                .split_once('=')
+                .unwrap_or_else(|| panic!("LORICA_SWEEP field {field:?} is not key=value"));
+            let n: u64 = value
+                .trim()
+                .parse()
+                .unwrap_or_else(|e| panic!("LORICA_SWEEP {key}: {e}"));
+            match key.trim() {
+                "rise" => p.rise = n as u32,
+                "hold" => p.hold = n as u32,
+                "insuf" | "insufficient" => p.insufficient = n as u32,
+                "slow_ms" => p.slow_ms = n,
+                other => panic!("LORICA_SWEEP: no axis named {other}"),
+            }
+        }
+        p
+    }
+}
+
+/// The default, as a point, so the table always contains the thing every row is compared to.
+const BASELINE: Point = Point {
+    rise: 2,
+    hold: 2,
+    insufficient: 3,
+    slow_ms: 1000,
+};
+
+fn csv_header() -> String {
+    "point,rise,hold,insuf,slow_ms,scenario,ticks,pulses,mark_ms,limit_ms,detect_ms,\
+     detect_slow_ticks,peak_rung,transitions,reversals,reversals_under_attack,missed_pulses,\n     hold_ms,legit_refused,\
+     under_mitigated\n"
+        .to_owned()
+}
+
+fn csv_row(point: Point, name: &str, s: &Score) -> String {
+    let opt = |v: Option<u64>| v.map_or_else(|| "never".to_owned(), |x| x.to_string());
+    format!(
+        "\"{}\",{},{},{},{},{name},{},{},{},{},{},{},{},{},{},{},{},{},{},{}\n",
+        point.label(),
+        point.rise,
+        point.hold,
+        point.insufficient,
+        point.slow_ms,
+        s.ticks,
+        s.pulses,
+        opt(s.mark_ms),
+        opt(s.limit_ms),
+        opt(s.detect_ms),
+        opt(s.detect_slow_ticks()),
+        s.peak_rung,
+        s.transitions,
+        s.reversals,
+        s.reversals_under_attack,
+        s.missed_pulses,
+        s.hold_ms,
+        s.legit_refused,
+        s.under_mitigated
+    )
+}
+
+/// Scores every scenario at one point and prints one line each.
+fn run_point(point: Point, names: &[&str], csv: &mut String) -> Vec<(String, Score)> {
+    let opt = |v: Option<u64>| v.map_or_else(|| "never".to_owned(), |x| x.to_string());
+    let mut out = Vec::new();
+    for name in names {
+        let s = score(name, point.config());
+        println!(
+            "LORICA_POINT {} scenario={name} mark_ms={} limit_ms={} detect_ms={} \
+             detect_slow_ticks={} peak={} reversals={} hunting={} missed={} legit_refused={}",
+            point.label(),
+            opt(s.mark_ms),
+            opt(s.limit_ms),
+            opt(s.detect_ms),
+            opt(s.detect_slow_ticks()),
+            s.peak_rung,
+            s.reversals,
+            s.reversals_under_attack,
+            s.missed_pulses,
+            s.legit_refused
+        );
+        csv.push_str(&csv_row(point, name, &s));
+        out.push(((*name).to_owned(), s));
+    }
+    out
+}
+
+fn write_csv(file: &str, csv: &str) -> String {
+    let path = format!("{}/{file}", env!("CARGO_TARGET_TMPDIR"));
+    std::fs::write(&path, csv).unwrap_or_else(|e| panic!("{path}: {e}"));
+    path
+}
+
+/// The six at the current default, which is the row every sweep point is read against.
+#[test]
+fn the_six_scenarios_score_the_current_tuning() {
+    let mut csv = csv_header();
+    run_point(BASELINE, &SCENARIOS, &mut csv);
+    println!("LORICA_PULSE csv={}", write_csv("pulse-scores.csv", &csv));
+}
+
+/// **Phase 1: the curve.**
+///
+/// Two axes governing the climb — `rise_ticks` and the `insufficient_ticks` gate, with
+/// `hold_ticks` alongside because it is the third term in the same sum — and one governing
+/// dilution, the slow period. They are swept as one grid and read as two questions, because
+/// **the period is not a third climb parameter, it is a multiplier on all of them**: every
+/// gate counts in slow ticks, so halving the period halves the climb in wall-clock without
+/// changing a single gate. That is why `detect_slow_ticks` sits in the table next to
+/// `detect_ms`. A row that improves the tick count changed the arithmetic; a row that
+/// improves only the millisecond figure bought it with sampling rate, and pays for it in the
+/// per-tick cost measured elsewhere.
+///
+/// Dilution is read off `missed_pulses` on `pulse_gaps`, and only the period can move it: a
+/// 300 ms pulse averaged into a one-second window is below `burst_per_sec` whatever the gates
+/// are set to.
+///
+/// This writes the table. It asserts nothing about which point is best, on purpose.
+#[test]
+fn phase_1_sweeps_the_climb_and_the_window() {
+    let mut csv = csv_header();
+    let mut summary = String::from(
+        "point,worst_detect_ms,worst_detect_slow_ticks,gaps_missed,hunting,\
+         legit_refused\n",
+    );
+
+    for slow_ms in [1000u64, 500, 250] {
+        for rise in [2u32, 1] {
+            for hold in [2u32, 1, 0] {
+                for insufficient in [3u32, 2, 1] {
+                    let point = Point {
+                        rise,
+                        hold,
+                        insufficient,
+                        slow_ms,
+                    };
+                    let scored = run_point(point, &SCENARIOS, &mut csv);
+
+                    // The worst case over the scenarios that can be detected at all: a point
+                    // is only as fast as its slowest answer, and averaging would let one
+                    // scenario's speed hide another's `never`.
+                    let answered: Vec<&Score> = scored
+                        .iter()
+                        .filter(|(n, _)| n != "flash_crowd_legit")
+                        .map(|(_, s)| s)
+                        .collect();
+                    let worst_ms = answered.iter().filter_map(|s| s.detect_ms).max();
+                    let worst_ticks = answered.iter().filter_map(|s| s.detect_slow_ticks()).max();
+                    let never = answered.iter().filter(|s| s.detect_ms.is_none()).count();
+                    let gaps = scored
+                        .iter()
+                        .find(|(n, _)| n == "pulse_gaps")
+                        .map_or(0, |(_, s)| s.missed_pulses);
+                    let hunting: u64 = scored.iter().map(|(_, s)| s.reversals_under_attack).sum();
+                    let refused: u64 = scored.iter().map(|(_, s)| s.legit_refused).sum();
+                    summary.push_str(&format!(
+                        "\"{}\",{},{},{gaps},{hunting},{refused}\n",
+                        point.label(),
+                        // `never` carried into the worst case rather than dropped, because a
+                        // point that answers four scenarios quickly and misses two is not a
+                        // fast point.
+                        if never > 0 {
+                            format!("never x{never}")
+                        } else {
+                            worst_ms.unwrap_or(0).to_string()
+                        },
+                        worst_ticks.map_or_else(|| "never".to_owned(), |v| v.to_string()),
+                    ));
+                }
+            }
+        }
+    }
+
+    println!("LORICA_SWEEP csv={}", write_csv("sweep.csv", &csv));
+    println!(
+        "LORICA_SWEEP summary={}",
+        write_csv("sweep-summary.csv", &summary)
+    );
+    print!("{summary}");
+}
+
+/// Re-runs one point from its label, which is requirement (c).
+///
+/// ```text
+/// LORICA_SWEEP=rise=1,hold=1,insuf=2,slow_ms=500 \
+///   cargo test -p lorica-detect --test pulse_replay -- --nocapture one_point
+/// ```
+///
+/// Unset, it replays the default, so the test is never a no-op and never silently skipped.
+#[test]
+fn one_point_replays_from_its_label() {
+    let point = std::env::var("LORICA_SWEEP").map_or(BASELINE, |text| Point::parse(&text));
+    let mut csv = csv_header();
+    run_point(point, &SCENARIOS, &mut csv);
+    println!("LORICA_POINT csv={}", write_csv("point.csv", &csv));
 }
 
 /// **The one assertion that must never be relaxed.**
 ///
 /// A flash crowd is legitimate traffic arriving suddenly: the bank fills, the bucket counter
 /// climbs, and no exception counter moves, because nothing is wrong with the packets. The
-/// ladder may mark and it may limit — those rungs rest on pressure and pressure is real here —
-/// but it must not refuse a packet, because the only thing that could justify refusing one is
-/// evidence no source can move, and there is none.
+/// ladder may mark and it may limit — those rungs rest on pressure and pressure is real here
+/// — but it must not refuse a packet, because the only thing that could justify refusing one
+/// is evidence no source can move, and there is none.
 ///
-/// A failure here invalidates the whole ladder, not this scenario: it would mean the type-level
-/// guard in `Decision::new` had been routed around, or that a scenario the engine cannot tell
-/// from an attack exists in the shape operators meet most often.
+/// A failure here invalidates the whole ladder, not this scenario: it would mean the
+/// type-level guard in `Decision::new` had been routed around, or that a scenario the engine
+/// cannot tell from an attack exists in the shape operators meet most often.
 #[test]
 fn a_flash_crowd_refuses_nothing() {
     let s = score("flash_crowd_legit", Config::default());
@@ -398,20 +643,26 @@ fn a_flash_crowd_refuses_nothing() {
 /// Determinism, checked rather than asserted in prose.
 ///
 /// Two runs of the same scenario through two fresh engines must agree on every column. It is
-/// the property the whole harness rests on and the cheapest one to lose: a `HashMap` iteration
-/// or a clock read anywhere in the engine would break it and nothing else here would notice.
+/// the property the whole harness rests on and the cheapest one to lose: a `HashMap`
+/// iteration or a clock read anywhere in the engine would break it and nothing else here
+/// would notice.
 #[test]
 fn two_runs_of_a_scenario_agree_on_every_column() {
     for name in SCENARIOS {
         let a = score(name, Config::default());
         let b = score(name, Config::default());
-        assert_eq!(a.ticks, b.ticks, "{name}: ticks");
-        assert_eq!(a.detect_ticks, b.detect_ticks, "{name}: detect");
+        assert_eq!(a.mark_ms, b.mark_ms, "{name}: mark");
+        assert_eq!(a.limit_ms, b.limit_ms, "{name}: limit");
+        assert_eq!(a.detect_ms, b.detect_ms, "{name}: detect");
         assert_eq!(a.peak_rung, b.peak_rung, "{name}: peak");
         assert_eq!(a.transitions, b.transitions, "{name}: transitions");
         assert_eq!(a.reversals, b.reversals, "{name}: reversals");
+        assert_eq!(
+            a.reversals_under_attack, b.reversals_under_attack,
+            "{name}: hunting"
+        );
         assert_eq!(a.missed_pulses, b.missed_pulses, "{name}: missed");
-        assert_eq!(a.hold_ticks, b.hold_ticks, "{name}: hold");
+        assert_eq!(a.hold_ms, b.hold_ms, "{name}: hold");
         assert_eq!(a.legit_refused, b.legit_refused, "{name}: legit refused");
         assert_eq!(a.under_mitigated, b.under_mitigated, "{name}: under");
     }
@@ -420,10 +671,10 @@ fn two_runs_of_a_scenario_agree_on_every_column() {
 /// The control scenario must actually be answered, or the table means nothing.
 ///
 /// Every other column in this harness reads acceptably when the engine has stopped confirming
-/// anything at all: `detect_ticks` says `never`, `legit_refused` says zero, and a reader
-/// skimming for red numbers finds none. `mixed_vectors` is six exception counters and a hot
-/// entry rising together for eight seconds — the least ambiguous input the engine can be given
-/// — so a run where even that is never refused is a broken engine and not a cautious one.
+/// anything at all: `detect_ms` says `never`, `legit_refused` says zero, and a reader skimming
+/// for red numbers finds none. `mixed_vectors` is six exception counters and a hot entry
+/// rising together for eight seconds — the least ambiguous input the engine can be given — so
+/// a run where even that is never refused is a broken engine and not a cautious one.
 ///
 /// The bound is deliberately loose. It is not a latency target: the ladder is slow, this file
 /// exists partly to say how slow, and pinning the current number here would turn a measurement
@@ -431,17 +682,211 @@ fn two_runs_of_a_scenario_agree_on_every_column() {
 #[test]
 fn the_control_scenario_is_answered_at_all() {
     let s = score("mixed_vectors", Config::default());
-    let detect = s.detect_ticks.expect(
+    let detect = s.detect_ms.expect(
         "the least ambiguous attack in the set was never refused: confirmation is not reaching \
          the ladder, and every other scenario's `never` is meaningless until this passes",
     );
     assert!(
-        detect < s.ticks,
+        detect < s.ticks * s.period_ms,
         "detection landed after the run ended, which cannot happen"
     );
     assert_eq!(
         s.legit_refused, 0,
         "the control scenario declares no legitimate source as the confirmable entry, so this \
          column must be zero whatever the ladder did"
+    );
+}
+
+/// **Phase 2: the swept grid, against the three held out of it.**
+///
+/// The same grid as [`phase_1_sweeps_the_climb_and_the_window`], scored against three scenarios
+/// written after the sweep and used only to refuse a tuning. Every point, not only the
+/// recommended one: a tuning is a region of this grid rather than a coordinate, and a neighbour
+/// that refuses legitimate traffic means the recommendation sits next to a cliff.
+///
+/// **What this asserts, and why it is not the obvious thing.** The obvious assertion — no point
+/// refuses a legitimate packet — fails today at 104 of the 162 point-scenario pairs, *including
+/// the current default*, which refuses 11.09 M packets on `legit_staircase` and reaches rung 4
+/// on it. That is not a property of any tuning. `Roster::from_entries` keeps `{key, slot}` and
+/// drops `LpmValue::action`, the policy compiler gives an `Allow` rule a counter slot on
+/// purpose, and so the detector is handed allow-listed sources as confirmation candidates and
+/// `hottest_entry` takes the maximum over them. Asserting it here would leave a permanently red
+/// suite, which trains a reader to ignore red, and would blame the gates for something the
+/// gates cannot cause.
+///
+/// So the assertion is the part that *is* the tuning's responsibility: with that key withheld,
+/// no point of the grid refuses anything. A tuning that broke this would have found a second,
+/// independent route to a false positive, and that is what this test is here to catch. The
+/// count of roster-caused refusals is printed as `LORICA_DEFECT` rather than asserted, and
+/// [`phase_4_the_recommendation_is_green_on_all_nine`] is the release gate that says the
+/// default may not move until the roster is fixed.
+///
+/// **When the roster is fixed, tighten this**: drop the `withheld` run and assert on `offered`.
+/// The two will then be the same measurement.
+#[test]
+fn phase_2_no_swept_point_refuses_for_a_reason_the_tuning_owns() {
+    let mut csv = csv_header();
+    let mut leaks: Vec<String> = Vec::new();
+    let mut roster_caused = 0u32;
+    let mut worst_roster = 0u64;
+
+    for slow_ms in [1000u64, 500, 250] {
+        for rise in [2u32, 1] {
+            for hold in [2u32, 1, 0] {
+                for insufficient in [3u32, 2, 1] {
+                    let point = Point {
+                        rise,
+                        hold,
+                        insufficient,
+                        slow_ms,
+                    };
+                    for (name, offered) in run_point(point, &HELD_OUT, &mut csv) {
+                        if offered.legit_refused > 0 {
+                            roster_caused += 1;
+                            worst_roster = worst_roster.max(offered.legit_refused);
+                        }
+                        let withheld = score_with(&name, point.config(), false);
+                        if withheld.legit_refused > 0 {
+                            leaks.push(format!(
+                                "{} on {name}: {} legitimate packets refused with the roster \
+                                 key withheld, peak rung {}",
+                                point.label(),
+                                withheld.legit_refused,
+                                withheld.peak_rung
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    println!("LORICA_HELDOUT csv={}", write_csv("held-out.csv", &csv));
+    println!(
+        "LORICA_DEFECT roster_caused_pairs={roster_caused} worst_refused={worst_roster} \
+         note=allow_listed_sources_are_offered_as_confirmation_candidates"
+    );
+    assert!(
+        leaks.is_empty(),
+        "{} of the swept points refuse legitimate traffic for a reason the roster does not \
+         explain, which means a second route to a false positive exists:\n{}",
+        leaks.len(),
+        leaks.join("\n")
+    );
+}
+
+/// **The diagnosis for why phase 2 fails, isolated to one variable.**
+///
+/// The three held-out scenarios refuse legitimate traffic at every point of the grid,
+/// including the current default, so the failure is not the tuning. This replays them with one
+/// thing changed — the legitimate source is not in the roster the detector is handed — and
+/// nothing else: same traffic, same counters, same bank, same config.
+///
+/// If they go green, the false positive is the roster handing the detector a key it should
+/// never have offered, and no setting of `rise_ticks`, `hold_ticks` or `insufficient_ticks`
+/// was ever going to fix it. `Roster::from_entries` keeps `{key, slot}` and drops
+/// `LpmValue::action`, and the policy compiler gives an `Allow` rule a counter slot on purpose
+/// — so the detector cannot tell an allow-listed source from a blocked one, and `hottest_entry`
+/// takes the maximum over both.
+///
+/// Run at the current default and at the fastest point the sweep produced, because a diagnosis
+/// that only holds at one tuning is a coincidence.
+#[test]
+fn a_key_the_roster_should_not_offer_is_what_refuses_legitimate_traffic() {
+    let fastest = Point {
+        rise: 1,
+        hold: 2,
+        insufficient: 3,
+        slow_ms: 500,
+    };
+    for point in [BASELINE, fastest] {
+        for name in HELD_OUT {
+            let offered = score_with(name, point.config(), true);
+            let withheld = score_with(name, point.config(), false);
+            println!(
+                "LORICA_ROSTER {} scenario={name} offered_refused={} offered_peak={}                  withheld_refused={} withheld_peak={}",
+                point.label(),
+                offered.legit_refused,
+                offered.peak_rung,
+                withheld.legit_refused,
+                withheld.peak_rung
+            );
+            assert_eq!(
+                withheld.legit_refused,
+                0,
+                "{}: {name} still refuses {} legitimate packets with the key withheld, so the                  roster is not the whole story and the note must not say it is",
+                point.label(),
+                withheld.legit_refused
+            );
+        }
+    }
+}
+
+/// The point this campaign recommends, and the nine scenarios it is checked against.
+///
+/// Not the fastest point on the curve. `rise=1,hold=0,insuf=1,slow_ms=500` answers the control
+/// in one second, but it triples the hunting and it cuts `insufficient_ticks` to one, which
+/// stops "the rung below was measured insufficient" from meaning anything. This point keeps
+/// that gate at its full three ticks and still answers in 2.5 seconds, because the sweep showed
+/// the gate was never what cost the time — `hold_ticks` was.
+const RECOMMENDED: Point = Point {
+    rise: 1,
+    hold: 2,
+    insufficient: 3,
+    slow_ms: 500,
+};
+
+/// **Phase 4: the recommendation, held to all nine.**
+///
+/// The six are scored as they are. The three held out are scored with the confirmable key
+/// withheld, because that models the roster fix this campaign concluded is required *before*
+/// the default moves — and stating that in a test is the only way the sequencing survives
+/// somebody reading the note quickly.
+///
+/// **This test does not change the default.** It asserts that the recommendation is ready and
+/// on what condition, so that whoever lands the roster fix has the check already written.
+#[test]
+fn phase_4_the_recommendation_is_green_on_all_nine() {
+    let cfg = || RECOMMENDED.config();
+
+    for name in HELD_OUT {
+        let s = score_with(name, cfg(), false);
+        assert_eq!(
+            s.legit_refused, 0,
+            "{name} refuses {} legitimate packets at the recommended point even with the              roster fix modelled: the recommendation is wrong, not the sequencing",
+            s.legit_refused
+        );
+        assert!(
+            s.peak_rung < Tier::DropSurgical.rung(),
+            "{name} reached rung {} on legitimate traffic",
+            s.peak_rung
+        );
+    }
+
+    let control = score("mixed_vectors", cfg());
+    let detect = control
+        .detect_ms
+        .expect("the control is never answered at the recommended point");
+    assert!(
+        detect <= 3000,
+        "the control took {detect} ms at the recommended point, which is no longer the gain          this point was recommended for"
+    );
+
+    // The scenario the whole campaign started from: a stable, perfectly attributable source
+    // attacking for six seconds, which the default never refuses at all.
+    let stable = score("renewed_sources", cfg());
+    assert!(
+        stable.detect_ms.is_some(),
+        "the six-second stable attacker is still never refused, which was the point"
+    );
+
+    // Hunting is what the speed is bought with, and it is bought in units the note quotes.
+    let hunting: u64 = SCENARIOS
+        .iter()
+        .map(|n| score(n, cfg()).reversals_under_attack)
+        .sum();
+    assert!(
+        hunting <= 2,
+        "the recommended point hunts {hunting} times across the six, against the 1 measured          when it was recommended"
     );
 }
