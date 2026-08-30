@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "name": "link_saturation",
+  "about": "A flood large enough that refusing the attacker one packet at a time stops being the answer: arrivals exceed what the link can pass, the bank fills faster than it drains for twenty seconds straight, and the queue in front of the interface is what is now dropping traffic rather than any decision this agent made. This is the only shape that reaches the top two rungs, and no fixture written before this one could produce it - Engine::excess_bps is the rise in the bank's total level between two readings and every earlier phase held a constant level, so the rise was zero and the rising counter reset on every tick. The attacker is confirmable throughout, so the ladder has a legitimate route to rung 4 before saturation is inferred, which is what makes this the control for the rungs above rather than a scenario about them in isolation: it shows what escalation does to a mitigation that was already working.",
+  "period_ms": 100,
+  "entry_v4": [198, 51, 100, 66],
+  "timeline": [
+    { "repeat": 30, "note": "three seconds of quiet, the bank draining to its floor", "legit_pps": 30000, "loaded_buckets": 30, "level_kib": 8, "counters": { "bucket_over_budget": 5000 } },
+    { "repeat": 200, "note": "twenty seconds of a flood the link cannot pass: the bank fills from 12 to 220 KiB and never stops rising", "legit_pps": 30000, "attack_pps": 4000000, "loaded_buckets": 1024, "level_kib": 12, "level_kib_to": 220, "entry_per_sec": 900000, "counters": { "bucket_over_budget": 4000000, "signature_amp_memcached": 1500000, "urpf_no_route": 1200000, "sanity_ip_length": 400000 } },
+    { "repeat": 150, "note": "fifteen seconds after the flood stops, long enough for every rung to unwind", "legit_pps": 30000, "loaded_buckets": 30, "level_kib": 8, "counters": { "bucket_over_budget": 5000 } }
+  ]
+}

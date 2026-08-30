@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "name": "flash_crowd_saturating",
+  "about": "The flash crowd that is actually too big for the link, which is the case flash_crowd_legit deliberately stops short of. A launch, a final, a front page: legitimate traffic arrives faster than the interface can pass it, the bank fills for fifteen seconds without pausing, and the queue drops packets nobody decided to drop. Every packet parses, passes reverse-path and matches no signature; no source is individually remarkable, because a crowd is many sources rather than a big one. What is new here is only that the bank's total keeps rising, which is the single input Engine::excess_bps reads and the only thing the rising counter needs. The question this asks is what the top of the ladder does when the pressure is real, sustained and entirely legitimate - and rung 6 is the one that matters, because an operator who enabled it has named their own prefix, so a blackhole there is the outage finishing itself rather than an attack being stopped.",
+  "period_ms": 100,
+  "allow_listed": true,
+  "entry_v4": [192, 0, 2, 90],
+  "timeline": [
+    { "repeat": 30, "note": "three seconds of an ordinary evening", "legit_pps": 45000, "entry_is_attacker": false, "loaded_buckets": 40, "level_kib": 9, "entry_per_sec": 300, "counters": { "bucket_over_budget": 5000 } },
+    { "repeat": 150, "note": "fifteen seconds of a crowd larger than the link: the bank fills from 14 to 180 KiB and no exception counter moves at all", "legit_pps": 1200000, "entry_is_attacker": false, "loaded_buckets": 1024, "level_kib": 14, "level_kib_to": 180, "entry_per_sec": 700, "counters": { "bucket_over_budget": 3000000 } },
+    { "repeat": 80, "note": "eight seconds of decay as the crowd disperses", "legit_pps": 250000, "entry_is_attacker": false, "loaded_buckets": 220, "level_kib": 24, "entry_per_sec": 450, "counters": { "bucket_over_budget": 200000 } },
+    { "repeat": 120, "note": "twelve seconds back at the floor, long enough to measure any hold", "legit_pps": 45000, "entry_is_attacker": false, "loaded_buckets": 40, "level_kib": 9, "entry_per_sec": 300, "counters": { "bucket_over_budget": 5000 } }
+  ]
+}

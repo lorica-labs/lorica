@@ -138,6 +138,16 @@ struct Phase {
     loaded_buckets: u32,
     #[serde(default)]
     level_kib: u64,
+    /// The level this phase ramps to, interpolated across its `repeat`.
+    ///
+    /// **Without this the top two rungs are unreachable by construction.** `Engine::excess_bps`
+    /// is the *rise* in the bank's total level between two readings, and `rising` — the counter
+    /// `saturation_ticks` gates on — resets on any tick where that rise is zero. A phase holding
+    /// a constant level therefore reports no excess at all, however loaded it is, so every
+    /// fixture written before this field could climb to rung 4 and no further. A real bank under
+    /// a flood does not hold a level; it fills.
+    #[serde(default)]
+    level_kib_to: Option<u64>,
     #[serde(default)]
     entry_per_sec: u64,
     /// Counter increments in units per second, by [`CounterId::name`]. Looked up by name so a
@@ -199,7 +209,7 @@ fn steps(s: &Scenario, force_seat: bool) -> Vec<Step> {
     }
 
     for phase in &flat {
-        for _ in 0..phase.repeat {
+        for step in 0..phase.repeat {
             for (name, per_sec) in &phase.counters {
                 let id = CounterId::from_name(name)
                     .unwrap_or_else(|| panic!("{}: no counter named {name}", s.name));
@@ -222,7 +232,18 @@ fn steps(s: &Scenario, force_seat: bool) -> Vec<Step> {
             counters.set_entries_at_ns(at_ns);
 
             let mut levels = vec![0u64; DEFAULT_BANK_BUCKETS as usize];
-            let level = phase.level_kib * 1024 * UNITS_PER_BYTE;
+            // Linear between `level_kib` and `level_kib_to` over the phase, so the total rises
+            // on every tick rather than once at each phase boundary. `repeat - 1` in the
+            // denominator so the last tick of the phase lands exactly on the target.
+            let level_kib = match phase.level_kib_to {
+                None => phase.level_kib,
+                Some(to) => {
+                    let span = phase.repeat.saturating_sub(1).max(1);
+                    let from = phase.level_kib as i64;
+                    (from + (to as i64 - from) * step as i64 / span as i64).max(0) as u64
+                }
+            };
+            let level = level_kib * 1024 * UNITS_PER_BYTE;
             for slot in levels.iter_mut().take(phase.loaded_buckets as usize) {
                 *slot = level;
             }
@@ -253,7 +274,7 @@ fn steps(s: &Scenario, force_seat: bool) -> Vec<Step> {
 /// `hold_ticks` and `insufficient_ticks` cost between them — and the millisecond figure is
 /// that count multiplied by the period. Reporting only milliseconds would make a shorter
 /// window look like a cheaper gate, which it is not.
-#[derive(Default, Clone, Copy)]
+#[derive(Default, Clone)]
 struct Score {
     period_ms: u64,
     slow_ms: u64,
@@ -285,6 +306,12 @@ struct Score {
     legit_refused: u64,
     /// Attack packets that passed because no refusing rung was in force.
     under_mitigated: u64,
+    /// Every rung change, as `(milliseconds into the run, rung)`.
+    ///
+    /// A column cannot say *when* a rung was taken relative to another, and the top two rungs
+    /// are about exactly that: `Escalate` overrides the demand below it and stops refusing, so
+    /// what matters is whether it arrived while a confirmed drop was in force.
+    timeline: Vec<(u64, u8)>,
 }
 
 impl Score {
@@ -344,6 +371,7 @@ fn score_with(name: &str, cfg: Config, force_seat: bool) -> Score {
         if tier != previous {
             out.transitions += 1;
             let now: i8 = if tier > previous { 1 } else { -1 };
+            out.timeline.push((i as u64 * period_ms, tier.rung()));
             if direction != 0 && now != direction {
                 out.reversals += 1;
                 // Still under attack, so this is the ladder changing its mind about traffic
@@ -914,5 +942,140 @@ fn phase_4_the_recommendation_is_green_on_all_nine() {
     assert!(
         hunting <= 2,
         "the recommended point hunts {hunting} times across the six, against the 1 measured          when it was recommended"
+    );
+}
+
+/// Rung 6 as an operator would have to enable it: on, with a prefix of their own named.
+///
+/// The two scenarios below — `link_saturation` and `flash_crowd_saturating` — are the only ones
+/// that reach the top of the ladder, and they are deliberately **not** in [`SCENARIOS`]: the six
+/// are the baseline every sweep row is compared against, and changing that set would make this
+/// campaign's table incomparable with the previous one's. These two are about the rungs above
+/// the tuning rather than about the tuning.
+fn with_rtbh() -> Config {
+    Config {
+        rtbh_enabled: true,
+        rtbh_prefix: Some(LpmKey::host_v4([192, 0, 2, 0])),
+        ..Config::default()
+    }
+}
+
+/// **Climbing towards saturation must not stop the refusal that was already justified.**
+///
+/// `demand` walks upward and the saturation branch replaces whatever the confirmation branch
+/// produced, because rungs 5 and 6 are about the link and not about a source. The hysteresis
+/// still climbs one rung at a time, so the ticks between `Limit` and `Escalate` are spent in
+/// force at rungs 3 and 4 — which refuse packets and therefore need a key.
+///
+/// Reading that key off the demand's reason alone lost it at exactly the moment saturation was
+/// inferred: `reason_for` fell back to `Reason::Quiet`, `Decision::new` correctly refused a
+/// keyless dropping rung, and the agent published `quiet` while a confirmable attacker ran at
+/// full rate. Measured before the fix, on this scenario: rung 0 published at t=5 s and t=6 s
+/// with a 4 Mpps flood running and its own counter slot rising.
+///
+/// The assertion is on the published timeline and not on `Engine::current`, because the
+/// published decision is what the enforcer acts on and it is the half that was wrong.
+#[test]
+fn climbing_to_saturation_does_not_drop_the_confirmed_refusal() {
+    let s = score("link_saturation", Config::default());
+    let refusing: Vec<u64> = s
+        .timeline
+        .iter()
+        .filter(|(_, rung)| *rung == Tier::DropSurgical.rung() || *rung == Tier::DropBroad.rung())
+        .map(|(at, _)| *at)
+        .collect();
+    assert!(
+        !refusing.is_empty(),
+        "the ladder reached rung {} and published a refusal at no point on the way: the \
+         confirmed key is being lost to the saturation override again. Timeline: {:?}",
+        s.peak_rung,
+        s.timeline
+    );
+    assert!(
+        s.peak_rung >= Tier::Escalate.rung(),
+        "this scenario is supposed to reach saturation and reached only rung {}, so it is no \
+         longer testing the interaction it was written for",
+        s.peak_rung
+    );
+}
+
+/// **At the shipped defaults, a flash crowd larger than the link still refuses nothing.**
+///
+/// Rung 6 is off by default and this is what that buys. The crowd fills the bank for fifteen
+/// seconds without pausing, which is all `excess_bps` reads, so the ladder does infer saturation
+/// and does reach rung 5 — but `Escalate` asks an upstream to act and refuses nothing here, and
+/// no source is individually confirmable, so nothing below it can refuse either.
+#[test]
+fn a_saturating_flash_crowd_refuses_nothing_at_the_defaults() {
+    let s = score("flash_crowd_saturating", Config::default());
+    assert_eq!(
+        s.legit_refused, 0,
+        "the ladder refused {} legitimate packets on a flash crowd at the shipped defaults",
+        s.legit_refused
+    );
+    assert!(
+        !Tier::Escalate.drops(),
+        "Escalate now refuses packets, which is what the assertion above was resting on"
+    );
+}
+
+/// **Turning rung 6 on means a legitimate flash crowd can blackhole your own prefix. Measured.**
+///
+/// This test asserts the dangerous behaviour rather than forbidding it, because it is what the
+/// design says should happen and the operator opted in: `rtbh_enabled` defaults to false, and
+/// its doc already says a blackhole completes the attack on the announced prefix. What the doc
+/// does not say, and what this measures, is that **the top two rungs cannot tell a flash crowd
+/// from a flood.** Their only input is the bank's total rising. `flash_crowd_saturating` carries
+/// no exception counter, no confirmable source and nothing an operator would object to, and it
+/// reaches rung 6 at the same time `link_saturation` does — 8 seconds in, on a 4 Mpps flood in
+/// one case and a successful product launch in the other.
+///
+/// The asymmetry is the point and it runs the wrong way. Rung 3 refuses one source and demands a
+/// confirmed key whose own slot is rising plus three slow ticks of measured insufficiency. Rung
+/// 6 withdraws a whole prefix from the internet and demands six slow ticks of "the bank total
+/// went up", with no threshold on by how much — `Config::link_bps` is carried in the reason and
+/// never compared against anything.
+///
+/// Recorded here so that enabling rung 6 is a decision taken against a number.
+#[test]
+fn rung_six_does_not_distinguish_a_flash_crowd_from_a_flood() {
+    let crowd = score("flash_crowd_saturating", with_rtbh());
+    let flood = score("link_saturation", with_rtbh());
+
+    assert_eq!(
+        crowd.peak_rung,
+        Tier::Rtbh.rung(),
+        "the crowd no longer reaches rung 6, so this measurement has gone stale: {:?}",
+        crowd.timeline
+    );
+    assert_eq!(
+        flood.peak_rung,
+        Tier::Rtbh.rung(),
+        "the flood no longer reaches rung 6: {:?}",
+        flood.timeline
+    );
+
+    let at = |s: &Score, rung: u8| {
+        s.timeline
+            .iter()
+            .find(|(_, r)| *r == rung)
+            .map(|(at, _)| *at)
+    };
+    println!(
+        "LORICA_RTBH crowd_reaches_6_at={:?} flood_reaches_6_at={:?} crowd_legit_refused={}",
+        at(&crowd, Tier::Rtbh.rung()),
+        at(&flood, Tier::Rtbh.rung()),
+        crowd.legit_refused
+    );
+    assert_eq!(
+        at(&crowd, Tier::Rtbh.rung()),
+        at(&flood, Tier::Rtbh.rung()),
+        "the two now reach rung 6 at different times, which would mean something distinguishes \
+         them after all — find out what before relaxing this"
+    );
+    assert!(
+        crowd.legit_refused > 0,
+        "the crowd reached rung 6 and refused nothing, so the blackhole is not being scored and \
+         this test is not measuring what it claims"
     );
 }

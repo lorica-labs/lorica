@@ -358,10 +358,22 @@ impl Engine {
         self.track_insufficiency(before, over);
         self.rising = if excess_bps > 0 { self.rising + 1 } else { 0 };
 
-        let (demand, demand_reason) =
+        let (demand, demand_reason, confirmed) =
             self.demand(before, share, over, invalid, hottest, excess_bps);
-        if demand_reason.exact_key().is_some() {
-            self.keyed = Some(demand_reason);
+        // **The confirmed reason is kept even when saturation overrode the demand above it.**
+        //
+        // `demand` walks upward and the saturation branch replaces whatever the confirmation
+        // branch produced, because rungs 5 and 6 are about the link and not about a source. But
+        // the *hysteresis* still climbs one rung at a time, so the ticks between `Limit` and
+        // `Escalate` are spent in force at rungs 3 and 4 — which refuse packets and therefore
+        // need a key. Reading the key off `demand_reason` alone lost it exactly when saturation
+        // was inferred: `reason_for` fell back to `Reason::Quiet`, `Decision::new` refused a
+        // keyless dropping rung, and the agent published `quiet` while a confirmable attacker
+        // was at full rate. Measured on `link_saturation` before this: rung 0 published at
+        // t=5 s and t=6 s with the flood running and its own slot rising.
+        if let Some(reason) = confirmed.or_else(|| demand_reason.exact_key().map(|_| demand_reason))
+        {
+            self.keyed = Some(reason);
         }
 
         let in_force = self.hyst.step(demand);
@@ -403,8 +415,11 @@ impl Engine {
         invalid: Option<(CounterId, u64)>,
         hottest: Option<(LpmKey, u64)>,
         excess_bps: u64,
-    ) -> (Tier, Reason) {
+    ) -> (Tier, Reason, Option<Reason>) {
         let mut out = (Tier::Observe, Reason::Quiet);
+        // Kept apart from `out` because the saturation branch below overwrites `out` and the
+        // caller needs this one anyway — see the comment at the call site.
+        let mut confirmed = None;
 
         // Not `over > 0`. A steady state has buckets going over budget — that is what a
         // shaper looks like working — so a demand armed by a single over-budget packet never
@@ -446,6 +461,7 @@ impl Engine {
                 _ => Confirmation::ExactKey,
             };
             out = (Tier::DropSurgical, Reason::Confirmed { key, by, per_sec });
+            confirmed = Some(out.1);
 
             if before >= Tier::DropSurgical
                 && self.insufficient >= self.cfg.insufficient_ticks.saturating_mul(2)
@@ -458,6 +474,7 @@ impl Engine {
                         per_sec,
                     },
                 );
+                confirmed = Some(out.1);
             }
         }
 
@@ -489,7 +506,7 @@ impl Engine {
             }
         }
 
-        out
+        (out.0, out.1, confirmed)
     }
 
     /// The reason to publish for the rung actually in force, which is not always the rung
