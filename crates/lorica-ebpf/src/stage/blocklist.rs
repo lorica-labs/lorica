@@ -35,7 +35,9 @@
 //! anyway — and the one loop this program tried over an attacker-chosen index was refused
 //! with `var_off=(0x0; 0xff)` after LLVM moved the mask that made it safe.
 
-use lorica_common::{Action, CLASS24_BYTES, Class24, Family, PacketView, blocklist::class24_get};
+use lorica_common::{
+    Action, CLASS24_BYTES, Class24, CounterId, Family, PacketView, blocklist::class24_get,
+};
 #[cfg(feature = "blocklist-cuckoo")]
 use lorica_common::blocklist::cuckoo::{
     CUCKOO_BUCKET_MASK, CUCKOO_LANES, CuckooBucket, cuckoo_alt, cuckoo_delta, cuckoo_hash,
@@ -55,7 +57,7 @@ use crate::maps::CLASS24;
 use crate::maps::CUCKOO_TABLE;
 #[cfg(not(feature = "blocklist-cuckoo"))]
 use crate::maps::OA_TABLE;
-use crate::stage::Outcome;
+use crate::{helpers, stage::Outcome};
 
 #[inline(never)]
 pub fn run(view: &PacketView) -> Outcome {
@@ -74,12 +76,26 @@ pub fn run(view: &PacketView) -> Outcome {
         unsafe { core::slice::from_raw_parts((&raw const CLASS24).cast::<u8>(), CLASS24_BYTES) };
     let class = class24_get(table, addr);
 
+    // **The counters are the trie's, and that is the point.** Both halves of stage 3 answer
+    // the same question about the same traffic, so an operator reading `lpm_drop_hit` gets the
+    // number of sources the source list refused whichever table held the verdict. A pair of
+    // names per table would make a dashboard depend on which structure a rule compiled into,
+    // which is a decision the operator did not make and cannot see.
+    //
+    // Nothing is bumped on the common path. `Class24::None` is the 94 % case with a million
+    // scattered `/32` loaded and it stays one memory access and a branch.
     match class {
         // The 94 % case with a million scattered `/32` loaded, and the whole of it is the
         // one access above.
         Class24::None => Outcome::Continue,
-        Class24::Deny => Outcome::Drop,
-        Class24::Allow => Outcome::Pass,
+        Class24::Deny => {
+            helpers::bump(CounterId::LpmDropHit);
+            Outcome::Drop
+        }
+        Class24::Allow => {
+            helpers::bump(CounterId::LpmAllowExit);
+            Outcome::Pass
+        }
         Class24::Table => verdict(probe(addr)),
     }
 }
@@ -101,10 +117,16 @@ pub fn run(view: &PacketView) -> Outcome {
 /// `RateLimit` and `Mark` can only arrive from here and never from `CLASS24`, whose two bits
 /// spell four codes: the builder refuses a prefix at or shorter than `/24` carrying a verdict
 /// it cannot write, while the three tag bits of a `/25` to `/32` can hold one.
-const fn verdict(action: Option<Action>) -> Outcome {
+fn verdict(action: Option<Action>) -> Outcome {
     match action {
-        Some(Action::Drop) => Outcome::Drop,
-        Some(Action::Allow) => Outcome::Pass,
+        Some(Action::Drop) => {
+            helpers::bump(CounterId::LpmDropHit);
+            Outcome::Drop
+        }
+        Some(Action::Allow) => {
+            helpers::bump(CounterId::LpmAllowExit);
+            Outcome::Pass
+        }
         // Rate limiting and marking are verdicts the later stages own, as in `lpm`. `None`
         // is a tag whose three verdict bits decode to no `Action` at all, which is a corrupt
         // snapshot rather than a configuration choice, and the direction that cannot be

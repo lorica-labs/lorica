@@ -41,12 +41,25 @@ fn the_shipped_example_parses_and_compiles() {
         "the example arms a stage, and the file says every knob in it is off"
     );
 
-    // It demonstrates the two rule shapes and the scope requirement, which is the whole
-    // reason to read it rather than the struct.
+    // It demonstrates the rule shapes and the scope requirement, which is the whole reason to
+    // read it rather than the struct.
     assert!(
-        compiled.entries.len() >= 3,
-        "the example carries {} rules: it is meant to show a deny, a scoped allow and a TTL",
-        compiled.entries.len()
+        compiled.entries.len() + compiled.flat.len() >= 4,
+        "the example compiles {} trie entries and {} flat prefixes: it is meant to show a          scoped allow, a deny with a TTL and a deny that reaches the flat tables",
+        compiled.entries.len(),
+        compiled.flat.len()
+    );
+
+    // **Both halves of stage 3 are demonstrated, and that is the part a reader most needs.**
+    // Which table a rule compiles into is decided by the rule and never written in the file,
+    // so an example that exercised only one would teach that the choice does not exist.
+    assert!(
+        !compiled.flat.is_empty(),
+        "no rule of the example reaches the flat tables, so it does not show that an IPv4          deny with no scope and no TTL goes somewhere different from the rest"
+    );
+    assert!(
+        !compiled.entries.is_empty(),
+        "no rule of the example stays in the trie, so it does not show what the flat tables          cannot hold"
     );
     assert!(
         !compiled.bogons.is_empty(),

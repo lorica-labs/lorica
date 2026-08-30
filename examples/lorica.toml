@@ -94,3 +94,13 @@ scopes = ["minecraft"]
 prefix = "172.20.0.0/16"
 action = "deny"
 ttl_secs = 3600
+
+# A deny with no scope and no TTL on IPv4 goes into the two flat tables instead of the trie —
+# 4 MiB for every /24 and 16 MiB for the exact addresses, both read in one memory access. That
+# is what a blocklist is: a large list of sources to refuse, permanently, whatever they are
+# talking to. The trie keeps what the flat tables cannot hold — a scope, a deadline, IPv6 —
+# and the counters are the same either way, so the dashboard does not depend on which table a
+# rule compiled into.
+[[rules]]
+prefix = "10.99.0.0/16"
+action = "deny"

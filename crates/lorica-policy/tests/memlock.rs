@@ -106,10 +106,18 @@ fn the_defaults_leave_room_for_the_model_to_be_revised() {
     }
 }
 
+/// A rule the trie holds costs a list slot and a counter slot. A rule the flat tables hold
+/// costs neither, and that is the whole reason they exist.
+///
+/// Both halves are here because the difference is invisible from the file: an operator writes
+/// `deny` twice and one of the two lands in a structure whose size does not depend on how many
+/// rules there are. A test on only the first half would have passed unchanged when the second
+/// arrived and stopped meaning what its name says.
 #[test]
-fn the_rules_themselves_count_against_the_budget() {
+fn only_the_rules_the_trie_holds_count_against_the_budget() {
     let mut text = String::from("profile = \"vps\"\nmitigation_reserve = 0\n");
     for i in 0..16u32 {
+        // IPv4, deny, no scope, no TTL: everything the flat tables can hold.
         text.push_str(&format!(
             "[[rules]]\nprefix = \"10.{}.{}.0/24\"\naction = \"deny\"\n",
             i / 256,
@@ -118,13 +126,40 @@ fn the_rules_themselves_count_against_the_budget() {
     }
     let config = Config::from_toml(&text).expect("the configuration did not parse");
     let out = compile(&config, CLOCK, MemlockModel::MEASURED).expect("it should fit");
-    // Sixteen rules plus the built-in bogon table, which really is in the map and really
-    // does cost budget. Written as a sum rather than as the total, so that a bogon added
-    // to the table moves this test by construction instead of breaking it.
+    assert_eq!(
+        out.flat.len(),
+        16,
+        "the sixteen rules reached the flat tables"
+    );
+    // The bogon table and nothing else. Written as the bogons rather than as a total, so that
+    // one added to the table moves this test by construction instead of breaking it.
     assert_eq!(
         out.sizes.unified_list_entries as usize,
-        16 + BOGONS.len(),
-        "the rules and the bogons both occupy the list"
+        BOGONS.len(),
+        "a rule the flat tables hold occupies no slot of the list"
+    );
+}
+
+/// The three reasons a rule stays in the trie, one rule each.
+#[test]
+fn a_rule_the_flat_tables_cannot_hold_stays_in_the_list() {
+    let mut text = String::from("profile = \"vps\"\nmitigation_reserve = 0\n");
+    text.push_str("[[rules]]\nprefix = \"10.1.0.0/16\"\naction = \"deny\"\nttl_secs = 60\n");
+    text.push_str(
+        "[[rules]]\nprefix = \"10.2.0.0/16\"\naction = \"allow\"\nscopes = [\"tcp:25565\"]\n",
+    );
+    text.push_str("[[rules]]\nprefix = \"2001:db8:1::/48\"\naction = \"deny\"\n");
+
+    let config = Config::from_toml(&text).expect("the configuration did not parse");
+    let out = compile(&config, CLOCK, MemlockModel::MEASURED).expect("it should fit");
+    assert!(
+        out.flat.is_empty(),
+        "a deadline, a scope and IPv6: the flat tables have room for none of the three"
+    );
+    assert_eq!(
+        out.sizes.unified_list_entries as usize,
+        3 + BOGONS.len(),
+        "the three rules and the bogons occupy the list"
     );
 }
 

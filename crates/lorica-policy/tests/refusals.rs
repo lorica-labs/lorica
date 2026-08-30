@@ -93,7 +93,14 @@ fn a_deny_without_a_scope_is_accepted() {
         action = "deny"
         "#,
     );
-    assert_eq!(out.entries[0].1.scope_len, 0);
+    // Accepted, unlike the unscoped allow above, and it lands in the flat tables rather than
+    // the trie — a scope is the first of the three things they have no room for, so a rule
+    // that names none is the rule they were built to hold. Asserted here rather than left to
+    // `entries` being empty, which would also be true if the rule had been dropped on the
+    // floor.
+    assert_eq!(out.flat.len(), 1, "the deny is somewhere");
+    assert_eq!(out.flat[0].1, 24, "and it is the /24 that was written");
+    assert!(out.entries.is_empty(), "nothing needed the trie");
 }
 
 #[test]

@@ -182,6 +182,57 @@ fn memlock_model() -> lorica_policy::MemlockModel {
     )
 }
 
+/// The rules that go into the two flat tables, in one write of the `.bss` section.
+///
+/// Separate from [`publish`] because the two halves of stage 3 take different shapes and are
+/// filled by different code: the trie takes keyed entries with deadlines and counter indices,
+/// and these tables take a snapshot built whole. Nothing here depends on the clock, so it runs
+/// before the trie pass and with the plan's own compile rather than a third one.
+fn publish_flat(object: &Path, ebpf: &Ebpf, config: &lorica_policy::Config) -> Result<()> {
+    let compiled = lorica_policy::compile(config, PROVISIONAL_CLOCK, memlock_model())
+        .context("the configuration did not compile")?;
+    if compiled.flat.is_empty() {
+        // Nothing to publish, and the tables are already zero: `.bss` is zeroed by the kernel
+        // when the map is created, and zero is `Class24::None` — no verdict — everywhere.
+        return Ok(());
+    }
+
+    let snapshot = lorica_policy::build(&compiled.flat, EXPANSION_BUDGET)
+        .context("the flat blocklist did not build")?;
+    let bytes = std::fs::read(object)
+        .with_context(|| format!("cannot read the eBPF object at {}", object.display()))?;
+    let section = maps::blocklist::Section::of(&bytes)
+        .context("cannot find the blocklist tables in the object")?;
+    let image = section.image(&snapshot.class24, &snapshot.oa);
+    let fd = maps::fd(ebpf, maps::blocklist::SECTION).with_context(|| {
+        format!(
+            "the loaded program has no {} map, so the flat tables cannot be published",
+            maps::blocklist::SECTION
+        )
+    })?;
+    // SAFETY: `image` is exactly `section.bytes` long, which is the size read off the same
+    // object the map was created from.
+    unsafe { maps::blocklist::publish(fd, &image) }
+        .context("writing the flat blocklist failed")?;
+
+    eprintln!(
+        "loricad: {} prefixes in the flat tables ({} keys, {} expanded, worst probe {}), one write",
+        compiled.flat.len(),
+        snapshot.keys,
+        snapshot.expanded,
+        snapshot.worst_psl
+    );
+    Ok(())
+}
+
+/// Keys the tables may hold that no line of the configuration named.
+///
+/// A `/25` is 128 of them and a `/24` with one exception inside it costs a block of up to 255,
+/// so a mistyped prefix length is the cheapest way to ask for a million. Half the table is the
+/// load factor the probe sequence was dimensioned for, and the builder refuses past it rather
+/// than degrading quietly.
+const EXPANSION_BUDGET: usize = lorica_common::blocklist::OA_MAX_KEYS / 2;
+
 /// The operator's rules, into the unified list, against the measured clock.
 ///
 /// Everything the file decided that does not depend on the clock was decided by [`plan`] and
@@ -360,6 +411,12 @@ async fn serve(mut options: Options) -> Result<()> {
         )
     })?;
     let (ebpf, clock) = load(&options.object, &layout, options.policy, vectors)?;
+    // Before anything is attached, and in one system call. The two flat tables live in the
+    // `.bss` section aya materialises as a map of one entry, so publishing a blocklist of any
+    // size is one `bpf_map_update_elem` against that entry rather than one call per prefix.
+    if let Some(config) = &config {
+        publish_flat(&options.object, ebpf, config)?;
+    }
     // The descriptors below are duplicates and not borrows of the loaded program, and that
     // is what makes attaching possible at all: attaching needs the program mutably, at any
     // moment for as long as the agent runs, and a borrow of its maps that lives that long

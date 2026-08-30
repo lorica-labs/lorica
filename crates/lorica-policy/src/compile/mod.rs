@@ -12,7 +12,9 @@ pub mod signature;
 
 use std::collections::BTreeMap;
 
-use lorica_common::{Action, Clock, CounterId, Deadline, LpmKey, LpmValue, SCOPE_MAX, setting};
+use lorica_common::{
+    Action, Clock, CounterId, Deadline, LpmKey, LpmValue, SCOPE_MAX, V4_MAPPED_PREFIX_BITS, setting,
+};
 
 use crate::{
     config::{ActionName, Config},
@@ -29,6 +31,29 @@ pub struct Compiled {
     /// program by the verifier rather than skipped at run time.
     pub signature_vectors: u32,
     pub entries: Vec<(LpmKey, LpmValue)>,
+    /// The rules that go into the two flat tables instead of the trie, as
+    /// `(address, prefix length, verdict)` — the shape
+    /// [`blocklist::build`](crate::blocklist::build) takes.
+    ///
+    /// **What qualifies, and why it is exactly this.** The flat tables answer an IPv4 address
+    /// in one memory access and carry eight bits a slot: a verdict, a probe length and a
+    /// fingerprint. They have no room for a scope, no room for a deadline, and no counter
+    /// index. So a rule goes here when it needs none of the three — IPv4, `deny`, no scope, no
+    /// `ttl_secs` — and stays in the trie otherwise. An `allow` never qualifies, because an
+    /// unscoped allow is refused outright a few lines below and a scoped one needs the scope.
+    ///
+    /// That is not a subset chosen to be easy. It is the shape a blocklist has: a large list
+    /// of addresses to refuse, permanently, whatever they are talking to. The trie costs 414
+    /// ns on the legitimate path once an operator fills it, and these two tables were built to
+    /// take that traffic off it.
+    ///
+    /// **A rule gives up nothing observable by qualifying**, which is worth checking rather
+    /// than assuming: the trie counts a *drop* through the shared `LpmDropHit` and only an
+    /// *allow* through a per-entry slot. An allow never qualifies here, so nothing that moves
+    /// had a counter of its own to lose, and stage 3 bumps `LpmDropHit` from either table.
+    /// Per-entry counting was never available at the size these tables exist for anyway: a
+    /// million entries is a million slots times every processor.
+    pub flat: Vec<(u32, u32, Action)>,
     /// The bogon entries, which go into the same map behind the same lookup. They are
     /// kept apart from the operator entries because they are not the operator's: they
     /// share one counter slot instead of owning one each, and what the file asked for
@@ -145,10 +170,23 @@ pub fn compile(
     model: MemlockModel,
 ) -> Result<Compiled, CompileError> {
     let mut entries: Vec<(LpmKey, LpmValue)> = Vec::with_capacity(config.rules.len());
+    let mut flat: Vec<(u32, u32, Action)> = Vec::new();
+
+    // **Which prefixes the trie will hold, decided before a single rule is placed.** Stage 3
+    // reads the flat tables first and the trie only for what they had no verdict for, so a
+    // prefix in the flat tables answers before any longer prefix in the trie is ever
+    // consulted. A `/24` deny placed flat would therefore refuse the address a `/32` allow in
+    // the trie was written to permit — precedence by specificity, silently inverted, on the
+    // one pair of rules an operator writes precisely because they expect the longer to win.
+    //
+    // So a rule may only go flat when nothing longer inside it stays behind. This is that set:
+    // every rule the flat tables cannot hold, and every bogon, because those are in the trie
+    // too.
+    let trie_only = trie_only_prefixes(config)?;
     let mut seen: BTreeMap<(u32, [u8; 16]), ()> = BTreeMap::new();
     let mut warnings = Vec::new();
 
-    for (index, rule) in config.rules.iter().enumerate() {
+    for rule in &config.rules {
         let key = lpm::parse_prefix(&rule.prefix)?;
         let prefix = lpm::describe(&key);
 
@@ -171,13 +209,26 @@ pub fn compile(
             return Err(CompileError::UnscopedAllow { prefix });
         }
 
+        // The flat tables first, because a rule that belongs there consumes no list slot and
+        // no counter slot and the sizes below are computed from what is left.
+        if let Some(flat_rule) = flat_candidate(&key, action, rule)
+            && !trie_only.iter().any(|inner| contains(&key, inner))
+        {
+            flat.push(flat_rule);
+            continue;
+        }
+
         let mut value = LpmValue::zeroed();
         value.action = action;
         value.priority = rule.priority;
         // One counter slot per entry, above the named ones. A single global counter
         // would say that some allow-listed source left the pipeline, which is not the
         // question an operator asks after a bypass.
-        value.counter_idx = CounterId::COUNT + index as u32;
+        //
+        // Indexed by position in `entries` and not by position in the file, because the rules
+        // that went to the flat tables are not here: numbering by file position would leave a
+        // hole per flat rule in a map the profile sized exactly.
+        value.counter_idx = CounterId::COUNT + entries.len() as u32;
         value.deadline = match rule.ttl_secs {
             // Only a mitigation entry is required to expire. An operator rule is
             // allowed to last as long as the file it is written in.
@@ -239,10 +290,73 @@ pub fn compile(
         settings: settings_word(&config.settings),
         signature_vectors: signature::vectors_word(config.signatures.as_deref())?,
         entries,
+        flat,
         bogons,
         sizes,
         warnings,
     })
+}
+
+/// Every prefix the trie will hold: the rules the flat tables cannot take, and the bogons.
+///
+/// Parsed here and again in the loop below, which is one wasted parse per rule at compile time
+/// and buys the thing that matters: the placement of a rule can depend on the whole
+/// configuration rather than only on the rules before it in the file. A rule's table would
+/// otherwise depend on where in the file it was written, which is the property this compiler
+/// most insists it does not have.
+fn trie_only_prefixes(config: &Config) -> Result<Vec<LpmKey>, CompileError> {
+    let mut keys: Vec<LpmKey> = bogon::entries().map(|(key, _)| key).collect();
+    for rule in &config.rules {
+        let key = lpm::parse_prefix(&rule.prefix)?;
+        let action = match rule.action {
+            ActionName::Allow => Action::Allow,
+            ActionName::Deny => Action::Drop,
+        };
+        if flat_candidate(&key, action, rule).is_none() {
+            keys.push(key);
+        }
+    }
+    Ok(keys)
+}
+
+/// Whether `inner` is a strictly longer prefix inside `outer`.
+///
+/// Equal prefixes are not contained: two rules on one prefix are already a refusal, and a
+/// bogon on the same prefix as a rule is another. What this asks about is nesting.
+fn contains(outer: &LpmKey, inner: &LpmKey) -> bool {
+    if inner.prefix_len <= outer.prefix_len {
+        return false;
+    }
+    let bits = outer.prefix_len as usize;
+    let whole = bits / 8;
+    if outer.addr[..whole] != inner.addr[..whole] {
+        return false;
+    }
+    let rest = bits % 8;
+    if rest == 0 {
+        return true;
+    }
+    let mask = 0xffu8 << (8 - rest);
+    outer.addr[whole] & mask == inner.addr[whole] & mask
+}
+
+/// The flat form of a rule that belongs in the two tables, or `None` if it belongs in the trie.
+///
+/// One place, and a total function of the rule, so that "which table holds this" is answerable
+/// by reading one predicate rather than by tracing two branches of a loop.
+fn flat_candidate(
+    key: &LpmKey,
+    action: Action,
+    rule: &crate::config::Rule,
+) -> Option<(u32, u32, Action)> {
+    // IPv4 only. The parser stores it v4-mapped, so a prefix inside IPv4 space is one at or
+    // past the mapped prefix, and its length in IPv4 terms is what is left after it.
+    let len = key.prefix_len.checked_sub(V4_MAPPED_PREFIX_BITS)?;
+    if action != Action::Drop || !rule.scopes.is_empty() || rule.ttl_secs.is_some() {
+        return None;
+    }
+    let addr = u32::from_be_bytes([key.addr[12], key.addr[13], key.addr[14], key.addr[15]]);
+    Some((addr, len, action))
 }
 
 fn settings_word(settings: &crate::config::Settings) -> u32 {

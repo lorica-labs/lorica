@@ -136,15 +136,71 @@ fn a_service_name_and_its_literal_compile_the_same() {
 
 #[test]
 fn a_rule_without_a_ttl_never_expires() {
+    // Scoped, and it has to be: a deadline only exists in the trie, and an IPv4 deny with
+    // neither a scope nor a TTL is exactly the rule the flat tables take. So the fixture that
+    // asks what a missing TTL compiles to has to be a rule the trie holds for another reason.
     let out = compiled(
         r#"
         profile = "host"
         [[rules]]
         prefix = "10.90.1.0/24"
         action = "deny"
+        scopes = ["udp:30120"]
         "#,
     );
     assert_eq!(out.entries[0].1.deadline, Deadline::never());
+}
+
+/// A prefix goes flat only when nothing longer inside it stays in the trie.
+///
+/// **This is a correctness guard and not a tidiness one.** Stage 3 reads the flat tables first
+/// and the trie only for what they had no verdict for, so a `/24` in the flat tables answers
+/// before a `/32` in the trie is ever consulted. Placing the deny flat and leaving the allow
+/// behind would refuse the one address the operator wrote a rule to permit, and precedence by
+/// specificity — the property this file exists to hold — would be inverted by a decision
+/// nothing in the configuration expresses.
+#[test]
+fn a_deny_keeps_out_of_the_flat_tables_when_a_longer_allow_stays_in_the_trie() {
+    let out = compiled(
+        r#"
+        profile = "host"
+        [[rules]]
+        prefix = "10.90.1.0/24"
+        action = "deny"
+        [[rules]]
+        prefix = "10.90.1.7/32"
+        action = "allow"
+        scopes = ["udp:30120"]
+        "#,
+    );
+    assert!(
+        out.flat.is_empty(),
+        "the /24 deny reached the flat tables and would answer before the /32 allow: {:?}",
+        out.flat
+    );
+    assert_eq!(out.entries.len(), 2, "both rules stay in the trie together");
+}
+
+/// The same deny, with nothing longer inside it, does reach the flat tables.
+///
+/// The pair matters: without this the guard above would pass just as well if the compiler had
+/// stopped using the flat tables altogether.
+#[test]
+fn the_same_deny_reaches_the_flat_tables_when_nothing_longer_stays_behind() {
+    let out = compiled(
+        r#"
+        profile = "host"
+        [[rules]]
+        prefix = "10.90.1.0/24"
+        action = "deny"
+        [[rules]]
+        prefix = "10.91.0.0/16"
+        action = "allow"
+        scopes = ["udp:30120"]
+        "#,
+    );
+    assert_eq!(out.flat.len(), 1, "the deny has nothing longer inside it");
+    assert_eq!(out.entries.len(), 1, "only the scoped allow needs the trie");
 }
 
 #[test]
