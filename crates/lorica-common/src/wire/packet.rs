@@ -103,7 +103,12 @@ impl PacketView {
     /// offset is zero. A four-byte MAGIC is readable; a one-byte type check at a
     /// variable offset is not, and never will be.
     #[inline(always)]
-    pub fn payload_bytes<const N: usize>(&self, data: u64, data_end: u64, at: u16) -> Option<[u8; N]> {
+    pub fn payload_bytes<const N: usize>(
+        &self,
+        data: u64,
+        data_end: u64,
+        at: u16,
+    ) -> Option<[u8; N]> {
         const {
             assert!(
                 N >= 2,

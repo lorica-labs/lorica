@@ -128,11 +128,24 @@ fn snapshots(f: &Fixture) -> Vec<Snapshot> {
                 *slot = level;
             }
 
+            // **Both slices are stamped, and a fixture that forgot to would be a fixture that
+            // tests nothing.** The engine refuses to take a delta across a slice whose stamp
+            // has not moved, because in a live agent that means the sweep did not happen. A
+            // replay that left the stamps at zero would therefore exercise the refusal on
+            // every tick and pass every assertion by never demanding a rung. This fixture
+            // models an agent whose sweeps all succeeded; `a_sweep_that_did_not_happen`
+            // models the other case on purpose.
+            let at_ns = out.len() as u64 * period_ns;
+            let mut counters = CounterView::new(named, entries);
+            counters.set_entries_at_ns(at_ns);
+            let mut buckets = BucketView::new(levels);
+            buckets.set_at_ns(at_ns);
+
             out.push(Snapshot {
                 seq: out.len() as u64,
-                at_ns: out.len() as u64 * period_ns,
-                counters: CounterView::new(named, entries),
-                buckets: BucketView::new(levels),
+                at_ns,
+                counters,
+                buckets,
             });
         }
     }

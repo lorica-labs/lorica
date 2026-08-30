@@ -16,6 +16,7 @@ mod enforce;
 mod journal;
 mod log;
 mod metrics;
+mod roster;
 mod state;
 mod store;
 mod tick;
@@ -31,12 +32,13 @@ use std::{
 use anyhow::{Context, Result, bail, ensure};
 use aya::{Ebpf, EbpfLoader};
 use lorica_common::{
-    BUCKET_KEY_SYMBOLS, Clock, CounterId, CounterLayout, DEFAULT_SETTINGS, OPERATOR_SETTINGS,
-    SETTINGS_SYMBOL, SIGNATURE_VECTORS_ALL, SIGNATURE_VECTORS_SYMBOL, key_words, settings_word,
+    BUCKET_KEY_SYMBOLS, Clock, CounterId, CounterLayout, DEFAULT_BANK_BUCKETS, DEFAULT_SETTINGS,
+    OPERATOR_SETTINGS, SETTINGS_SYMBOL, SIGNATURE_VECTORS_ALL, SIGNATURE_VECTORS_SYMBOL, key_words,
+    settings_word,
 };
 use lorica_dataplane::{
     clock, loader,
-    maps::{self, Counters},
+    maps::{self, Counters, bank::BankReader},
 };
 use lorica_detect::{Config as Ladder, Engine};
 use lorica_policy::Mode;
@@ -49,6 +51,7 @@ use tokio::{
 use crate::{
     attach::Attachment,
     enforce::{Applied, apply, withdraw},
+    roster::Roster,
 };
 
 #[global_allocator]
@@ -57,7 +60,7 @@ static ALLOCATOR: alloc::Counting = alloc::Counting;
 const DEFAULT_SOCKET: &str = "/run/lorica/control.sock";
 
 const USAGE: &str = "usage: loricad --object PATH [--socket PATH] [--counters N] [--hz N] \
-                     [--batch N] [--sweep-every N] [--sweep-stride N] [--seconds N] \
+                     [--batch N] [--sweep-every N] [--bank-every N] [--sweep-stride N] [--seconds N] \
                      [--metrics ADDR|off] [--mode observe|armed] [--iface NAME]                      [--policy NAME,...] [--config PATH]";
 
 struct Options {
@@ -71,6 +74,14 @@ struct Options {
     /// Elements per `BPF_MAP_LOOKUP_BATCH` call. Exposed because it is the one knob of
     /// the read whose best value is a measurement and not a derivation.
     batch: u32,
+    /// Ticks between two passes over the bucket bank.
+    ///
+    /// Ten by default, so once a second at the default rate, against the counter sweep's every
+    /// tick. The bank is the candidate side of the snapshot — a level names a number and never
+    /// a source, because 1 024 buckets against any realistic source count means two sources
+    /// share one — so nothing built on it can confirm a refusal, and freshness buys it nothing.
+    /// It also costs a syscall and 64 KiB of copy where the counter sweep costs neither.
+    bank_every: u64,
     /// Ticks between two full sweeps of the counter map. One means every tick, which is
     /// the cadence the exit criterion is literally written about; anything above it trades
     /// freshness of the per-entry counters for CPU, and the trade is exactly linear.
@@ -212,8 +223,7 @@ fn publish_flat(object: &Path, ebpf: &Ebpf, config: &lorica_policy::Config) -> R
     })?;
     // SAFETY: `image` is exactly `section.bytes` long, which is the size read off the same
     // object the map was created from.
-    unsafe { maps::blocklist::publish(fd, &image) }
-        .context("writing the flat blocklist failed")?;
+    unsafe { maps::blocklist::publish(fd, &image) }.context("writing the flat blocklist failed")?;
 
     eprintln!(
         "loricad: {} prefixes in the flat tables ({} keys, {} expanded, worst probe {}), one write",
@@ -244,7 +254,7 @@ fn publish(
     config: &lorica_policy::Config,
     clock: Clock,
     planned: &Plan,
-) -> Result<()> {
+) -> Result<Roster> {
     let compiled = lorica_policy::compile(config, clock, memlock_model())
         .context("the configuration compiled before the load and not after it")?;
     ensure!(
@@ -266,7 +276,9 @@ fn publish(
         compiled.bogons.len(),
         compiled.sizes.unified_list_entries
     );
-    Ok(())
+    // Built from this compile and not from a second one: the pairing has to be the one the
+    // trie was actually filled with.
+    Ok(Roster::from_entries(&compiled.entries))
 }
 
 /// Entries per `BPF_MAP_UPDATE_BATCH`. One thousand is the batch the counter read settled on
@@ -295,6 +307,7 @@ fn parse_options() -> Result<Options> {
         counter_slots: CounterId::COUNT,
         hz: 10,
         batch: 1_000,
+        bank_every: 10,
         sweep_every: 1,
         sweep_stride: 1,
         seconds: 0,
@@ -318,6 +331,7 @@ fn parse_options() -> Result<Options> {
             "--hz" => options.hz = value()?.parse()?,
             "--batch" => options.batch = value()?.parse()?,
             "--sweep-every" => options.sweep_every = value()?.parse()?,
+            "--bank-every" => options.bank_every = value()?.parse()?,
             "--sweep-stride" => options.sweep_stride = value()?.parse()?,
             "--seconds" => options.seconds = value()?.parse()?,
             "--metrics" => options.metrics = value()?,
@@ -365,6 +379,10 @@ fn parse_options() -> Result<Options> {
     }
     Ok(options)
 }
+
+/// The bank's map name, spelled here because the agent opens it by name and the program
+/// declares it by name, and a typo is a map nobody finds.
+const BANK_MAP: &str = "BUCKET_BANK";
 
 fn run(options: Options) -> Result<()> {
     log::init()?;
@@ -427,9 +445,14 @@ async fn serve(mut options: Options) -> Result<()> {
     // The second pass, and the one whose entries are real: the clock above was measured off
     // the program that is now loaded, so a `ttl_secs` in the file becomes a deadline the data
     // path can compare against.
-    if let (Some(config), Some(planned)) = (&config, &plan) {
-        publish(list, config, clock, planned)?;
-    }
+    // **The roster is what makes a per-entry counter evidence rather than a number.** It is
+    // built from the same compile that filled the list, so the key a slot is attributed to is
+    // the key the compiler gave that slot -- see `roster`. An agent with no configuration has
+    // an empty one and publishes no entries, which is correct: it has no entry to attribute.
+    let roster = match (&config, &plan) {
+        (Some(config), Some(planned)) => publish(list, config, clock, planned)?,
+        _ => Roster::default(),
+    };
     // Two readers over the same map: one stops at the named counters, one covers every
     // slot. Each owns its buffers, sized once, so neither allocates again.
     //
@@ -448,12 +471,25 @@ async fn serve(mut options: Options) -> Result<()> {
     // *which* path it got and this is *why*, which is only interesting once, at startup.
     let unmapped = full.unmapped().map(ToString::to_string);
     let full = full.with_stride(options.sweep_stride);
+    // The bank, on a cadence of its own. Absent rather than fatal: an agent that cannot open
+    // it loses its pressure signal and keeps everything a confirmed key rests on, which is the
+    // half that can refuse traffic. See `tick::Sweep`'s field for why it is read slower.
+    let bank = duplicate(ebpf, BANK_MAP)
+        .ok()
+        // SAFETY: `BANK_MAP` is declared in the loaded program as an `ARRAY` with a four-byte
+        // key and a `BANK_SLOT_BYTES` value, and the descriptor is a `dup` of that map's.
+        .map(|fd| unsafe { BankReader::new(fd, DEFAULT_BANK_BUCKETS, options.batch) });
+    if bank.is_none() {
+        eprintln!("loricad: no {BANK_MAP} map, so the bank pressure signal is absent for this run");
+    }
     let mut sweep = tick::Sweep::new(
         named,
         full,
         CounterId::COUNT as usize,
         options.counter_slots as usize,
         options.sweep_every,
+        bank,
+        options.bank_every,
     );
 
     let listener = control::listen(&options.socket)
@@ -539,7 +575,7 @@ async fn serve(mut options: Options) -> Result<()> {
     // afterwards is measurable by difference.
     let settled = alloc::allocations();
     eprintln!(
-        "loricad: {} counter slots striped over {} processors ({} map entries), read by {}, batch {}, {} Hz, full sweep every {} ticks over {} reads, {} slot reads per second, socket {}, kernel clock {} Hz at jiffy {}",
+        "loricad: {} counter slots striped over {} processors ({} map entries), read by {}, batch {}, {} Hz, full sweep every {} ticks over {} reads, {} slot reads per second, {} entries attributable to a key, bank every {} ticks, socket {}, kernel clock {} Hz at jiffy {}",
         options.counter_slots,
         layout.cpus,
         layout.entries(),
@@ -553,6 +589,8 @@ async fn serve(mut options: Options) -> Result<()> {
         sweep.every(),
         sweep.stride(),
         sweep.slot_reads_per_second(options.hz),
+        roster.len(),
+        options.bank_every,
         options.socket.display(),
         clock.hz,
         clock.jiffies,
@@ -585,8 +623,13 @@ async fn serve(mut options: Options) -> Result<()> {
                 // `log::health` attributes to the scheduler, the hypervisor or a faulted
                 // buffer, so it has to cover the syscalls and not only the sweep.
                 let tick_started = Instant::now();
-                sweep.run();
-                published.publish(&sweep, started.elapsed().as_nanos() as u64);
+                // One reading of the clock for the whole tick: the sweep stamps the slices it
+                // completed with it and the publication carries it, so a slice's stamp and the
+                // snapshot's `at_ns` are the same number and a rate derived from the two is
+                // divided by an interval that exists.
+                let at_ns = started.elapsed().as_nanos() as u64;
+                sweep.run(at_ns);
+                published.publish(&sweep, at_ns, &roster);
                 // Decide from the snapshot that was just published, not from the sweep: the
                 // published one is what every reader sees, so a decision taken off anything
                 // else could disagree with the metric an operator is looking at.
@@ -624,12 +667,13 @@ async fn serve(mut options: Options) -> Result<()> {
                 );
                 if deadline.is_some_and(|at| tokio::time::Instant::now() >= at) {
                     eprintln!(
-                        "loricad: {} ticks, {} full sweeps of {} slots, {} failed, \
+                        "loricad: {} ticks, {} full sweeps of {} slots, {} bank passes, {} failed, \
                          {} snapshot buffers reallocated, {} allocations after the first sweep, \
                          rung {} in {:?} mode, {} entries written, {} withheld, {} withdrawn",
                         sweep.ticks(),
                         sweep.full_sweeps(),
                         sweep.slots(),
+                        sweep.bank_sweeps(),
                         sweep.failures(),
                         published.reallocations(),
                         alloc::allocations().saturating_sub(settled),

@@ -17,7 +17,7 @@ use lorica_common::CounterLayout;
 /// Commands of the `bpf` syscall. libc carries no `bpf_cmd` enum, and only the two this
 /// crate uses are named here. The numbers are ABI: a wrong one is a different operation
 /// on the same map.
-const BPF_MAP_LOOKUP_BATCH: libc::c_long = 24;
+pub(super) const BPF_MAP_LOOKUP_BATCH: libc::c_long = 24;
 const BPF_MAP_UPDATE_BATCH: libc::c_long = 26;
 
 /// The `batch` arm of `union bpf_attr`, field for field as the kernel declares it. The
@@ -25,15 +25,15 @@ const BPF_MAP_UPDATE_BATCH: libc::c_long = 26;
 /// out of it, because the kernel writes there how many elements it actually handled.
 #[repr(C)]
 #[derive(Default)]
-struct Attr {
-    in_batch: u64,
-    out_batch: u64,
-    keys: u64,
-    values: u64,
-    count: u32,
-    map_fd: u32,
-    elem_flags: u64,
-    flags: u64,
+pub(super) struct Attr {
+    pub(super) in_batch: u64,
+    pub(super) out_batch: u64,
+    pub(super) keys: u64,
+    pub(super) values: u64,
+    pub(super) count: u32,
+    pub(super) map_fd: u32,
+    pub(super) elem_flags: u64,
+    pub(super) flags: u64,
 }
 
 /// # Safety
@@ -42,7 +42,7 @@ struct Attr {
 /// `attr.values` to at least `attr.count` values of the size the map reports for one
 /// element — which is one value per possible processor for a per-CPU map. The kernel
 /// has no way to learn how long either buffer is.
-unsafe fn command(cmd: libc::c_long, attr: &mut Attr) -> io::Result<()> {
+pub(super) unsafe fn command(cmd: libc::c_long, attr: &mut Attr) -> io::Result<()> {
     // SAFETY: the buffer lengths are the caller's precondition. The size passed is that
     // of Attr itself rather than of the whole union, so the kernel reads exactly the
     // bytes that exist here and zeroes the rest of the union it copies into.
@@ -198,6 +198,15 @@ impl<'fd> StripedU64Reader<'fd> {
     /// elements, and without it a reader built for a small map would read every element above
     /// it and throw the answers away — paying the full cost for a fraction of the data, which
     /// is the whole cost this reader exists to control.
+    /// The sums the last completed pass left, without reading again. As `Mapped::last`.
+    ///
+    /// A pass in progress is not visible here: this reader accumulates into a separate buffer
+    /// and publishes whole, so what a caller sees is always one coherent sweep and never half
+    /// of two.
+    pub fn last(&self) -> &[u64] {
+        &self.sums
+    }
+
     pub fn read(&mut self) -> io::Result<&[u64]> {
         let entries = self.layout.entries() as usize;
         // The window this read claims. Rounded up, so a stride that does not divide the map

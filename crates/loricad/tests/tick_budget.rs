@@ -20,6 +20,9 @@
 
 #![cfg(all(target_os = "linux", feature = "kernel-tests"))]
 
+#[path = "../src/roster.rs"]
+#[allow(dead_code)]
+mod roster;
 #[path = "../src/state.rs"]
 #[allow(dead_code)]
 mod state;
@@ -114,6 +117,33 @@ fn layout() -> CounterLayout {
     maps::counter_layout(SLOTS).expect("no counter layout for this machine")
 }
 
+/// A stamp for a tick that only needs one to be distinct. The sweep uses it to mark the slices
+/// it completed, and the publication carries it; nothing here reads a rate off it.
+fn at_ns_of(sweep: &tick::Sweep) -> u64 {
+    sweep.ticks().saturating_mul(100_000_000)
+}
+
+/// One entry per slot above the named counters.
+///
+/// The keys are arbitrary and distinct; what matters is the count, because the publication does
+/// a lookup and a push per seat and this test is about what that costs after the first tick.
+fn entries_for_every_slot() -> Vec<(lorica_common::LpmKey, lorica_common::LpmValue)> {
+    (CounterId::COUNT..SLOTS)
+        .map(|slot| {
+            let n = slot - CounterId::COUNT;
+            let mut value = lorica_common::LpmValue::zeroed();
+            value.counter_idx = slot;
+            let key = lorica_common::LpmKey::host_v4([
+                10,
+                (n >> 16) as u8,
+                (n >> 8) as u8,
+                n as u8,
+            ]);
+            (key, value)
+        })
+        .collect()
+}
+
 fn sweep_over(ebpf: &'static Ebpf) -> tick::Sweep {
     let named = maps::counters(ebpf, CounterId::COUNT, CounterId::COUNT)
         .expect("building the named-counter reader failed");
@@ -126,6 +156,13 @@ fn sweep_over(ebpf: &'static Ebpf) -> tick::Sweep {
         // Every tick, which is the cadence the budget is stated about: a slower full sweep
         // only makes the measurement cheaper than the thing it is standing in for.
         1,
+        // No bank. The budget is about the counter sweep and the publication, and a bank read
+        // is a syscall on a cadence of its own -- measuring it here would fold two very
+        // different costs into one number. Its buffers are allocated in its constructor and
+        // never again, which is the property this test is about, so its absence does not
+        // weaken the claim.
+        None,
+        1,
     )
 }
 
@@ -134,22 +171,35 @@ fn a_thousand_whole_ticks_allocate_nothing_and_fit_the_budget() {
     let ebpf = load();
     let mut sweep = sweep_over(ebpf);
     let mut published = state::Published::default();
+    let roster = roster::Roster::from_entries(&entries_for_every_slot());
+    // A roster with an entry per slot above the named counters, which is the shape a real
+    // policy produces and the one that makes the publication do the most work: every seat is
+    // looked up in the sweep and pushed into the snapshot's entry slice, every tick. An empty
+    // roster would let this test pass on a publication that never touches that buffer.
+    let roster = roster::Roster::from_entries(&entries_for_every_slot());
     let started = Instant::now();
 
-    // One tick and one read before the count starts. The reader sizes its buffers on the
-    // first read, and arc-swap initialises its per-thread slot on the first `load_full`;
-    // neither happens again, and the agent spends its life after both.
-    sweep.run();
-    published.publish(&sweep, started.elapsed().as_nanos() as u64);
-    let _ = published.read();
+    // **Two ticks and two reads before the count starts, and the second is not padding.**
+    // The reader sizes its buffers on the first read and arc-swap initialises its per-thread
+    // slot on the first `load_full`, neither of which happens again. But the publication
+    // alternates between *two* snapshot buffers, so the entry slice and the level slice are
+    // each sized twice -- once per buffer -- and a single priming tick leaves the spare empty
+    // to grow on the tick after the count started. That is what this test caught when the
+    // slices were first filled: eleven allocations over a thousand ticks, all of them the
+    // second buffer catching up.
+    for _ in 0..2 {
+        sweep.run(started.elapsed().as_nanos() as u64);
+        published.publish(&sweep, started.elapsed().as_nanos() as u64, &roster);
+        let _ = published.read();
+    }
 
     let before = ALLOCATIONS.with(Cell::get);
     let mut worst = Duration::ZERO;
     let loop_started = Instant::now();
     for _ in 0..TICKS {
         let at = Instant::now();
-        sweep.run();
-        published.publish(&sweep, started.elapsed().as_nanos() as u64);
+        sweep.run(at_ns_of(&sweep));
+        published.publish(&sweep, started.elapsed().as_nanos() as u64, &roster);
         worst = worst.max(at.elapsed());
     }
     let elapsed = loop_started.elapsed();
@@ -184,7 +234,9 @@ fn a_thousand_whole_ticks_allocate_nothing_and_fit_the_budget() {
     );
 
     let snapshot = published.read();
-    assert_eq!(snapshot.seq, TICKS + 1, "the sequence skipped a tick");
+    // Two priming ticks, not one: see the loop above. The published sequence is what the
+    // sweep counted, so it is the whole run and not only the measured part.
+    assert_eq!(snapshot.seq, TICKS + 2, "the sequence skipped a tick");
     assert_eq!(snapshot.counters.failures(), 0, "a read failed");
 }
 
@@ -225,8 +277,9 @@ fn the_snapshot_carries_one_total_per_named_counter() {
     let ebpf: &'static Ebpf = Box::leak(Box::new(ebpf));
     let mut sweep = sweep_over(ebpf);
     let mut published = state::Published::default();
-    sweep.run();
-    published.publish(&sweep, 0);
+    let roster = roster::Roster::from_entries(&entries_for_every_slot());
+    sweep.run(at_ns_of(&sweep));
+    published.publish(&sweep, 0, &roster);
 
     let snapshot = published.read();
     let named = snapshot.counters.named();
@@ -263,18 +316,19 @@ fn a_snapshot_a_reader_still_holds_is_not_written_over() {
     let ebpf = load();
     let mut sweep = sweep_over(ebpf);
     let mut published = state::Published::default();
+    let roster = roster::Roster::from_entries(&entries_for_every_slot());
 
-    sweep.run();
-    published.publish(&sweep, 1);
+    sweep.run(at_ns_of(&sweep));
+    published.publish(&sweep, 1, &roster);
     let held = published.read();
     assert_eq!(held.at_ns, 1);
 
     // Two ticks: the first one publishes the spare, the second one wants the buffer `held`
     // is still pointing at.
-    sweep.run();
-    published.publish(&sweep, 2);
-    sweep.run();
-    published.publish(&sweep, 3);
+    sweep.run(at_ns_of(&sweep));
+    published.publish(&sweep, 2, &roster);
+    sweep.run(at_ns_of(&sweep));
+    published.publish(&sweep, 3, &roster);
 
     assert_eq!(
         published.reallocations(),

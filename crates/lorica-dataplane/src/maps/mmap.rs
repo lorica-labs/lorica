@@ -151,6 +151,15 @@ impl Mapped {
     /// Allocates nothing. The loop is `cpus × slots` relaxed loads and no syscall, which at
     /// four thousand slots and eight processors is tens of microseconds against the 1.6 ms the
     /// same read cost as a batch walk.
+    /// The sums the last [`Self::read`] left, without reading again.
+    ///
+    /// Separate from `read` because a caller that wants the per-slot values needs them
+    /// *after* the tick has summed them, and `read` takes `&mut self` — asking for it twice
+    /// would either read the mapping twice or hold a mutable borrow across the publication.
+    pub fn last(&self) -> &[u64] {
+        &self.sums
+    }
+
     pub fn read(&mut self) -> &[u64] {
         let stripe = self.layout.stripe as usize;
         let cpus = self.layout.cpus as usize;

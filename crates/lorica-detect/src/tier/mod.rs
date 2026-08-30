@@ -163,6 +163,16 @@ pub struct Metrics {
     pub mark_noop_ticks: u64,
     /// Times a standing decision was abandoned because its deadline passed unrenewed.
     pub expiries: u64,
+    /// Slow ticks abandoned because the per-entry slice had not been re-read since the last
+    /// one, so the ladder was not moved.
+    ///
+    /// **Zero in a healthy agent, and a number that climbs is an operator's problem and not a
+    /// traffic one.** It means the counter sweep is failing or falling behind the slow cadence,
+    /// and while it climbs the ladder is frozen: the standing rung stays and its deadline is
+    /// the only thing that will release it. Published rather than logged because the difference
+    /// between "the attack stopped" and "we stopped looking" is invisible in every other number
+    /// this struct carries.
+    pub unrefreshed_slow_ticks: u64,
 }
 
 pub struct Engine {
@@ -172,7 +182,12 @@ pub struct Engine {
     hyst: Hysteresis,
     prev_named: [u64; NAMED_SLOTS],
     prev_entries: Vec<u64>,
+    /// The stamp the entry baseline was taken at. A snapshot carrying the same stamp has not
+    /// been re-read since, so there is no delta to take and none is invented.
+    prev_entries_at_ns: u64,
     prev_total_units: u64,
+    /// The same, for the bank.
+    prev_bank_at_ns: u64,
     primed: bool,
     rising: u32,
     /// Whether any fast period since the last slow tick was a burst. This is the only way
@@ -203,7 +218,9 @@ impl Engine {
             hyst,
             prev_named: [0; NAMED_SLOTS],
             prev_entries: Vec::new(),
+            prev_entries_at_ns: 0,
             prev_total_units: 0,
+            prev_bank_at_ns: 0,
             primed: false,
             rising: 0,
             burst_seen: false,
@@ -229,8 +246,12 @@ impl Engine {
         if !self.primed {
             self.primed = true;
             self.prev_named = *s.counters.named();
-            self.prev_entries = s.counters.entries().iter().map(|e| e.hits).collect();
+            self.prev_entries.clear();
+            self.prev_entries
+                .extend(s.counters.entries().iter().map(|e| e.hits));
+            self.prev_entries_at_ns = s.counters.entries_at_ns();
             self.prev_total_units = s.buckets.total_units();
+            self.prev_bank_at_ns = s.buckets.at_ns();
         }
 
         if let Some(per_sec) = self.burst.observe(s.at_ns, over_total)
@@ -269,12 +290,37 @@ impl Engine {
 
     fn slow_tick(&mut self, s: &Snapshot) {
         self.metrics.slow_ticks += 1;
+
+        // **A slow tick whose evidence was not refreshed does not move the ladder.**
+        //
+        // The per-entry slice is swept on a slower cadence than this tick and the sweep can
+        // fail. When it has not been re-read, `hottest_entry` correctly declines to invent a
+        // delta — but the demand computed without it is *lower*, and a lower demand held for
+        // `fall_ticks` walks the ladder back down. An agent that stopped reading its maps would
+        // therefore talk itself out of a mitigation while the attack it was mitigating carried
+        // on, which is the single worst misreading this system can make.
+        //
+        // So the tick is counted and abandoned. The rung stays exactly where the last real
+        // reading left it, and the net under all of it is unchanged: the standing decision
+        // still carries a `Deadline`, and `observe` expires it whether or not slow ticks are
+        // still doing anything. A sweep that never comes back releases the mitigation on that
+        // timer, which is the mechanism that exists for precisely this case.
+        //
+        // The stamp gates on the *confirmed* side and not the bank, because that is the side
+        // whose absence lowers a demand into and out of refusal. It also moves whenever the
+        // sweep succeeded, whatever the policy holds, so an agent with no entries at all still
+        // ticks normally.
+        if s.counters.entries_at_ns() <= self.prev_entries_at_ns {
+            self.metrics.unrefreshed_slow_ticks += 1;
+            return;
+        }
+
         let dt_ns = self.slow.dt_ns().max(1);
         let over = self.slow.per_sec();
         let share = s.buckets.loaded_share(self.cfg.loaded_level_units);
         let invalid = self.invalid(s, dt_ns);
-        let hottest = self.hottest_entry(s, dt_ns);
-        let excess_bps = self.excess_bps(s, dt_ns);
+        let hottest = self.hottest_entry(s);
+        let excess_bps = self.excess_bps(s);
 
         if self.burst_seen && share < self.cfg.mark_share {
             self.metrics.burst_driven_ticks += 1;
@@ -499,10 +545,30 @@ impl Engine {
     /// order the policy compiler allocated, so it is stable for as long as the policy is;
     /// a change of length is a recompiled policy, and the deltas across it would be
     /// meaningless, so the history is dropped rather than reinterpreted.
-    fn hottest_entry(&mut self, s: &Snapshot, dt_ns: u64) -> Option<(LpmKey, u64)> {
+    ///
+    /// **Two refusals rather than one, and the second is the one that matters.** A change of
+    /// length drops the history, as it always did. A slice whose stamp has not moved since the
+    /// last delta is *not looked at* — the sweep is slower than this tick and it can fail — and
+    /// the difference between "unchanged" and "not looked at" is the difference between an
+    /// attack that stopped and an agent that stopped watching. Answering zero for the second
+    /// would let a saturated agent talk itself down the ladder, so it answers nothing and
+    /// leaves the baseline alone.
+    ///
+    /// `dt_ns` is the caller's tick interval and is deliberately not used: the rate is divided
+    /// by the interval the two readings actually span, which is longer whenever a sweep was
+    /// skipped or failed. Dividing a two-interval delta by one interval would double the rate
+    /// an attacker appears to have, in the direction that confirms.
+    fn hottest_entry(&mut self, s: &Snapshot) -> Option<(LpmKey, u64)> {
         let entries = s.counters.entries();
+        let at_ns = s.counters.entries_at_ns();
         if entries.len() != self.prev_entries.len() {
-            self.prev_entries = entries.iter().map(|e| e.hits).collect();
+            self.prev_entries.clear();
+            self.prev_entries.extend(entries.iter().map(|e| e.hits));
+            self.prev_entries_at_ns = at_ns;
+            return None;
+        }
+        let span_ns = at_ns.saturating_sub(self.prev_entries_at_ns);
+        if span_ns == 0 {
             return None;
         }
         let mut best: Option<(LpmKey, u64)> = None;
@@ -513,7 +579,8 @@ impl Engine {
                 best = Some((e.key, delta));
             }
         }
-        best.map(|(key, delta)| (key, delta.saturating_mul(1_000_000_000) / dt_ns))
+        self.prev_entries_at_ns = at_ns;
+        best.map(|(key, delta)| (key, delta.saturating_mul(1_000_000_000) / span_ns))
     }
 
     /// Bits per second by which arrivals exceeded the bank's provisioned drain.
@@ -522,14 +589,26 @@ impl Engine {
     /// rises only while arrivals outrun the drain — which is why the *rise* is a rate and
     /// the total is not. The level is in units of `1 / UNITS_PER_BYTE` byte, never in bytes,
     /// so the conversion is here and not at the call site.
-    fn excess_bps(&mut self, s: &Snapshot, dt_ns: u64) -> u64 {
+    /// Zero when the bank has not been re-read since the last call, for the reason
+    /// [`Self::hottest_entry`] gives: the bank is swept slower than this tick and a reading
+    /// that did not happen is not a reading of zero. Zero here is the safe direction — it
+    /// drives `rising` back to nothing and demands no rung — but it is returned because the
+    /// bank was not looked at, and the baseline is left where it was so the next real reading
+    /// spans the whole interval.
+    fn excess_bps(&mut self, s: &Snapshot) -> u64 {
+        let at_ns = s.buckets.at_ns();
+        let span_ns = at_ns.saturating_sub(self.prev_bank_at_ns);
+        if span_ns == 0 {
+            return 0;
+        }
         let total = s.buckets.total_units();
         let rise = total.saturating_sub(self.prev_total_units);
         self.prev_total_units = total;
+        self.prev_bank_at_ns = at_ns;
         (rise / UNITS_PER_BYTE)
             .saturating_mul(8)
             .saturating_mul(1_000_000_000)
-            / dt_ns
+            / span_ns
     }
 }
 

@@ -40,9 +40,12 @@ use std::sync::Arc;
 
 use arc_swap::ArcSwap;
 use crossbeam_utils::CachePadded;
-use lorica_detect::{BucketView, CounterView, Snapshot, snapshot::NAMED_SLOTS};
+use lorica_detect::{
+    BucketView, CounterView, Snapshot,
+    snapshot::{EntryCounter, NAMED_SLOTS},
+};
 
-use crate::tick::Sweep;
+use crate::{roster::Roster, tick::Sweep};
 
 pub struct Published {
     current: CachePadded<ArcSwap<Snapshot>>,
@@ -63,13 +66,13 @@ impl Default for Published {
 
 impl Published {
     /// Writes this tick into the spare buffer and publishes it.
-    pub fn publish(&mut self, sweep: &Sweep, at_ns: u64) {
+    pub fn publish(&mut self, sweep: &Sweep, at_ns: u64, roster: &Roster) {
         match Arc::get_mut(&mut self.spare) {
-            Some(buffer) => write(buffer, sweep, at_ns),
+            Some(buffer) => write(buffer, sweep, at_ns, roster),
             None => {
                 self.reallocations += 1;
                 let mut fresh = empty();
-                write(&mut fresh, sweep, at_ns);
+                write(&mut fresh, sweep, at_ns, roster);
                 self.spare = Arc::new(fresh);
             }
         }
@@ -94,7 +97,7 @@ impl Published {
     }
 }
 
-fn write(into: &mut Snapshot, sweep: &Sweep, at_ns: u64) {
+fn write(into: &mut Snapshot, sweep: &Sweep, at_ns: u64, roster: &Roster) {
     // Monotone, and the jump rather than the value is the signal: a tick the agent did not
     // get to run leaves a gap here, which shows saturation earlier than any CPU counter
     // because it is the agent's own missed work rather than a share of a core.
@@ -104,14 +107,53 @@ fn write(into: &mut Snapshot, sweep: &Sweep, at_ns: u64) {
         .named_mut()
         .copy_from_slice(sweep.named_totals());
     into.counters.set_failures(sweep.failures());
+
+    // **The per-entry slice, and the stamp that says whether to believe a delta across it.**
+    // `clear` then `extend` rather than a fresh `Vec`: the buffer keeps its capacity across
+    // ticks, which is what `tests/tick_budget.rs` asserts by counting allocations.
+    //
+    // The stamp comes from the sweep and not from this tick. A tick that did not sweep, and a
+    // sweep that failed, both leave it where it was, and the detector reads an unmoved stamp as
+    // "not looked at" rather than as "unchanged". That distinction is the difference between an
+    // attack that stopped and an agent that stopped watching, and only one of the two should
+    // withdraw a mitigation.
+    let totals = sweep.full_totals();
+    let entries = into.counters.entries_mut();
+    entries.clear();
+    // `reserve` before the loop and not `extend` over a `filter_map`: a filtered iterator
+    // reports a lower bound of zero, so `extend` grows the buffer by doubling and a first fill
+    // of four thousand seats costs a dozen allocations instead of one. On every tick after the
+    // first this reserves nothing, because the capacity is already there -- which is the whole
+    // point of reusing the buffer.
+    entries.reserve(roster.len());
+    for seat in roster.seats() {
+        // A seat whose slot is past the end of the sweep is a roster built against a larger
+        // counter map than the one the agent opened. Skipped rather than zero-filled: a zero
+        // would read as an entry taking no traffic, which is a claim about the traffic.
+        if let Some(hits) = totals.get(seat.slot as usize) {
+            entries.push(EntryCounter {
+                key: seat.key,
+                hits: *hits,
+            });
+        }
+    }
+    into.counters.set_entries_at_ns(sweep.full_at_ns());
+
+    // The bank, on its own cadence and with its own stamp, for the same reasons.
+    let levels = into.buckets.levels_mut();
+    levels.clear();
+    levels.extend_from_slice(sweep.bank_levels());
+    into.buckets.set_at_ns(sweep.bank_at_ns());
 }
 
 /// A snapshot with the named totals sized and both vectors empty.
 ///
-/// Empty, and not to save the allocation: nothing in the tick reads the bucket bank or the
-/// unified list yet, so there is no length to size these for. When either read lands, the
-/// reuse path above keeps whatever capacity the vectors grew to and the fresh-buffer path
-/// is the one that has to ask for it.
+/// **Empty, and it no longer means what it used to.** It once said that nothing in the tick
+/// read the bucket bank or the unified list, which was true and was why the whole detection
+/// ladder ran on nothing. Both are read now; these start empty because their lengths are
+/// properties of the compiled policy and the bank the agent found, neither of which this
+/// function knows. `write` fills them on the first tick and the reuse path above keeps
+/// whatever capacity they grew to, so the allocation happens once and not once a tick.
 fn empty() -> Snapshot {
     Snapshot {
         seq: 0,

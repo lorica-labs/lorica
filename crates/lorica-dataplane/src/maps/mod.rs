@@ -6,6 +6,7 @@
 //! length is tied to a map declared in `lorica-ebpf`, so a caller never has to restate the
 //! invariant.
 
+pub mod bank;
 pub mod batch;
 pub mod blocklist;
 pub mod lpm;
@@ -169,6 +170,14 @@ impl<'fd> Counters<'fd> {
         match self {
             Self::Mapped(mapped) => Ok(mapped.read()),
             Self::Batched { reader, .. } => reader.read(),
+        }
+    }
+
+    /// The totals the last read left, per slot, without reading again.
+    pub fn last(&self) -> &[u64] {
+        match self {
+            Self::Mapped(mapped) => mapped.last(),
+            Self::Batched { reader, .. } => reader.last(),
         }
     }
 

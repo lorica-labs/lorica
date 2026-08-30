@@ -20,8 +20,7 @@ const CLOCK: Clock = Clock {
 
 fn example() -> String {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../examples/lorica.toml");
-    fs::read_to_string(&path)
-        .unwrap_or_else(|err| panic!("cannot read {}: {err}", path.display()))
+    fs::read_to_string(&path).unwrap_or_else(|err| panic!("cannot read {}: {err}", path.display()))
 }
 
 #[test]
@@ -89,7 +88,9 @@ fn the_example_uses_a_service_name_it_declares() {
         .flat_map(|rule| rule.scopes.iter())
         .collect();
     assert!(
-        referenced.iter().any(|scope| config.services.contains_key(scope.as_str())),
+        referenced
+            .iter()
+            .any(|scope| config.services.contains_key(scope.as_str())),
         "the example declares services {:?} and no rule refers to one by name, so it does not \
          show what the block is for",
         config.services.keys().collect::<Vec<_>>()

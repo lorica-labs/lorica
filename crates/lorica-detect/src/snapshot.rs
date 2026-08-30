@@ -42,6 +42,18 @@ pub struct EntryCounter {
 pub struct CounterView {
     named: [u64; NAMED_SLOTS],
     entries: Vec<EntryCounter>,
+    /// When the entry slice was last refreshed, on the same clock as [`Snapshot::at_ns`].
+    /// Zero means never.
+    ///
+    /// **This field is what stops a failed read from reading as calm.** The per-entry slots
+    /// are swept on a slower cadence than the named counters and the sweep can fail, so a
+    /// snapshot routinely carries entry counts that are not this tick's. Without a stamp the
+    /// consumer sees the previous totals, computes a delta of zero, and concludes the traffic
+    /// stopped — the one misreading this system must never make, because it is the reading
+    /// that withdraws a mitigation. With it, the consumer can tell "unchanged" from "not
+    /// looked at", and the interval a rate is divided by is the interval the counts actually
+    /// span.
+    entries_at_ns: u64,
     failures: u64,
 }
 
@@ -52,6 +64,7 @@ impl CounterView {
         Self {
             named,
             entries,
+            entries_at_ns: 0,
             failures: 0,
         }
     }
@@ -89,6 +102,29 @@ impl CounterView {
     pub fn entries(&self) -> &[EntryCounter] {
         &self.entries
     }
+
+    /// The entry slice, writable and keeping its capacity.
+    ///
+    /// A `&mut Vec` and not a setter taking one: the tick refills this buffer every sweep and
+    /// the "zero allocation after the first sweep" invariant is a test, so the caller has to be
+    /// able to `clear` and `extend` in place rather than hand over a fresh allocation.
+    pub fn entries_mut(&mut self) -> &mut Vec<EntryCounter> {
+        &mut self.entries
+    }
+
+    /// When [`Self::entries`] was last refreshed. See the field.
+    pub const fn entries_at_ns(&self) -> u64 {
+        self.entries_at_ns
+    }
+
+    /// Stamps the entry slice as refreshed at `at_ns`.
+    ///
+    /// Called only after a read that succeeded and covered the whole slice. A sweep that
+    /// failed, or that covered part of the map, leaves the previous stamp standing — which is
+    /// how the consumer learns not to take a delta.
+    pub const fn set_entries_at_ns(&mut self, at_ns: u64) {
+        self.entries_at_ns = at_ns;
+    }
 }
 
 /// The bucket levels as one tick saw them, in the order of the bank.
@@ -98,11 +134,34 @@ impl CounterView {
 /// levels themselves. `shards` would be a field nothing reads.
 pub struct BucketView {
     levels: Vec<u64>,
+    /// When the levels were last refreshed, on [`Snapshot::at_ns`]'s clock. Zero means never.
+    ///
+    /// The bank is read on a slower cadence than the counters and slower again than the named
+    /// ones, because it is a pressure signal and not a proof: nothing in this crate can build a
+    /// refusal out of it, so its freshness buys less than its cost. The stamp is what lets a
+    /// rate derived from two readings be divided by the interval those two readings actually
+    /// span rather than by the tick that happened to carry the second.
+    at_ns: u64,
 }
 
 impl BucketView {
     pub fn new(levels: Vec<u64>) -> Self {
-        Self { levels }
+        Self { levels, at_ns: 0 }
+    }
+
+    /// The levels, writable and keeping their capacity. As [`CounterView::entries_mut`].
+    pub fn levels_mut(&mut self) -> &mut Vec<u64> {
+        &mut self.levels
+    }
+
+    /// When the levels were last refreshed. See the field.
+    pub const fn at_ns(&self) -> u64 {
+        self.at_ns
+    }
+
+    /// Stamps the levels as refreshed at `at_ns`. Only after a read that covered the bank.
+    pub const fn set_at_ns(&mut self, at_ns: u64) {
+        self.at_ns = at_ns;
     }
 
     /// Share of the bank carrying more than `units`, in [`SHARE_SCALE`] units.

@@ -44,7 +44,7 @@
 //! allocates once per slot, which under this load would be half a million allocations a
 //! second in the one process that promised not to be a source of jitter.
 
-use lorica_dataplane::maps::Counters;
+use lorica_dataplane::maps::{Counters, bank::BankReader};
 use lorica_detect::snapshot::NAMED_SLOTS;
 
 pub struct Sweep {
@@ -64,6 +64,23 @@ pub struct Sweep {
     /// read left it. This is what the exposition renders; `named_counted` is its sum and
     /// keeping only the sum is what left thirty-four series at zero.
     named_totals: [u64; NAMED_SLOTS],
+    /// The bank, read every `bank_every` ticks, or absent when the agent could not open it.
+    ///
+    /// **A slower cadence than the counters, and the reason is what the bank is.** A level is a
+    /// pressure reading and never a proof: 1 024 buckets against any realistic source count
+    /// means two sources share one, so nothing built on it can name whom to refuse. Freshness
+    /// buys a confirmed key nothing, and this read costs a syscall and 64 KiB of copy where the
+    /// counter sweep costs neither. Absent rather than fatal: an agent that cannot open the
+    /// bank is an agent with no pressure signal, which is a smaller thing than an agent that
+    /// refused to start.
+    bank: Option<BankReader<'static>>,
+    bank_every: u64,
+    bank_sweeps: u64,
+    /// When the last complete pass of each slice landed, on the tick's own clock. Zero means
+    /// never, and a stamp that does not move is how the detector learns that a slice was not
+    /// looked at rather than that it did not change.
+    full_at_ns: u64,
+    bank_at_ns: u64,
 }
 
 impl Sweep {
@@ -73,6 +90,8 @@ impl Sweep {
         named_slots: usize,
         slots: usize,
         every: u64,
+        bank: Option<BankReader<'static>>,
+        bank_every: u64,
     ) -> Self {
         Self {
             named,
@@ -86,6 +105,11 @@ impl Sweep {
             counted: 0,
             named_counted: 0,
             named_totals: [0; NAMED_SLOTS],
+            bank,
+            bank_every: bank_every.max(1),
+            bank_sweeps: 0,
+            full_at_ns: 0,
+            bank_at_ns: 0,
         }
     }
 
@@ -94,7 +118,7 @@ impl Sweep {
     /// A failed read leaves the previous total standing rather than zeroing it. Zeroing
     /// would publish a drop to nothing, which reads as an attack ending rather than as a
     /// read that did not happen, and the failure count is what says which it was.
-    pub fn run(&mut self) {
+    pub fn run(&mut self, at_ns: u64) {
         self.ticks += 1;
 
         match self.named.read() {
@@ -113,10 +137,58 @@ impl Sweep {
         if self.ticks.is_multiple_of(self.every) {
             self.full_sweeps += 1;
             match self.full.read() {
-                Ok(totals) => self.counted = totals.iter().sum(),
+                Ok(totals) => {
+                    self.counted = totals.iter().sum();
+                    // Stamped only here. A tick that did not sweep, and a sweep that failed,
+                    // both leave the previous stamp standing -- which is what tells the
+                    // detector that the per-entry slots were not looked at, rather than that
+                    // they did not move.
+                    self.full_at_ns = at_ns;
+                }
                 Err(_) => self.failures += 1,
             }
         }
+
+        if self.ticks.is_multiple_of(self.bank_every)
+            && let Some(bank) = self.bank.as_mut()
+        {
+            self.bank_sweeps += 1;
+            match bank.read() {
+                Ok(_) => self.bank_at_ns = at_ns,
+                Err(_) => self.failures += 1,
+            }
+        }
+    }
+
+    /// Every slot as the last completed sweep left it, named counters included.
+    ///
+    /// The caller takes the slice above [`CounterId::COUNT`](lorica_common::CounterId::COUNT):
+    /// those belong one to an entry of the unified list. It is handed out whole rather than
+    /// pre-sliced because the split is the caller's business and this type does not know how
+    /// many named counters the map was sized for beyond the number it was told.
+    pub fn full_totals(&self) -> &[u64] {
+        self.full.last()
+    }
+
+    /// When [`Self::full_totals`] last completed. Zero means never.
+    pub const fn full_at_ns(&self) -> u64 {
+        self.full_at_ns
+    }
+
+    /// The bucket levels as the last completed pass left them. Empty when there is no bank.
+    pub fn bank_levels(&self) -> &[u64] {
+        self.bank.as_ref().map_or(&[], BankReader::last)
+    }
+
+    /// When [`Self::bank_levels`] last completed. Zero means never, which is also what an
+    /// agent with no bank reports for as long as it runs.
+    pub const fn bank_at_ns(&self) -> u64 {
+        self.bank_at_ns
+    }
+
+    /// Passes over the bank, for the startup line and the digest.
+    pub const fn bank_sweeps(&self) -> u64 {
+        self.bank_sweeps
     }
 
     /// Slots read per second at this cadence, which is the number the cost is linear in
