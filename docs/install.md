@@ -116,6 +116,7 @@ curl -s http://127.0.0.1:9090/metrics | head
 | `--batch N` | `1000` | Elements per `BPF_MAP_LOOKUP_BATCH` call. |
 | `--sweep-every N` | `1` | Ticks between two full sweeps of the counter map. `1` is every tick; above that, per-entry counters get staler and the CPU cost falls linearly. |
 | `--sweep-stride N` | `1` | Reads one full sweep is spread over. `--sweep-every` skips whole ticks and leaves the worst one where it is; this one cuts the worst read and skips nothing. Only the fallback read path has a worst read worth cutting — see [usage.md §8](usage.md). |
+| `--bank-every N` | `5` | Ticks between two reads of the bucket bank. One read is a syscall and 64 KiB of copy; at 10 Hz, 5 keeps it in step with the ladder's 500 ms slow tick, and a larger value makes slow ticks see an unchanged bank. |
 | `--seconds N` | `0` | Seconds to run before exiting. `0` runs until signalled. |
 | `--metrics ADDR\|off` | `127.0.0.1:9090` | Where `/metrics` listens, or `off`. Loopback by default: a scrape serialises the whole registry, so an off-host address is a decision, not a default. |
 | `--mode observe\|armed` | `observe` | Whether a refusal is applied or only reported. |
@@ -153,13 +154,15 @@ different prefix takes the previous one back out, and a descent withdraws what i
 refused instead of waiting for the entry's deadline. The mode is also the first question
 any false-positive report has to answer — see `SECURITY.md`.
 
-**Today that path does not fire, and `--mode` is not the flag that makes a filter refuse
-anything.** The detection ladder cannot reach a rung that refuses packets, because the tick
-publishes the named counters and not the two inputs the confirming rungs need. An armed agent
-reports rungs 0 and 1 and leaves `written` at zero.
+**What an armed agent writes is narrow on purpose.** Only rungs 3 and 4, and only on the ground
+of an exact key of the unified list whose own counter slot is rising above 1 000 packets a
+second — so a source the ladder can refuse is one your configuration already names, with a
+counter slot above the named ones. Rung 3 refuses that key; rung 4 widens it to its `/24`. An
+`Allow` entry is never offered as evidence. Rung 5 writes nothing and asks no upstream yet; reaching it takes
+the rung 3–4 refusal back out. Rung 6 is off.
 
-What *does* refuse traffic is what you name yourself: the rules of a configuration file, and
-the stages you arm with `--policy` or `[settings]`. Those are a different mechanism from
+The rest of what refuses traffic is what you name yourself: the rules of a configuration file,
+and the stages you arm with `--policy` or `[settings]`. Those are a different mechanism from
 `--mode`, which governs only what the ladder is allowed to write on its own initiative.
 `docs/limits.md` §6 keeps the two apart and tracks what is still open.
 

@@ -263,9 +263,30 @@ of the unified list whose own counter slot is rising — unshareable, because no
 increment that slot — or objectively invalid packets being counted while that key takes the hits.
 Bucket pressure and signature matches are *candidates* and can only reach rungs 1 and 2.
 
-Today the ladder tops out at rung 1, because the tick publishes only the 34 named counters and
-neither the per-entry slots nor the bucket levels — the two inputs the confirming rungs need.
-That is the open wire, and it is named in [limits.md](limits.md).
+**The tick feeds it both inputs the confirming rungs need.** Every full sweep keeps the per-entry
+slots it reads, paired with their keys by a roster rebuilt from each compile and never carried
+across one (`a_reload_repairs_the_pairing_rather_than_inheriting_it`). The bucket bank is read
+every `--bank-every` ticks, 5 by default, and published whole or not at all. Every slice carries
+the time it was read, so a slow tick whose evidence was not refreshed moves no rung instead of
+reading a stale total as an attack ending. An `Allow` entry keeps its counter and never gets a
+seat on the roster: an allow-listed source cannot become the evidence for refusing itself
+(`every_action_but_allow_keeps_its_seat`). `starved_no_more.rs` holds the four invariants.
+
+**What the shipped tuning does, on the replayer.** `rise_ticks` 1, `hold_ticks` 2,
+`insufficient_ticks` 3, slow period 500 ms. Over nine deterministic scenarios
+(`crates/lorica-detect/tests/pulse_replay.rs`): first refusal at 2.5 s on the control, 3.9 s
+on the worst attack, zero direction reversals under attack, **zero legitimate packets refused**.
+Two misses are the price of refusing nothing unattributable and are left visible: a 300 ms
+pulse every 10 s is diluted below every threshold (`pulse_gaps`, 5 of 9 missed at every point
+of the sweep), and sources that rotate faster than they can be confirmed are never refused.
+
+**Rungs 5 and 6 read one thing: the bank's total went up.** That cannot tell a 4 Mpps flood from
+a legitimate crowd larger than the link — both reach rung 6 at 8.0 s, and the crowd loses
+12.5 M packets (`rung_six_does_not_distinguish_a_flash_crowd_from_a_flood`, which asserts the
+behaviour so that enabling rung 6 is a decision taken against a number). `Config::link_bps` is
+carried in the reason and compared against nothing. The agent builds `Config::default()`, where
+rung 6 is off and has no prefix, and nothing it reads turns it on. What is still open is named
+in [limits.md](limits.md) §6.
 
 ---
 

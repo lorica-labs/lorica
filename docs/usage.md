@@ -225,10 +225,11 @@ deadline: an operator who disarms and then watches traffic still being dropped f
 ten-minute TTL has been told the agent is off while it is not. Only the key this agent wrote is
 withdrawn — the list is shared, and emptying it would remove the operator's own entries.
 
-> **What arming does not yet do.** The ladder cannot currently reach a rung that refuses packets:
-> the tick publishes the 34 named counters and neither the per-entry slots nor the bucket levels,
-> which are the two inputs the confirming rungs need. Armed, the agent will report rungs 0 and 1
-> and write nothing. See [limits.md §6](limits.md).
+> **What arming does, and does not yet do.** Armed, the agent writes rungs 3 and 4 only: an exact
+> key of your list whose own counter slot is rising, refused as is at rung 3 and widened to its
+> `/24` at rung 4. `written` counts those. Rung 5 asks no upstream yet — no escalator is linked
+> into the agent — and reaching it withdraws the refusal standing underneath. Rung 6 is off.
+> See [limits.md §6](limits.md).
 
 ---
 
@@ -266,7 +267,7 @@ discriminates anything is a property of your routing table, not a preference: on
 default route it refuses nothing and costs every packet a `bpf_fib_lookup`. The agent is supposed
 to evaluate that criterion and set the bit itself, and it does not yet.
 
-**The ladder cannot refuse anything it worked out for itself.** Rungs 3 and above need a key
-whose own counter slot is rising and rungs 5 and 6 need the bucket bank, and the tick publishes
-neither. Both are named in [limits.md](limits.md) §6 and tracked on the
-[wiki status page](https://github.com/lorica-labs/lorica/wiki/Status).
+**The ladder cannot hand anything upstream.** Rung 5 is reached on a saturated bank and calls
+no escalator, and reaching it takes back the rung 3–4 refusal. Rung 6 is off, and cannot tell a
+legitimate crowd larger than the link from a flood. Both are named in [limits.md](limits.md) §6
+and tracked on the [wiki status page](https://github.com/lorica-labs/lorica/wiki/Status).

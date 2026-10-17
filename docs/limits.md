@@ -111,7 +111,8 @@ try the command to find out.
 encapsulation, incoherent IP or L4 length, impossible TCP flag combinations, IP options, and
 non-initial fragments. That is a real class of traffic and it is the whole of what is enforced.
 
-**Two things are still not wired, and one of them is the interesting half of the product:**
+**Two things are still not wired, and the second decides whether a flood larger than the link
+can be answered at all:**
 
 1. **The reverse-path check counts but does not enforce.** Its bit is the loader's and not the
    operator's, because whether a strict check discriminates anything is a property of the
@@ -120,13 +121,29 @@ non-initial fragments. That is a real class of traffic and it is the whole of wh
    is tested, and the agent never runs it, so the bit stays clear on every load. There is no
    flag for it and there should not be one — what is missing is the agent asking the question.
 
-2. **The detection ladder cannot reach a rung that refuses packets.** Rungs 3 and above need a
-   key whose own counter slot is rising, and rungs 5 and 6 need the bucket bank; the tick
-   publishes the 34 named counters and neither of those two inputs. Armed or not, the ladder
-   tops out at rung 1 and `written` stays at zero. **This is the one that matters**: it is the
-   difference between a filter you aim and a filter that aims itself.
+2. **The top of the ladder asks nobody, and what it decides is not safe to turn on.** Rung 5
+   is reached when the bank's total keeps rising, and the agent has no escalator: the webhook
+   connector exists in `lorica-escalate` and `loricad` does not link it. Rung 5 refuses nothing
+   locally, so **reaching it withdraws the rung 3 or 4 refusal standing underneath** — the
+   engine keeps the confirmed key across the climb, and the enforcer, seeing a rung that does not
+   drop, takes it back out. Rung 6 is off, has no prefix, and nothing the agent reads turns it
+   on — which is the right default, because it cannot tell a flood from a legitimate crowd
+   larger than the link: on the replayer both reach it at 8.0 s and the crowd loses 12.5 M
+   packets (`rung_six_does_not_distinguish_a_flash_crowd_from_a_flood`). The only input of
+   rungs 5 and 6 is "the total went up", and `link_bps` is compared against nothing.
 
 **What is wired, and was not when this page was first written:**
+
+- **The ladder refuses a source it confirmed, when armed.** The tick now feeds it the per-entry
+  counter slots and the bucket bank, so rungs 3 and 4 fire on an exact key of the unified list
+  whose own slot rises above `entry_per_sec` (1 000 packets a second) after the rung below has
+  been measured insufficient. An `Allow` entry is never offered as that evidence. On nine
+  replayed scenarios at the shipped tuning: first refusal at 2.5 s, worst attack answered at
+  3.9 s, **zero legitimate packets refused**. Those are the replayer's numbers
+  (`crates/lorica-detect/tests/pulse_replay.rs`); the ladder has not yet been run against
+  traffic on the wire. Two misses are kept on purpose: a 300 ms pulse every 10 s is diluted
+  below every threshold, and sources that rotate faster than they can be confirmed are never
+  refused, because a refusal resting on a shared bucket refuses whoever else hashed there.
 
 - **The policy word is yours.** `--policy enforce-signatures,enforce-buckets`, or the
   `[settings]` block of a configuration file. Ten amplification vectors and the leaky-bucket
@@ -139,8 +156,9 @@ non-initial fragments. That is a real class of traffic and it is the whole of wh
 - **There is a configuration file**, and `examples/lorica.toml` is an annotated one that
   compiles as it stands. `lorica-ctl reload` still refuses: the file is read once, at startup.
 
-So a deployment today refuses what you named and nothing it worked out for itself. The two wires
-above are tracked on the [wiki status page](https://github.com/lorica-labs/lorica/wiki/Status).
+So a deployment today refuses what you named and, armed, the one source among them it can prove
+is attacking. It hands nothing upstream. The two gaps above are tracked on the
+[wiki status page](https://github.com/lorica-labs/lorica/wiki/Status).
 
 ## 7. Kernel capabilities: what an older kernel costs you
 

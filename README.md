@@ -31,12 +31,15 @@ truth, and the [wiki](https://github.com/lorica-labs/lorica/wiki/Status) carries
 | ✅ **Reports** through Prometheus, a 1 Hz journal and a Unix control socket | no label an attacker can choose |
 | ✅ **Refuses** the sources your configuration names | `--config`, into two flat tables read in one memory access |
 | ✅ **Enforces** the amplification catalogue and the leaky buckets, when you ask it to | `--policy enforce-signatures,enforce-buckets` |
+| ✅ **Refuses a source it confirmed itself**, armed only | rungs 3 and 4 of 7, on an exact key whose own counter is rising (rung 4 widens it to its `/24`); first refusal at 2.5 s and 0 legitimate packets refused over nine replayed scenarios — measured by the replayer, not yet on the wire |
 | ⚠️ **Does not check the reverse path** | the criterion evaluator exists and the agent never runs it |
-| ⚠️ **Does not refuse anything it worked out for itself** | the detection ladder tops out at rung 1 of 7 |
+| ⚠️ **Does not escalate** | rung 5 is reached and calls nobody — the webhook is not linked into the agent — and reaching it takes back the rung 3–4 refusal. Rung 6 is off and cannot tell a flash crowd from a flood |
 
-So: **Lorica today enforces what you tell it to and nothing it decided on its own.** Point it at
-a configuration and it will refuse those sources at one memory access an address; leave the
-ladder to find an attacker for you and it will describe one in detail and refuse nobody.
+So: **Lorica today enforces what you tell it to, and, armed, the one source it can prove.**
+Point it at a configuration and it will refuse those sources at one memory access an address;
+arm the ladder and it will refuse an exact key whose own counter is rising, and nothing it can
+only infer from shared state. What it cannot do yet is hand a flood bigger than the link to
+anyone upstream.
 
 ## Quick start
 
